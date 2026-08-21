@@ -2334,8 +2334,15 @@ def build_html(data):
         setStatus('Starting refresh…', null, 2);
 
         // One friend per request: each Riot fetch is well within a serverless
-        // timeout on its own, but all of them together would not be.
-        function step(i) {{
+        // timeout on its own, but all of them together would not be. A very
+        // active player can also have more new games than fit in a single
+        // call — the server reports needsMore in that case, and the same
+        // friend is retried (continuing:true, so the once-per-cycle cooldown
+        // doesn't re-trigger) rather than moving on incomplete.
+        var MAX_ATTEMPTS_PER_FRIEND = 12;
+
+        function step(i, attempt) {{
+          attempt = attempt || 1;
           if (i >= names.length) {{
             setStatus('Rebuilding the dashboard…', null, (total - 0.5) / total * 100);
             return post('finalize', {{}}).then(function (res) {{
@@ -2344,9 +2351,17 @@ def build_html(data):
               setTimeout(function () {{ location.reload(); }}, 1400);
             }});
           }}
-          setStatus('Fetching ' + names[i] + '… (' + (i + 1) + ' of ' + names.length + ')', null, (i / total) * 100);
-          return post('refresh', {{ index: i }}).then(function (res) {{
+          var label = 'Fetching ' + names[i] + '… (' + (i + 1) + ' of ' + names.length + ')'
+            + (attempt > 1 ? ' — lots of recent games, pass ' + attempt : '');
+          setStatus(label, null, (i / total) * 100);
+          return post('refresh', {{ index: i, continuing: attempt > 1 }}).then(function (res) {{
             newGames += (res && res.newMatches) || 0;
+            if (res && res.needsMore) {{
+              if (attempt >= MAX_ATTEMPTS_PER_FRIEND) {{
+                throw new Error(names[i] + ' has too many new games to finish refreshing right now — try again shortly.');
+              }}
+              return step(i, attempt + 1);
+            }}
             return step(i + 1);
           }});
         }}
