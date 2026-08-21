@@ -847,82 +847,117 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     if y_max <= y_min:
         y_max = y_min + 200
 
-    W = 900
-    H = max(300, min(660, 34 * len(chart_friends) + 140))
-    PAD_L, PAD_R, PAD_T, PAD_B = 64, 175, 16, 34
-    plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
-
-    def xy(game_idx, score):
-        x = PAD_L + (game_idx / max_games if max_games else 0) * plot_w
-        y = PAD_T + (1 - (score - y_min) / (y_max - y_min)) * plot_h
-        return x, y
-
-    # Gridlines on every division inside the visible range, named by tier at
-    # the tier boundary so a tall chart doesn't turn into a wall of labels.
-    tier_span = DIVISIONS_PER_TIER * LP_PER_DIVISION
-    y_ticks = []
+    # The chart is rendered twice: a wide desktop version, and a compact one
+    # for phones. A single SVG can't serve both — squeezing the 900-unit
+    # viewBox into a ~320px screen scaled its 11px labels down to under 4px,
+    # which is unreadable. The compact build drops the end-of-line labels
+    # (they alone cost 175 units of width) and thins the ticks out instead.
+    legend_items, standings = [], []
     rank_by_score = {v: k for k, v in RANK_SCORE.items()}
-    first_div = int(y_min // LP_PER_DIVISION)
-    last_div = int(y_max // LP_PER_DIVISION)
-    show_divisions = (last_div - first_div) <= 12
-    for steps in range(max(first_div, 0), last_div + 1):
-        tick = steps * LP_PER_DIVISION
-        if not (y_min <= tick <= y_max):
-            continue
-        ti, division, _ = ladder_decompose(tick)
-        if ti >= len(TIER_ORDER):
-            continue
-        if tick % tier_span == 0:
-            y_ticks.append((xy(0, tick)[1], TIER_ORDER[ti].capitalize()))
-        elif show_divisions:
-            y_ticks.append((xy(0, tick)[1], rank_by_score.get(division, "")))
 
-    # X ticks every ~5 games, keeping the count sane for long sessions.
-    step = max(1, round(max_games / 6))
-    tick_idxs = list(range(0, max_games + 1, step))
-    # Always end on the final game, but drop the tick before it if the two
-    # would sit close enough to overlap.
-    if tick_idxs[-1] != max_games:
-        if max_games - tick_idxs[-1] < step * 0.6:
-            tick_idxs.pop()
-        tick_idxs.append(max_games)
-    x_ticks = []
-    for gi in tick_idxs:
-        x, _ = xy(gi, y_min)
-        x_ticks.append((x, "Start" if gi == 0 else f"Game {gi}"))
+    def build_svg(compact):
+        prefix = "lpm" if compact else "lp"
+        if compact:
+            W = 360
+            H = max(240, min(420, 20 * len(chart_friends) + 190))
+            PAD_L, PAD_R, PAD_T, PAD_B = 38, 10, 12, 28
+        else:
+            W = 900
+            H = max(300, min(660, 34 * len(chart_friends) + 140))
+            PAD_L, PAD_R, PAD_T, PAD_B = 64, 175, 16, 34
+        plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
 
-    series_groups, legend_items, label_entries, standings = [], [], [], []
-    for i, f in enumerate(chart_friends):
-        var = friend_var(i)
-        tl = timelines[f["label"]]
-        coords = [xy(p["idx"], p["score"]) for p in tl]
-        parts = []
-        path_d = " ".join(f"{'M' if n == 0 else 'L'}{x:.1f},{y:.1f}" for n, (x, y) in enumerate(coords))
-        parts.append(
-            f'<path d="{path_d}" fill="none" stroke="var({var})" stroke-width="2" '
-            f'stroke-linecap="round" stroke-linejoin="round" />'
-        )
-        for n, ((x, y), p) in enumerate(zip(coords, tl)):
-            m = p["match"]
-            if m:
-                delta = p["delta"]
-                move = lp_step_label(tl[n - 1]["score"], p["score"], delta, p["exact"])
-                title = (f"{f['label']} — game {p['idx']} — {'Win' if m['win'] else 'Loss'} on {m['champion']} — "
-                         f"{move} → {score_to_rank_label(p['score'])}").replace("&middot;", "·")
-                fill = "var(--good)" if m["win"] else "var(--critical)"
-                r = 3.5
-            else:
-                title = (f"{f['label']} — tracking started — "
-                         f"{score_to_rank_label(p['score'])}").replace("&middot;", "·")
-                fill = f"var({var})"
-                r = 4
+        def xy(game_idx, score):
+            x = PAD_L + (game_idx / max_games if max_games else 0) * plot_w
+            y = PAD_T + (1 - (score - y_min) / (y_max - y_min)) * plot_h
+            return x, y
+
+        # Gridlines on every division inside the visible range, named by tier
+        # at the tier boundary so a tall chart doesn't turn into a wall of
+        # labels. On a phone only the tier lines are labelled.
+        tier_span = DIVISIONS_PER_TIER * LP_PER_DIVISION
+        y_ticks = []
+        first_div = int(y_min // LP_PER_DIVISION)
+        last_div = int(y_max // LP_PER_DIVISION)
+        show_divisions = (last_div - first_div) <= 12 and not compact
+        for steps in range(max(first_div, 0), last_div + 1):
+            tick = steps * LP_PER_DIVISION
+            if not (y_min <= tick <= y_max):
+                continue
+            ti, division, _ = ladder_decompose(tick)
+            if ti >= len(TIER_ORDER):
+                continue
+            if tick % tier_span == 0:
+                y_ticks.append((xy(0, tick)[1], TIER_ORDER[ti].capitalize()))
+            elif show_divisions:
+                y_ticks.append((xy(0, tick)[1], rank_by_score.get(division, "")))
+
+        step = max(1, round(max_games / (3 if compact else 6)))
+        tick_idxs = list(range(0, max_games + 1, step))
+        # Always end on the final game, but drop the tick before it if the two
+        # would sit close enough to overlap.
+        if tick_idxs[-1] != max_games:
+            if max_games - tick_idxs[-1] < step * 0.6:
+                tick_idxs.pop()
+            tick_idxs.append(max_games)
+        x_ticks = [(xy(gi, y_min)[0], "Start" if gi == 0 else (str(gi) if compact else f"Game {gi}"))
+                   for gi in tick_idxs]
+
+        series_groups, label_entries = [], []
+        for i, f in enumerate(chart_friends):
+            var = friend_var(i)
+            tl = timelines[f["label"]]
+            coords = [xy(p["idx"], p["score"]) for p in tl]
+            parts = []
+            path_d = " ".join(f"{'M' if n == 0 else 'L'}{x:.1f},{y:.1f}" for n, (x, y) in enumerate(coords))
             parts.append(
-                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" '
-                f'stroke="var(--surface-1)" stroke-width="1.5"><title>{esc(title)}</title></circle>'
+                f'<path d="{path_d}" fill="none" stroke="var({var})" stroke-width="2" '
+                f'stroke-linecap="round" stroke-linejoin="round" />'
             )
-        series_groups.append(f'<g id="lp-series-{i}">{"".join(parts)}</g>')
+            for n, ((x, y), p) in enumerate(zip(coords, tl)):
+                m = p["match"]
+                if m:
+                    move = lp_step_label(tl[n - 1]["score"], p["score"], p["delta"], p["exact"])
+                    title = (f"{f['label']} — game {p['idx']} — {'Win' if m['win'] else 'Loss'} on {m['champion']} — "
+                             f"{move} → {score_to_rank_label(p['score'])}").replace("&middot;", "·")
+                    fill = "var(--good)" if m["win"] else "var(--critical)"
+                    r = 3 if compact else 3.5
+                else:
+                    title = (f"{f['label']} — tracking started — "
+                             f"{score_to_rank_label(p['score'])}").replace("&middot;", "·")
+                    fill = f"var({var})"
+                    r = 3.5 if compact else 4
+                parts.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" '
+                    f'stroke="var(--surface-1)" stroke-width="1.5"><title>{esc(title)}</title></circle>'
+                )
+            series_groups.append(f'<g id="{prefix}-series-{i}">{"".join(parts)}</g>')
 
-        lx, ly = coords[-1]
+            if not compact:
+                lx, ly = coords[-1]
+                label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly,
+                                      "net": net_labels[i], "tier": tiers[i]})
+
+        label_groups = [] if compact else end_label_groups(label_entries, prefix)
+
+        grid_svg = "".join(
+            f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
+            f'<text x="{PAD_L - 6}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
+            for y, label in y_ticks
+        )
+        xticks_svg = "".join(
+            f'<text x="{x:.1f}" y="{H - PAD_B + (16 if compact else 20)}" text-anchor="middle" class="chart-tick">{esc(label)}</text>'
+            for x, label in x_ticks
+        )
+        cls = "rank-chart chart-compact" if compact else "rank-chart chart-wide"
+        return (f'<svg viewBox="0 0 {W} {H}" class="{cls}" role="img" '
+                f'aria-label="Ranked Solo/Duo LP game by game">'
+                f'{grid_svg}{xticks_svg}{"".join(series_groups)}{"".join(label_groups)}</svg>')
+
+    # Per-friend summary text, computed once and shared by both renders.
+    net_labels, tiers = [], []
+    for i, f in enumerate(chart_friends):
+        tl = timelines[f["label"]]
         net_lp = tl[-1]["score"] - tl[0]["score"]
         games = len(tl) - 1
         wins = sum(1 for p in tl[1:] if p["match"] and p["match"]["win"])
@@ -938,40 +973,32 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         else:
             net_text = (f'{rank_label(first_h).split(" &middot;")[0]} → '
                         f'{rank_label(last_h).split(" &middot;")[0]} · {record}')
-        net = {"text": net_text, "direction": 1 if net_lp > 0 else (-1 if net_lp < 0 else 0)}
-        last_tier = solo_history_by_label[f["label"]][-1].get("tier")
-        label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly,
-                              "net": net, "tier": last_tier})
-        standings.append({"var": var, "label": f["label"], "tier": last_tier,
-                          "rankLabel": rank_label(solo_history_by_label[f["label"]][-1]),
-                          "games": games})
+        net_labels.append({"text": net_text, "direction": 1 if net_lp > 0 else (-1 if net_lp < 0 else 0)})
+        tiers.append(hist[-1].get("tier"))
+        standings.append({"var": friend_var(i), "label": f["label"], "tier": hist[-1].get("tier"),
+                          "rankLabel": rank_label(hist[-1]), "games": games,
+                          "net": net_text})
         legend_items.append(
-            f'<span class="legend-item" data-chart="lp" data-idx="{i}"><span class="sw" style="background:var({var})"></span>{esc(f["label"])}</span>'
+            f'<span class="legend-item" data-chart="lp lpm" data-idx="{i}">'
+            f'<span class="sw" style="background:var({friend_var(i)})"></span>{esc(f["label"])}</span>'
         )
 
-    label_groups = end_label_groups(label_entries, "lp")
-
-    grid_svg = "".join(
-        f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
-        f'<text x="{PAD_L - 8}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
-        for y, label in y_ticks
-    )
-    xticks_svg = "".join(
-        f'<text x="{x:.1f}" y="{H - PAD_B + 20}" text-anchor="middle" class="chart-tick">{esc(label)}</text>'
-        for x, label in x_ticks
-    )
+    charts_svg = build_svg(False) + build_svg(True)
 
     omitted_note = ""
     if omitted:
         omitted_note = (f'<div class="muted small" style="margin-top:8px;">Not shown: {esc(", ".join(omitted))} '
                         f'(chart shows up to {len(FRIEND_PALETTE)} friends at once).</div>')
 
+    # The compact chart has no end-of-line labels, so the per-friend net LP
+    # moves into the standings chip where a phone can still read it.
     standings_html = "".join(
         f'<div class="standing-chip" style="border-color:var({s["var"]});">'
         f'{render_rank_icon(s["tier"], size=22)}'
         f'<span class="name" style="color:var({s["var"]});">{esc(s["label"])}</span>'
         f'<span class="rank">{s["rankLabel"]}</span>'
-        f'<span class="rank muted">· {s["games"]}g</span></div>'
+        f'<span class="rank muted">· {s["games"]}g</span>'
+        f'<span class="rank muted chip-net">· {esc(s["net"])}</span></div>'
         for s in standings
     )
 
@@ -1000,14 +1027,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       </div>
       <div class="muted small" style="margin-bottom:6px;">Current standings</div>
       <div class="standings">{standings_html}</div>
-      <svg viewBox="0 0 {W} {H}" class="rank-chart" role="img" aria-label="Ranked Solo/Duo LP game by game">
-        {grid_svg}
-        {xticks_svg}
-        {"".join(series_groups)}
-        {"".join(label_groups)}
-      </svg>
-      <div class="legend" style="justify-content:flex-start;">{legend_items and "".join(legend_items)}</div>
-      <div class="muted small" style="margin-top:2px;">Click a name above to show/hide that friend's line. Hover any point for the game behind it.</div>
+      {charts_svg}
+      <div class="legend" style="justify-content:flex-start;">{"".join(legend_items)}</div>
+      <div class="muted small" style="margin-top:2px;">Tap a name above to show/hide that friend's line. Tap any point for the game behind it.</div>
       {omitted_note}
       <details class="matches-details" style="margin-top:10px;">
         <summary>View as table</summary>
@@ -1188,7 +1210,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
       <div class="muted small" style="margin-bottom:14px;">Ranked Solo/Duo &middot; tracking since {esc(tracking_since)}</div>
       <div class="muted small" style="margin-bottom:6px;">Current standings</div>
       <div class="standings">{standings_html}</div>
-      <svg viewBox="0 0 {W} {H}" class="rank-chart" role="img" aria-label="Ranked Solo/Duo standing over the last {header_days} days">
+      <svg viewBox="0 0 {W} {H}" class="rank-chart chart-wide" role="img" aria-label="Ranked Solo/Duo standing over the last {header_days} days">
         {grid_svg}
         {xticks_svg}
         {"".join(series_groups)}
@@ -1499,6 +1521,11 @@ def build_html(data):
     # chart alone until that exists.
     lp_chart_panel = render_lp_chart(friends_sorted, rank_history, now, tracking_since)
     daily_chart_panel = render_rank_chart(friends_sorted, rank_history, now, tracking_since)
+    if lp_chart_panel:
+        # The 30-day chart has no phone-sized build, and on a small screen it
+        # says less than the per-game chart directly above it. Hide it there
+        # rather than render one that can't be read.
+        daily_chart_panel = f'<div class="wide-screen-only">{daily_chart_panel}</div>'
     rank_chart_panel = (lp_chart_panel or "") + daily_chart_panel
 
     # Flat export of every friend's season matches, embedded once as JSON so
@@ -1908,24 +1935,119 @@ def build_html(data):
     border-color: transparent; color: #fff; box-shadow: 0 2px 10px var(--halo);
   }}
 
+  /* ---- Hosted controls: refresh + API key ---------------------------- */
+  #refresh-data[hidden], #set-key[hidden] {{ display: none; }}
+  #refresh-data:disabled, #set-key:disabled {{ opacity: .55; cursor: not-allowed; }}
+  .refresh-status {{
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 18px; margin-bottom: 18px; box-shadow: var(--shadow-sm);
+  }}
+  .refresh-status[hidden] {{ display: none; }}
+  .refresh-bar {{ height: 7px; border-radius: 999px; background: var(--gridline); overflow: hidden; }}
+  .refresh-bar-fill {{
+    height: 100%; width: 0%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width .35s cubic-bezier(.4,0,.2,1);
+  }}
+  .refresh-text {{ font-size: 12.5px; color: var(--text-secondary); margin-top: 9px; }}
+  .refresh-text.error {{ color: var(--critical); }}
+  .refresh-text.done {{ color: var(--good); }}
+
+  .modal-backdrop {{
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }}
+  .modal-backdrop[hidden] {{ display: none; }}
+  .modal {{
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px; width: 100%; max-width: 420px; box-shadow: var(--shadow-lg);
+  }}
+  .modal h3 {{ margin: 0 0 6px; font-size: 17px; }}
+  .modal .field {{ display: block; margin-top: 14px; }}
+  .modal .field span {{ display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }}
+  .modal input {{
+    width: 100%; font-family: inherit; font-size: 13px; padding: 9px 11px;
+    border-radius: 9px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-primary);
+  }}
+  .modal input:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
+  .modal-msg {{ font-size: 12px; margin-top: 12px; min-height: 16px; color: var(--critical); }}
+  .modal-msg.ok {{ color: var(--good); }}
+  .modal-actions {{ display: flex; justify-content: flex-end; gap: 9px; margin-top: 16px; }}
+  .btn-primary, .btn-ghost {{
+    font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 16px;
+    border-radius: 9px; cursor: pointer; border: 1px solid var(--border);
+  }}
+  .btn-ghost {{ background: var(--surface-2); color: var(--text-secondary); }}
+  .btn-ghost:hover {{ background: var(--gridline); }}
+  .btn-primary {{
+    background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 62%, var(--accent-2)));
+    border-color: transparent; color: #fff;
+  }}
+  .btn-primary:disabled {{ opacity: .6; cursor: not-allowed; }}
+
   /* ---- Entrance animation -------------------------------------------- */
   @keyframes rise {{ from {{ opacity: 0; transform: translateY(9px); }} to {{ opacity: 1; transform: none; }} }}
   .tab-panel > .panel, .tab-panel > .card {{ animation: rise .32s ease both; }}
   .tab-panel > *:nth-child(2) {{ animation-delay: .05s; }}
   .tab-panel > *:nth-child(3) {{ animation-delay: .1s; }}
 
+  /* ---- Chart variants -------------------------------------------------- */
+  /* Two renders of the same chart: a wide one, and a phone-sized one whose
+     labels stay legible instead of being scaled down to ~4px. */
+  .chart-compact {{ display: none; }}
+  .chip-net {{ display: none; }}
+
   /* ---- Responsive ----------------------------------------------------- */
   @media (max-width: 720px) {{
-    .wrap {{ padding: 20px 14px 60px; }}
-    header.top h1 {{ font-size: 22px; }}
-    .panel, .card {{ padding: 16px; }}
+    .wrap {{ padding: 14px 12px 56px; }}
+    header.top {{ margin-bottom: 16px; gap: 10px; }}
+    header.top h1 {{ font-size: 19px; margin-bottom: 3px; }}
+    .brand {{ gap: 10px; }}
+    .brand-mark {{ width: 38px; height: 38px; border-radius: 11px; font-size: 18px; }}
+    /* Meta chips collapse to one line of plain text — three pill rows pushed
+       the actual content most of a screen down. */
+    .meta-row {{ gap: 4px; }}
+    .meta-chip {{ border: none; background: none; padding: 0; font-size: 11px; }}
+    .meta-chip::after {{ content: "·"; margin-left: 4px; opacity: .5; }}
+    .meta-chip:last-child::after {{ content: ""; }}
+
+    .panel, .card {{ padding: 15px 13px; border-radius: 12px; }}
+    h2 {{ font-size: 16px; }}
+
+    /* Touch targets: 34px tabs and 21px legend chips were well under the
+       ~44px a fingertip needs. */
+    .tabs {{ padding: 4px; gap: 2px; }}
+    .tab-btn {{ padding: 12px 14px; font-size: 13px; min-height: 44px; }}
+    .legend {{ gap: 8px; }}
+    .legend-item {{ padding: 9px 12px; min-height: 38px; display: inline-flex; align-items: center; }}
+    .pill {{ padding: 10px 16px; min-height: 40px; }}
+    #export-csv, #theme-toggle, #refresh-data, #set-key {{ height: 42px; }}
+    #export-csv, #refresh-data, #set-key {{ padding: 0 12px; font-size: 12.5px; }}
+    summary {{ padding: 13px 0; }}
+
+    .chart-wide {{ display: none; }}
+    .chart-compact {{ display: block; }}
+    .chip-net {{ display: inline; }}
+    .wide-screen-only {{ display: none; }}
+
     .rank-row {{ grid-template-columns: 1fr auto; gap: 6px 10px; }}
     .rank-row .wr-track {{ grid-column: 1 / -1; }}
     .rank-row .wr-text {{ grid-column: 1 / -1; text-align: left; }}
-    .season-stats {{ grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }}
-    .stat-value {{ font-size: 20px; }}
+    .season-stats {{ grid-template-columns: repeat(2, 1fr); gap: 8px; }}
+    .stat-value {{ font-size: 19px; }}
+    .stat-tile {{ padding: 10px 11px; }}
+    .awards {{ grid-template-columns: 1fr; }}
     table {{ font-size: 13px; }}
     td, th {{ padding: 8px 6px; }}
+    .modal {{ padding: 18px; }}
+    .refresh-status {{ padding: 12px 14px; }}
+  }}
+
+  /* Very narrow phones */
+  @media (max-width: 380px) {{
+    .season-stats {{ grid-template-columns: 1fr; }}
+    header.top h1 {{ font-size: 17px; }}
   }}
   @media (prefers-reduced-motion: reduce) {{
     * {{ animation: none !important; transition: none !important; }}
@@ -1947,10 +2069,35 @@ def build_html(data):
         </div>
       </div>
       <div class="header-actions">
+        <!-- Hosted-only controls: revealed by JS once /api/status answers, so
+             a locally generated dashboard doesn't show buttons that can't work. -->
+        <button id="refresh-data" class="hosted-only" type="button" hidden title="Re-fetch everyone's games from the Riot API">⟳ Refresh data</button>
+        <button id="set-key" class="hosted-only" type="button" hidden title="Update the Riot API key (dev keys expire every 24h)">🔑 API key</button>
         <button id="export-csv" type="button" title="Download this season's match data as a CSV">⬇ Export CSV</button>
         <button id="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
       </div>
     </header>
+
+    <div id="refresh-status" class="refresh-status" hidden>
+      <div class="refresh-bar"><div class="refresh-bar-fill" id="refresh-bar-fill"></div></div>
+      <div class="refresh-text" id="refresh-text">Starting…</div>
+    </div>
+
+    <div class="modal-backdrop" id="modal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h3 id="modal-title">Admin</h3>
+        <p class="muted small" id="modal-blurb"></p>
+        <label class="field"><span>Admin password</span>
+          <input type="password" id="modal-pass" autocomplete="current-password"></label>
+        <label class="field" id="modal-key-field"><span>Riot API key</span>
+          <input type="text" id="modal-key" placeholder="RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false"></label>
+        <div class="modal-msg" id="modal-msg"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" id="modal-cancel">Cancel</button>
+          <button type="button" class="btn-primary" id="modal-ok">Confirm</button>
+        </div>
+      </div>
+    </div>
 
     {demo_banner}
 
@@ -2054,15 +2201,162 @@ def build_html(data):
       document.querySelectorAll('.legend-item[data-idx]').forEach(function (el) {{
         el.addEventListener('click', function () {{
           var idx = el.getAttribute('data-idx');
-          var chart = el.getAttribute('data-chart') || 'daily';
-          var series = document.getElementById(chart + '-series-' + idx);
-          var label = document.getElementById(chart + '-label-' + idx);
-          var willHide = !(series && series.style.display === 'none');
-          if (series) series.style.display = willHide ? 'none' : '';
-          if (label) label.style.display = willHide ? 'none' : '';
+          // One legend drives both the wide and compact renders of the chart.
+          var charts = (el.getAttribute('data-chart') || 'daily').split(' ');
+          var first = document.getElementById(charts[0] + '-series-' + idx);
+          var willHide = !(first && first.style.display === 'none');
+          charts.forEach(function (c) {{
+            var series = document.getElementById(c + '-series-' + idx);
+            var label = document.getElementById(c + '-label-' + idx);
+            if (series) series.style.display = willHide ? 'none' : '';
+            if (label) label.style.display = willHide ? 'none' : '';
+          }});
           el.style.opacity = willHide ? '0.35' : '1';
         }});
       }});
+    }})();
+  </script>
+
+  <script>
+    // Hosted controls. These only do anything when the dashboard is served by
+    // the Vercel app (which provides /api/*); a locally generated file just
+    // leaves the buttons hidden.
+    (function () {{
+      var refreshBtn = document.getElementById('refresh-data');
+      var keyBtn = document.getElementById('set-key');
+      var statusBox = document.getElementById('refresh-status');
+      var barFill = document.getElementById('refresh-bar-fill');
+      var statusText = document.getElementById('refresh-text');
+      var modal = document.getElementById('modal');
+      var modalTitle = document.getElementById('modal-title');
+      var modalBlurb = document.getElementById('modal-blurb');
+      var modalPass = document.getElementById('modal-pass');
+      var modalKey = document.getElementById('modal-key');
+      var modalKeyField = document.getElementById('modal-key-field');
+      var modalMsg = document.getElementById('modal-msg');
+      var modalOk = document.getElementById('modal-ok');
+      var modalCancel = document.getElementById('modal-cancel');
+      var state = null;
+
+      function setStatus(msg, cls, pct) {{
+        statusBox.hidden = false;
+        statusText.textContent = msg;
+        statusText.className = 'refresh-text' + (cls ? ' ' + cls : '');
+        if (typeof pct === 'number') barFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+      }}
+
+      fetch('api/status').then(function (r) {{
+        if (!r.ok) throw new Error('no api');
+        return r.json();
+      }}).then(function (s) {{
+        state = s;
+        refreshBtn.hidden = false;
+        keyBtn.hidden = false;
+        if (!s.hasKey) setStatus('No Riot API key stored yet — use the 🔑 API key button before refreshing.', 'error', 0);
+        else if (s.keyAgeHours !== null && s.keyAgeHours >= 24)
+          setStatus('The stored Riot API key is ' + Math.floor(s.keyAgeHours) + 'h old — dev keys expire after 24h, so it probably needs replacing.', 'error', 0);
+      }}).catch(function () {{ /* not hosted — leave the buttons hidden */ }});
+
+      var onConfirm = null;
+      function openModal(opts) {{
+        modalTitle.textContent = opts.title;
+        modalBlurb.textContent = opts.blurb;
+        modalKeyField.style.display = opts.needsKey ? '' : 'none';
+        // Replacing an expired key needs no password; spending Riot quota does.
+        modalPass.parentElement.style.display = opts.needsPass ? '' : 'none';
+        modalMsg.textContent = '';
+        modalMsg.className = 'modal-msg';
+        modalPass.value = '';
+        modalKey.value = '';
+        modal.hidden = false;
+        onConfirm = opts.onConfirm;
+        setTimeout(function () {{ (opts.needsPass ? modalPass : modalKey).focus(); }}, 30);
+      }}
+      function closeModal() {{ modal.hidden = true; onConfirm = null; }}
+      modalCancel.addEventListener('click', closeModal);
+      modal.addEventListener('click', function (e) {{ if (e.target === modal) closeModal(); }});
+      document.addEventListener('keydown', function (e) {{
+        if (e.key === 'Escape' && !modal.hidden) closeModal();
+        if (e.key === 'Enter' && !modal.hidden) modalOk.click();
+      }});
+      modalOk.addEventListener('click', function () {{ if (onConfirm) onConfirm(); }});
+
+      function post(path, body) {{
+        return fetch('api/' + path, {{
+          method: 'POST',
+          headers: {{ 'content-type': 'application/json' }},
+          body: JSON.stringify(body || {{}})
+        }}).then(function (r) {{
+          return r.json().catch(function () {{ return {{ error: 'Bad response from server (HTTP ' + r.status + ')' }}; }})
+            .then(function (j) {{ if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }});
+        }});
+      }}
+
+      keyBtn.addEventListener('click', function () {{
+        openModal({{
+          title: 'Update Riot API key',
+          blurb: 'Riot development keys expire every 24 hours. Grab a fresh one from developer.riotgames.com and paste it here.',
+          needsKey: true, needsPass: false,
+          onConfirm: function () {{
+            var key = modalKey.value.trim();
+            if (!/^RGAPI-/.test(key)) {{ modalMsg.textContent = 'That does not look like a Riot key (should start with RGAPI-).'; return; }}
+            modalOk.disabled = true;
+            modalMsg.className = 'modal-msg';
+            modalMsg.textContent = 'Checking the key against Riot…';
+            post('set_key', {{ key: key }}).then(function () {{
+              modalMsg.className = 'modal-msg ok';
+              modalMsg.textContent = 'Key accepted and stored.';
+              setStatus('Riot API key updated. You can refresh now.', 'done', 0);
+              setTimeout(closeModal, 900);
+            }}).catch(function (e) {{
+              modalMsg.className = 'modal-msg';
+              modalMsg.textContent = e.message;
+            }}).finally(function () {{ modalOk.disabled = false; }});
+          }}
+        }});
+      }});
+
+      refreshBtn.addEventListener('click', function () {{
+        openModal({{
+          title: 'Refresh everyone\\'s data',
+          blurb: 'Re-fetches new ranked games for every friend from the Riot API, then rebuilds the dashboard. Takes a minute or two.',
+          needsKey: false, needsPass: false,
+          onConfirm: function () {{ closeModal(); runRefresh(); }}
+        }});
+      }});
+
+      function runRefresh() {{
+        refreshBtn.disabled = true;
+        keyBtn.disabled = true;
+        var names = (state && state.friends) || [];
+        var total = names.length + 1; // +1 for the rebuild step
+        var newGames = 0;
+        setStatus('Starting refresh…', null, 2);
+
+        // One friend per request: each Riot fetch is well within a serverless
+        // timeout on its own, but all of them together would not be.
+        function step(i) {{
+          if (i >= names.length) {{
+            setStatus('Rebuilding the dashboard…', null, (total - 0.5) / total * 100);
+            return post('finalize', {{}}).then(function (res) {{
+              setStatus('Done — refreshed ' + res.friends + ' friends, ' + newGames +
+                        ' new game' + (newGames === 1 ? '' : 's') + '. Reloading…', 'done', 100);
+              setTimeout(function () {{ location.reload(); }}, 1400);
+            }});
+          }}
+          setStatus('Fetching ' + names[i] + '… (' + (i + 1) + ' of ' + names.length + ')', null, (i / total) * 100);
+          return post('refresh', {{ index: i }}).then(function (res) {{
+            newGames += (res && res.newMatches) || 0;
+            return step(i + 1);
+          }});
+        }}
+
+        step(0).catch(function (e) {{
+          setStatus('Refresh failed: ' + e.message, 'error');
+          refreshBtn.disabled = false;
+          keyBtn.disabled = false;
+        }});
+      }}
     }})();
   </script>
 
