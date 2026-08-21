@@ -2338,8 +2338,13 @@ def build_html(data):
         // active player can also have more new games than fit in a single
         // call — the server reports needsMore in that case, and the same
         // friend is retried (continuing:true, so the once-per-cycle cooldown
-        // doesn't re-trigger) rather than moving on incomplete.
-        var MAX_ATTEMPTS_PER_FRIEND = 12;
+        // doesn't re-trigger) rather than moving on incomplete. Progress is
+        // saved after every single call (server-side), so nothing is lost if
+        // this session stops partway — clicking Refresh again later just
+        // continues from wherever it left off, even a first-time sync of a
+        // very high-volume account that needs more than one sitting.
+        var SESSION_BUDGET_MS = 8 * 60 * 1000;
+        var sessionStart = Date.now();
 
         function step(i, attempt) {{
           attempt = attempt || 1;
@@ -2357,8 +2362,9 @@ def build_html(data):
           return post('refresh', {{ index: i, continuing: attempt > 1 }}).then(function (res) {{
             newGames += (res && res.newMatches) || 0;
             if (res && res.needsMore) {{
-              if (attempt >= MAX_ATTEMPTS_PER_FRIEND) {{
-                throw new Error(names[i] + ' has too many new games to finish refreshing right now — try again shortly.');
+              if (Date.now() - sessionStart > SESSION_BUDGET_MS) {{
+                throw new Error(names[i] + ' has an unusually large backlog of new games (a first-time sync ' +
+                  'of a very active player can take a while). Progress is saved — click Refresh again to continue.');
               }}
               return step(i, attempt + 1);
             }}
