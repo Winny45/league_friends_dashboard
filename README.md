@@ -93,6 +93,10 @@ Open `config.json` and fill in:
 
 - `api_key` — the key from step 1
 - `platform` / `routing` — for EUW use `"euw1"` / `"europe"` (already set).
+- `site_url` — public URL of the deployed dashboard, e.g.
+  `"https://your-site.vercel.app"`. Only used for the link-preview card:
+  Open Graph requires absolute image URLs, so leaving this empty simply
+  omits the share tags rather than emitting ones that will not resolve.
   Other regions:
   | Region | platform | routing |
   |---|---|---|
