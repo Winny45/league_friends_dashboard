@@ -647,41 +647,51 @@ def friend_var(index):
     return f"--series-f{index}"
 
 
-def end_label_groups(label_entries, prefix):
-    """Decluttering pass for the end-of-line name labels shared by both rank
-    charts: with few data points (or several friends sitting at a similar
-    rank), the labels land on top of each other. Sort top-to-bottom and push
-    any label down just enough to clear the one above it, drawing a short
-    leader line back to the real point whenever a label had to move."""
+def end_label_groups(label_entries, prefix, gutter_x=None):
+    """Name labels for each line, stacked in a reserved right-hand gutter.
+
+    Anchoring a label to its own line's end point looks tidy only when every
+    line ends at the same x. Here they don't — someone with 12 games ends a
+    third of the way across — so labels landed in the middle of the plot,
+    on top of the lines and each other. Placing them all at a common
+    `gutter_x` means the vertical declutter below is sufficient on its own,
+    and a leader line keeps each label tied to the point it describes.
+
+    Passing gutter_x=None keeps the old line-end anchoring, which is right
+    when every series really does end together.
+    """
     label_groups = []
-    MIN_LABEL_GAP = 20
+    MIN_LABEL_GAP = 26   # two lines of text (name + net change) plus breathing room
     ICON_SIZE = 14
     label_entries.sort(key=lambda e: e["ly"])
     for idx, e in enumerate(label_entries):
         e["draw_y"] = e["ly"] if idx == 0 else max(e["ly"], label_entries[idx - 1]["draw_y"] + MIN_LABEL_GAP)
     for e in label_entries:
         var, lx, ly, draw_y = e["var"], e["lx"], e["ly"], e["draw_y"]
+        anchor_x = gutter_x if gutter_x is not None else lx
         parts = []
-        if abs(draw_y - ly) > 3:
+        # Leader from the real end point across to the gutter. Drawn whenever
+        # the label isn't sitting essentially on top of its point.
+        if abs(draw_y - ly) > 3 or (gutter_x is not None and anchor_x - lx > 10):
             parts.append(
-                f'<line x1="{lx + 4:.1f}" y1="{ly:.1f}" x2="{lx + 8:.1f}" y2="{draw_y:.1f}" '
-                f'stroke="var({var})" stroke-width="1" stroke-dasharray="2,2" opacity="0.5" />'
+                f'<path d="M{lx + 4:.1f},{ly:.1f} L{anchor_x - 4:.1f},{draw_y:.1f}" fill="none" '
+                f'stroke="var({var})" stroke-width="1" stroke-dasharray="2,3" opacity="0.45" />'
             )
         icon_url = rank_icon_url(e.get("tier"))
-        text_x = lx + 8
+        text_x = anchor_x
         if icon_url:
             parts.append(
-                f'<image href="{esc(icon_url)}" x="{lx + 8:.1f}" y="{draw_y - ICON_SIZE / 2:.1f}" '
+                f'<image href="{esc(icon_url)}" x="{anchor_x:.1f}" y="{draw_y - ICON_SIZE / 2:.1f}" '
                 f'width="{ICON_SIZE}" height="{ICON_SIZE}" onerror="this.style.visibility=\'hidden\'" />'
             )
-            text_x = lx + 8 + ICON_SIZE + 3
+            text_x = anchor_x + ICON_SIZE + 3
         parts.append(
-            f'<text x="{text_x:.1f}" y="{draw_y + 4:.1f}" font-size="11" font-weight="700" fill="var({var})">{esc(e["label"])}</text>'
+            f'<text x="{text_x:.1f}" y="{draw_y + 3:.1f}" font-size="11" font-weight="700" fill="var({var})">{esc(e["label"])}</text>'
         )
         if e["net"]:
             net_color = "var(--good)" if e["net"]["direction"] > 0 else ("var(--critical)" if e["net"]["direction"] < 0 else "var(--muted)")
             parts.append(
-                f'<text x="{text_x:.1f}" y="{draw_y + 16:.1f}" font-size="10" fill="{net_color}">{esc(e["net"]["text"])}</text>'
+                f'<text x="{text_x:.1f}" y="{draw_y + 15:.1f}" font-size="10" fill="{net_color}">{esc(e["net"]["text"])}</text>'
             )
         label_groups.append(f'<g id="{prefix}-label-{e["idx"]}">{"".join(parts)}</g>')
     return label_groups
@@ -861,8 +871,32 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     legend_items, standings = [], []
     rank_by_score = {v: k for k, v in RANK_SCORE.items()}
 
-    def build_svg(compact):
-        prefix = "lpm" if compact else "lp"
+    def build_svg(compact, tail=None):
+        """One render of the chart.
+
+        `tail` limits each friend to their most recent N games, re-indexed
+        from zero — a zoom on the busy right-hand end. It's per friend rather
+        than a shared cut of the x-axis because the axis is already each
+        person's own game count: slicing by absolute index would simply drop
+        anyone who has played fewer games than the cut.
+        """
+        prefix = ("lpm" if compact else "lp") + ("t" if tail else "")
+        view = {}
+        for f in chart_friends:
+            tl = timelines[f["label"]]
+            pts = tl[-(tail + 1):] if tail and len(tl) > tail + 1 else tl
+            base = pts[0]["idx"]
+            # idx drives the x position and is rebased to 0; origIdx keeps the
+            # real game number so a tooltip in the zoomed view doesn't call
+            # someone's 30th game their 1st.
+            view[f["label"]] = [dict(p, idx=p["idx"] - base, origIdx=p["idx"]) for p in pts]
+        max_games = max((len(v) - 1 for v in view.values()), default=0) or 1
+        vis_scores = [p["score"] for v in view.values() for p in v]
+        y_min, y_max = min(vis_scores), max(vis_scores)
+        pad = max(40, (y_max - y_min) * 0.16)
+        y_min, y_max = y_min - pad, y_max + pad
+        if y_max <= y_min:
+            y_max = y_min + 200
         if compact:
             W = 360
             H = max(240, min(420, 20 * len(chart_friends) + 190))
@@ -906,13 +940,20 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             if max_games - tick_idxs[-1] < step * 0.6:
                 tick_idxs.pop()
             tick_idxs.append(max_games)
-        x_ticks = [(xy(gi, y_min)[0], "Start" if gi == 0 else (str(gi) if compact else f"Game {gi}"))
-                   for gi in tick_idxs]
+        # In the zoomed view every friend is rebased to 0, so the axis counts
+        # games back from the latest rather than pretending to be an absolute
+        # game number that would differ per person.
+        def tick_label(gi):
+            if tail:
+                back = max_games - gi
+                return "Latest" if back == 0 else (f"−{back}" if compact else f"{back} ago")
+            return "Start" if gi == 0 else (str(gi) if compact else f"Game {gi}")
+        x_ticks = [(xy(gi, y_min)[0], tick_label(gi)) for gi in tick_idxs]
 
         series_groups, label_entries = [], []
         for i, f in enumerate(chart_friends):
             var = friend_var(i)
-            tl = timelines[f["label"]]
+            tl = view[f["label"]]
             coords = [xy(p["idx"], p["score"]) for p in tl]
             parts = []
             path_d = " ".join(f"{'M' if n == 0 else 'L'}{x:.1f},{y:.1f}" for n, (x, y) in enumerate(coords))
@@ -924,7 +965,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                 m = p["match"]
                 if m:
                     move = lp_step_label(tl[n - 1]["score"], p["score"], p["delta"], p["exact"])
-                    title = (f"{f['label']} — game {p['idx']} — {'Win' if m['win'] else 'Loss'} on {m['champion']} — "
+                    title = (f"{f['label']} — game {p.get('origIdx', p['idx'])} — {'Win' if m['win'] else 'Loss'} on {m['champion']} — "
                              f"{move} → {score_to_rank_label(p['score'])}").replace("&middot;", "·")
                     fill = "var(--good)" if m["win"] else "var(--critical)"
                     r = 3 if compact else 3.5
@@ -941,10 +982,22 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
 
             if not compact:
                 lx, ly = coords[-1]
+                if tail and len(tl) > 1:
+                    # Ladder LP is linear (100 per division), so a delta across
+                    # the visible slice is a true LP count even over a promotion.
+                    d = tl[-1]["score"] - tl[0]["score"]
+                    net = {"text": f"{'+' if d >= 0 else '−'}{abs(d):.0f} LP · last {len(tl) - 1}",
+                           "direction": 1 if d > 0 else (-1 if d < 0 else 0)}
+                else:
+                    net = net_labels[i]
                 label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly,
-                                      "net": net_labels[i], "tier": tiers[i]})
+                                      "net": net, "tier": tiers[i]})
 
-        label_groups = [] if compact else end_label_groups(label_entries, prefix)
+        # Labels sit in the reserved right gutter, not at each line's own end:
+        # lines finish at different x (someone with 12 games ends a third of
+        # the way across), which put labels on top of the plot and each other.
+        label_groups = [] if compact else end_label_groups(
+            label_entries, prefix, gutter_x=W - PAD_R + 10)
 
         grid_svg = "".join(
             f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
@@ -975,21 +1028,49 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         record = f"{wins}W {games - wins}L"
         if _rank_snapshot_key(first_h) == _rank_snapshot_key(last_h):
             lp = (last_h.get("leaguePoints") or 0) - (first_h.get("leaguePoints") or 0)
-            net_text = f"{'+' if lp >= 0 else '−'}{abs(lp)} LP · {record}"
+            move_text = f"{'+' if lp >= 0 else '−'}{abs(lp)} LP"
         else:
-            net_text = (f'{rank_label(first_h).split(" &middot;")[0]} → '
-                        f'{rank_label(last_h).split(" &middot;")[0]} · {record}')
-        net_labels.append({"text": net_text, "direction": 1 if net_lp > 0 else (-1 if net_lp < 0 else 0)})
+            move_text = (f'{rank_label(first_h).split(" &middot;")[0]} → '
+                         f'{rank_label(last_h).split(" &middot;")[0]}')
+        direction = 1 if net_lp > 0 else (-1 if net_lp < 0 else 0)
+        # The chart label carries only the movement — appending the W/L record
+        # pushed "Emerald II → Emerald III · 24W 31L" past the right edge and
+        # it rendered clipped. The record lives in the standings chip instead,
+        # where there's room for it.
+        net_labels.append({"text": move_text, "direction": direction})
         tiers.append(hist[-1].get("tier"))
         standings.append({"var": friend_var(i), "label": f["label"], "tier": hist[-1].get("tier"),
                           "rankLabel": rank_label(hist[-1]), "games": games,
-                          "net": net_text})
+                          "net": f"{move_text} · {record}"})
         legend_items.append(
-            f'<span class="legend-item" data-chart="lp lpm" data-idx="{i}">'
+            # Names every render this legend drives: wide/compact for both the
+            # full and zoomed views. Absent ids are skipped harmlessly, so this
+            # stays correct whether or not the zoom variant was built.
+            f'<span class="legend-item" data-chart="lp lpm lpt lpmt" data-idx="{i}">'
             f'<span class="sw" style="background:var({friend_var(i)})"></span>{esc(f["label"])}</span>'
         )
 
-    charts_svg = build_svg(False) + build_svg(True)
+    # Two zoom levels, both rendered up front and toggled with CSS — no
+    # client-side re-plotting, so the zoom can't get out of step with the
+    # data or break if scripting fails.
+    TAIL_GAMES = 20
+    longest = max((len(timelines[f["label"]]) - 1 for f in chart_friends), default=0)
+    show_zoom = longest > TAIL_GAMES + 4   # not worth offering when everyone is short
+    charts_svg = (
+        f'<div class="chart-view" data-range="all">{build_svg(False)}{build_svg(True)}</div>'
+    )
+    zoom_toggle = ""
+    if show_zoom:
+        charts_svg += (
+            f'<div class="chart-view" data-range="tail" hidden>'
+            f'{build_svg(False, tail=TAIL_GAMES)}{build_svg(True, tail=TAIL_GAMES)}</div>'
+        )
+        zoom_toggle = (
+            '<div class="range-toggle" role="group" aria-label="Chart range">'
+            '<button type="button" class="range-btn active" data-range="all">All games</button>'
+            f'<button type="button" class="range-btn" data-range="tail">Last {TAIL_GAMES}</button>'
+            '</div>'
+        )
 
     omitted_note = ""
     if omitted:
@@ -1033,9 +1114,10 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       </div>
       <div class="muted small" style="margin-bottom:6px;">Current standings</div>
       <div class="standings">{standings_html}</div>
+      {zoom_toggle}
       {charts_svg}
       <div class="legend" style="justify-content:flex-start;">{"".join(legend_items)}</div>
-      <div class="muted small" style="margin-top:2px;">Tap a name above to show/hide that friend's line. Tap any point for the game behind it.</div>
+      <div class="muted small" style="margin-top:2px;">Hover or tap a name to highlight that line; click to hide it. Tap any point for the game behind it.</div>
       {omitted_note}
       <details class="matches-details" style="margin-top:10px;">
         <summary>View as table</summary>
@@ -1870,11 +1952,30 @@ def build_html(data):
   .stat-label {{ font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.35; }}
 
   /* ---- Rank chart ---------------------------------------------------- */
+  .range-toggle {{
+    display: inline-flex; gap: 3px; padding: 3px; margin-bottom: 10px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px;
+  }}
+  .range-btn {{
+    appearance: none; border: none; background: none; cursor: pointer;
+    font-family: inherit; font-size: 12px; font-weight: 600; color: var(--muted);
+    padding: 6px 13px; border-radius: 7px;
+  }}
+  .range-btn:hover {{ color: var(--text-primary); }}
+  .range-btn.active {{ background: var(--surface-1); color: var(--text-primary); box-shadow: var(--shadow-sm); }}
+  .chart-view[hidden] {{ display: none; }}
+
   .rank-chart {{ width: 100%; height: auto; overflow: visible; }}
   .chart-grid {{ stroke: var(--gridline); stroke-width: 1; }}
   .chart-tick {{ fill: var(--muted); font-size: 11px; font-family: "Inter", system-ui, sans-serif; }}
   .rank-chart circle {{ transition: r .12s ease; }}
   .rank-chart circle:hover {{ r: 6; }}
+  /* Hovering a legend name fades the other lines back, which is the quickest
+     way to follow one person through seven overlapping series. */
+  .rank-chart g[id*="-series-"], .rank-chart g[id*="-label-"] {{ transition: opacity .15s ease; }}
+  .rank-chart.has-focus g[id*="-series-"]:not(.focus-on),
+  .rank-chart.has-focus g[id*="-label-"]:not(.focus-on) {{ opacity: 0.12; }}
+  .legend-item {{ position: relative; }}
 
   .chips {{ display: flex; gap: 8px; flex-wrap: wrap; }}
   .chip {{
@@ -2064,6 +2165,7 @@ def build_html(data):
     .tab-btn {{ padding: 12px 14px; font-size: 13px; min-height: 44px; }}
     .legend {{ gap: 8px; }}
     .legend-item {{ padding: 9px 12px; min-height: 38px; display: inline-flex; align-items: center; }}
+    .range-btn {{ padding: 11px 18px; min-height: 40px; font-size: 13px; }}
     .pill {{ padding: 10px 16px; min-height: 40px; }}
     #export-csv, #theme-toggle, #refresh-data, #set-key {{ height: 42px; }}
     #export-csv, #refresh-data, #set-key {{ padding: 0 12px; font-size: 12.5px; }}
@@ -2243,6 +2345,42 @@ def build_html(data):
 
   <script>
     (function () {{
+      // Zoom toggle: both ranges are already in the DOM, so this only swaps
+      // which one is shown.
+      document.querySelectorAll('.range-btn').forEach(function (b) {{
+        b.addEventListener('click', function () {{
+          var want = b.getAttribute('data-range');
+          var panel = b.closest('.panel');
+          panel.querySelectorAll('.range-btn').forEach(function (o) {{
+            o.classList.toggle('active', o === b);
+          }});
+          panel.querySelectorAll('.chart-view').forEach(function (v) {{
+            v.hidden = v.getAttribute('data-range') !== want;
+          }});
+        }});
+      }});
+
+      // Hover a legend name to bring that line forward and fade the rest.
+      // Pure presentation — it changes no state, so it can't get out of sync
+      // with the click-to-hide toggle below.
+      document.querySelectorAll('.legend-item[data-idx]').forEach(function (el) {{
+        var charts = (el.getAttribute('data-chart') || 'daily').split(' ');
+        var idx = el.getAttribute('data-idx');
+        function focus(on) {{
+          charts.forEach(function (c) {{
+            ['series', 'label'].forEach(function (kind) {{
+              var g = document.getElementById(c + '-' + kind + '-' + idx);
+              if (g) g.classList.toggle('focus-on', on);
+            }});
+            var svg = document.querySelector('svg.rank-chart g[id^="' + c + '-series-"]');
+            svg = svg && svg.closest('svg');
+            if (svg) svg.classList.toggle('has-focus', on);
+          }});
+        }}
+        el.addEventListener('mouseenter', function () {{ focus(true); }});
+        el.addEventListener('mouseleave', function () {{ focus(false); }});
+      }});
+
       document.querySelectorAll('.legend-item[data-idx]').forEach(function (el) {{
         el.addEventListener('click', function () {{
           var idx = el.getAttribute('data-idx');
