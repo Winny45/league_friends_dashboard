@@ -533,7 +533,8 @@ def render_friend_card(f, rank_position, now):
     )
 
     return f'''
-    <section class="card" id="friend-{f["label"].lower()}">
+    <section class="card" id="friend-{f["label"].lower()}" role="tabpanel"
+             aria-labelledby="pill-{f["label"].lower()}" tabindex="-1">
       <header class="card-head">
         <div class="rank-badge">#{rank_position}</div>
         <div>
@@ -628,7 +629,7 @@ def render_leaderboard_row(f, i, trend=None):
     # cells in place without re-rendering the page.
     return f'''<tr data-friend-row="{esc(f["label"])}">
       <td class="num"><span class="{pos_cls}">{i}</span></td>
-      <td><a href="#friend-{f["label"].lower()}" data-friend-link="{f["label"].lower()}">{esc(f["label"])}</a></td>
+      <td><a href="#friends/{f["label"].lower()}" data-friend-link="{f["label"].lower()}">{esc(f["label"])}</a></td>
       <td class="rank-cell" data-cell="rank" style="color:var({var});font-weight:600;">{render_rank_icon((solo or {}).get("tier"))}{rank_label(solo)}</td>
       <td class="num" data-cell="winrate">{esc(wr) + '%' if wr is not None else '—'}</td>
       <td class="num muted" data-cell="record">{esc((solo or {}).get('wins', 0))}W / {esc((solo or {}).get('losses', 0))}L</td>
@@ -1585,8 +1586,13 @@ def build_html(data):
         for i, f in enumerate(friends_sorted)
     )
     cards = "".join(render_friend_card(f, i + 1, now) for i, f in enumerate(friends_sorted))
+    # Pills select which friend card is shown, so they are a tablist, not a
+    # row of buttons: one tab stop for the group, arrow keys within it.
     friend_pills = "".join(
-        f'<button class="pill{" active" if i == 0 else ""}" type="button" data-friend="{f["label"].lower()}">{esc(f["label"])}</button>'
+        f'<button class="pill{" active" if i == 0 else ""}" type="button" role="tab"'
+        f' id="pill-{f["label"].lower()}" aria-controls="friend-{f["label"].lower()}"'
+        f' aria-selected="{"true" if i == 0 else "false"}" tabindex="{0 if i == 0 else -1}"'
+        f' data-friend="{f["label"].lower()}">{esc(f["label"])}</button>'
         for i, f in enumerate(friends_sorted)
     )
 
@@ -1782,19 +1788,63 @@ def build_html(data):
     border-radius: 999px; padding: 3px 10px; white-space: nowrap;
   }}
   .meta-chip b {{ font-weight: 700; color: var(--text-primary); }}
-  .header-actions {{ display: flex; gap: 8px; flex-shrink: 0; }}
-  #theme-toggle, #export-csv {{
-    flex-shrink: 0; height: 40px; border-radius: 11px;
+  .header-actions {{ display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }}
+  /* One class for every header control. These used to be styled by id, and
+     three of the five ids were missing from the rule, so Live ranks / Refresh
+     data / API key rendered as raw browser buttons beside two styled ones. */
+  .hbtn {{
+    flex-shrink: 0; height: 40px; border-radius: 11px; padding: 0 15px;
     border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
     font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
     display: flex; align-items: center; justify-content: center; gap: 7px;
     box-shadow: var(--shadow-sm); transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
   }}
+  /* .hbtn sets display:flex, which would otherwise defeat the `hidden`
+     attribute the hosted-only buttons rely on. */
+  .hbtn[hidden] {{ display: none; }}
+  .hbtn:disabled {{ opacity: .55; cursor: not-allowed; transform: none; }}
   #theme-toggle {{ width: 40px; font-size: 17px; padding: 0; }}
-  #export-csv {{ padding: 0 15px; }}
-  #theme-toggle:hover, #export-csv:hover {{ transform: translateY(-1px); box-shadow: var(--shadow-md); background: var(--surface-2); }}
-  #theme-toggle:active, #export-csv:active {{ transform: translateY(0); }}
+  .hbtn:hover:not(:disabled) {{ transform: translateY(-1px); box-shadow: var(--shadow-md); background: var(--surface-2); }}
+  .hbtn:active:not(:disabled) {{ transform: translateY(0); }}
+  /* The header is one real action plus utilities, so only the action is
+     coloured. Everything else stays quiet. */
+  .hbtn.primary {{
+    background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 62%, var(--accent-2)));
+    border-color: transparent; color: #fff; box-shadow: 0 2px 10px var(--halo);
+  }}
+  .hbtn.primary:hover:not(:disabled) {{
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 86%, #000),
+                                        color-mix(in srgb, var(--accent) 56%, var(--accent-2)));
+  }}
   :focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }}
+
+  /* Keyboard users shouldn't have to tab through the whole header to reach
+     the content. Off-screen until focused. */
+  .skip-link {{
+    position: absolute; left: 12px; top: -70px; z-index: 60;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 15px; font-size: 13px; font-weight: 600;
+    box-shadow: var(--shadow-md); transition: top .15s ease;
+  }}
+  .skip-link:focus {{ top: 12px; text-decoration: none; }}
+
+  /* Friend cards and match tables run long; a trip back to the top beats
+     scrolling past four of them to reach the tab bar. */
+  #to-top {{
+    position: fixed; right: 18px; bottom: 18px; z-index: 40;
+    width: 44px; height: 44px; border-radius: 50%; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    font-size: 16px; line-height: 1; box-shadow: var(--shadow-md);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; visibility: hidden; transform: translateY(10px);
+    transition: opacity .2s ease, transform .2s ease, visibility .2s ease, background .16s ease;
+  }}
+  #to-top.show {{ opacity: 1; visibility: visible; transform: none; }}
+  #to-top:hover {{ background: var(--surface-2); }}
+
+  /* One-line "you can click this" note under a panel heading. */
+  .panel-hint {{ font-size: 12.5px; color: var(--muted); margin: -8px 0 13px; }}
 
   .badge-fresh {{
     display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
@@ -1868,6 +1918,9 @@ def build_html(data):
   .leaderboard td:nth-child(2) a {{ color: var(--text-primary); font-weight: 700; }}
   .leaderboard td:nth-child(2) a:hover {{ color: var(--accent); text-decoration: none; }}
   .leaderboard tbody tr:hover td:nth-child(2) a {{ color: var(--accent); }}
+  /* The whole row opens that player, not just the few characters of their
+     name — the row is what people aim at. */
+  .leaderboard tbody tr {{ cursor: pointer; }}
   @media (max-width: 720px) {{
     .leaderboard {{ table-layout: auto; }}
     .leaderboard tbody td {{ padding-top: 9px; padding-bottom: 9px; }}
@@ -2041,9 +2094,16 @@ def build_html(data):
   /* ---- Tabs ---------------------------------------------------------- */
   .tabs {{
     display: flex; gap: 4px; margin-bottom: 20px; overflow-x: auto;
-    background: var(--surface-1); border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface-1) 86%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    backdrop-filter: saturate(180%) blur(14px);
+    border: 1px solid var(--border);
     border-radius: 12px; padding: 5px; box-shadow: var(--shadow-sm);
     scrollbar-width: none;
+    /* Sticky so switching view never means scrolling back up past a long
+       friend card. Content passes under the blur rather than behind a solid
+       bar, so you keep your place. */
+    position: sticky; top: 10px; z-index: 30;
   }}
   .tabs::-webkit-scrollbar {{ display: none; }}
   .tab-btn {{
@@ -2062,6 +2122,7 @@ def build_html(data):
   }}
 
   .friend-pills {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }}
+  .card[hidden], .tab-panel[hidden] {{ display: none; }}
   .pill {{
     appearance: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600;
     padding: 7px 15px; border-radius: 999px; border: 1px solid var(--border);
@@ -2080,8 +2141,7 @@ def build_html(data):
   .row-live [data-cell="rank"] {{ font-weight: 700; }}
 
   /* ---- Hosted controls: refresh + API key ---------------------------- */
-  #refresh-data[hidden], #set-key[hidden] {{ display: none; }}
-  #refresh-data:disabled, #set-key:disabled {{ opacity: .55; cursor: not-allowed; }}
+  /* Visibility and disabled styling for these now come from .hbtn above. */
   .refresh-status {{
     background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 14px 18px; margin-bottom: 18px; box-shadow: var(--shadow-sm);
@@ -2167,8 +2227,18 @@ def build_html(data):
     .legend-item {{ padding: 9px 12px; min-height: 38px; display: inline-flex; align-items: center; }}
     .range-btn {{ padding: 11px 18px; min-height: 40px; font-size: 13px; }}
     .pill {{ padding: 10px 16px; min-height: 40px; }}
-    #export-csv, #theme-toggle, #refresh-data, #set-key {{ height: 42px; }}
-    #export-csv, #refresh-data, #set-key {{ padding: 0 12px; font-size: 12.5px; }}
+    .hbtn {{ height: 42px; padding: 0 12px; font-size: 12.5px; }}
+    #theme-toggle {{ padding: 0; }}
+    /* Seven friends wrapped into three rows of pills and pushed the card
+       itself most of a screen down. One scrollable row instead, bled to the
+       screen edges so it reads as scrollable. */
+    .friend-pills {{
+      flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+      margin-left: -12px; margin-right: -12px; padding: 2px 12px;
+    }}
+    .friend-pills::-webkit-scrollbar {{ display: none; }}
+    .pill {{ flex-shrink: 0; }}
+    #to-top {{ right: 12px; bottom: 12px; }}
     summary {{ padding: 13px 0; }}
 
     .chart-wide {{ display: none; }}
@@ -2200,6 +2270,7 @@ def build_html(data):
 </style>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to dashboard</a>
   <div class="wrap">
     <header class="top">
       <div class="brand">
@@ -2216,11 +2287,11 @@ def build_html(data):
       <div class="header-actions">
         <!-- Hosted-only controls: revealed by JS once /api/status answers, so
              a locally generated dashboard doesn't show buttons that can't work. -->
-        <button id="live-ranks" type="button" title="Update everyone's rank and LP right now, using your own Riot API key">⟳ Live ranks</button>
-        <button id="refresh-data" class="hosted-only" type="button" hidden title="Re-fetch everyone's games from the Riot API">⟳ Refresh data</button>
-        <button id="set-key" class="hosted-only" type="button" hidden title="Update the Riot API key (dev keys expire every 24h)">🔑 API key</button>
-        <button id="export-csv" type="button" title="Download this season's match data as a CSV">⬇ Export CSV</button>
-        <button id="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+        <button id="live-ranks" class="hbtn primary" type="button" title="Update everyone's rank and LP right now, using your own Riot API key">⟳ Live ranks</button>
+        <button id="refresh-data" class="hbtn hosted-only" type="button" hidden title="Re-fetch everyone's games from the Riot API">⟳ Refresh data</button>
+        <button id="set-key" class="hbtn hosted-only" type="button" hidden title="Update the Riot API key (dev keys expire every 24h)">🔑 API key</button>
+        <button id="export-csv" class="hbtn" type="button" title="Download this season's match data as a CSV">⬇ Export CSV</button>
+        <button id="theme-toggle" class="hbtn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
       </div>
     </header>
 
@@ -2247,19 +2318,21 @@ def build_html(data):
 
     {demo_banner}
 
-    <nav class="tabs">
-      <button class="tab-btn active" type="button" data-tab="overview">Overview</button>
-      <button class="tab-btn" type="button" data-tab="rank">Rank progress</button>
-      {'<button class="tab-btn" type="button" data-tab="duo">Duo synergy</button>' if duo_synergy_panel else ""}
-      <button class="tab-btn" type="button" data-tab="friends">Friends</button>
-    </nav>
+    <main id="main" tabindex="-1">
+    <div class="tabs" role="tablist" aria-label="Dashboard sections">
+      <button class="tab-btn active" type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" tabindex="0" data-tab="overview">Overview</button>
+      <button class="tab-btn" type="button" role="tab" id="tab-rank" aria-controls="panel-rank" aria-selected="false" tabindex="-1" data-tab="rank">Rank progress</button>
+      {'<button class="tab-btn" type="button" role="tab" id="tab-duo" aria-controls="panel-duo" aria-selected="false" tabindex="-1" data-tab="duo">Duo synergy</button>' if duo_synergy_panel else ""}
+      <button class="tab-btn" type="button" role="tab" id="tab-friends" aria-controls="panel-friends" aria-selected="false" tabindex="-1" data-tab="friends">Friends</button>
+    </div>
 
-    <section class="tab-panel" data-tab-panel="overview">
+    <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="-1" data-tab-panel="overview">
       {awards_panel}
       {week_glance_panel}
 
       <div class="panel">
         <h2 style="margin-bottom:14px;">Ranked Solo/Duo leaderboard</h2>
+        <p class="panel-hint">Click any row to open that player&rsquo;s full season.</p>
         <div class="table-scroll">
           <table class="leaderboard">
             <thead><tr><th class="num">#</th><th>Friend</th><th>Rank</th><th class="num">Winrate</th><th class="num">Record</th><th class="num">7-day trend</th></tr></thead>
@@ -2269,16 +2342,17 @@ def build_html(data):
       </div>
     </section>
 
-    <section class="tab-panel" data-tab-panel="rank" style="display:none;">
+    <section class="tab-panel" id="panel-rank" role="tabpanel" aria-labelledby="tab-rank" tabindex="-1" data-tab-panel="rank" hidden>
       {rank_chart_panel}
     </section>
 
-    {f'<section class="tab-panel" data-tab-panel="duo" style="display:none;">{duo_synergy_panel}</section>' if duo_synergy_panel else ""}
+    {f'<section class="tab-panel" id="panel-duo" role="tabpanel" aria-labelledby="tab-duo" tabindex="-1" data-tab-panel="duo" hidden>{duo_synergy_panel}</section>' if duo_synergy_panel else ""}
 
-    <section class="tab-panel" data-tab-panel="friends" style="display:none;">
-      <div class="friend-pills">{friend_pills}</div>
+    <section class="tab-panel" id="panel-friends" role="tabpanel" aria-labelledby="tab-friends" tabindex="-1" data-tab-panel="friends" hidden>
+      <div class="friend-pills" role="tablist" aria-label="Choose a player">{friend_pills}</div>
       {cards}
     </section>
+    </main>
 
     <footer>
       Data via the Riot Games API. Not endorsed by Riot Games. Remake games (early
@@ -2289,6 +2363,8 @@ def build_html(data):
       </div>
     </footer>
   </div>
+
+  <button id="to-top" type="button" title="Back to top" aria-label="Back to top">↑</button>
 
   <script type="application/json" id="season-export-data">{season_export_json}</script>
   <script type="application/json" id="live-refresh-data">{live_refresh_json}</script>
@@ -2641,7 +2717,14 @@ def build_html(data):
         onConfirm = opts.onConfirm;
         setTimeout(function () {{ (opts.needsPass ? modalPass : modalKey).focus(); }}, 30);
       }}
-      function closeModal() {{ modal.hidden = true; onConfirm = null; }}
+      function closeModal() {{
+        modal.hidden = true;
+        onConfirm = null;
+        // The live-ranks flow (a separate block above) binds modalOk.onclick
+        // directly. Escape used to leave that binding in place, so a later
+        // hosted confirm would fire the stale live-ranks handler as well.
+        modalOk.onclick = null;
+      }}
       modalCancel.addEventListener('click', closeModal);
       modal.addEventListener('click', function (e) {{ if (e.target === modal) closeModal(); }});
       document.addEventListener('keydown', function (e) {{
@@ -2752,38 +2835,175 @@ def build_html(data):
 
   <script>
     (function () {{
-      var tabBtns = document.querySelectorAll('.tab-btn');
-      var tabPanels = document.querySelectorAll('.tab-panel');
+      var slice = function (n) {{ return Array.prototype.slice.call(n); }};
+      var tabBtns   = slice(document.querySelectorAll('.tab-btn'));
+      var tabPanels = slice(document.querySelectorAll('.tab-panel'));
+      var pills     = slice(document.querySelectorAll('.pill[data-friend]'));
+      var cards     = slice(document.querySelectorAll('.card[id^="friend-"]'));
+      var tabNames    = tabBtns.map(function (b) {{ return b.getAttribute('data-tab'); }});
+      var friendNames = pills.map(function (p) {{ return p.getAttribute('data-friend'); }});
+      var syncing = false;
+
+      function setSelected(btn, on) {{
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        // Roving tabindex: the whole group is one tab stop and the arrow keys
+        // move within it, which is what a tablist is expected to do.
+        btn.tabIndex = on ? 0 : -1;
+      }}
 
       function showTab(name) {{
-        tabBtns.forEach(function (b) {{ b.classList.toggle('active', b.getAttribute('data-tab') === name); }});
-        tabPanels.forEach(function (p) {{ p.style.display = (p.getAttribute('data-tab-panel') === name) ? '' : 'none'; }});
+        if (tabNames.indexOf(name) < 0) return false;
+        tabBtns.forEach(function (b) {{ setSelected(b, b.getAttribute('data-tab') === name); }});
+        tabPanels.forEach(function (p) {{ p.hidden = p.getAttribute('data-tab-panel') !== name; }});
+        return true;
       }}
-      tabBtns.forEach(function (btn) {{
-        btn.addEventListener('click', function () {{ showTab(btn.getAttribute('data-tab')); }});
-      }});
 
-      var pills = document.querySelectorAll('.pill[data-friend]');
-      var friendCards = document.querySelectorAll('.card[id^="friend-"]');
       function showFriend(label) {{
-        friendCards.forEach(function (c) {{ c.style.display = (c.id === 'friend-' + label) ? '' : 'none'; }});
-        pills.forEach(function (p) {{ p.classList.toggle('active', p.getAttribute('data-friend') === label); }});
+        if (friendNames.indexOf(label) < 0) return false;
+        cards.forEach(function (c) {{ c.hidden = c.id !== 'friend-' + label; }});
+        pills.forEach(function (p) {{ setSelected(p, p.getAttribute('data-friend') === label); }});
+        return true;
       }}
-      pills.forEach(function (p) {{
-        p.addEventListener('click', function () {{ showFriend(p.getAttribute('data-friend')); }});
-      }});
-      if (pills.length) showFriend(pills[0].getAttribute('data-friend'));
 
-      // Leaderboard "Friend" links jump to the Friends tab and select that
-      // friend's card, instead of just anchor-scrolling to a hidden panel.
+      function activeOf(list, names) {{
+        for (var i = 0; i < list.length; i++) {{
+          if (list[i].classList.contains('active')) return names[i];
+        }}
+        return names[0];
+      }}
+
+      // ---- The address bar carries the current view ----------------------
+      // This page exists to be pasted into a group chat, so "look at Rory's
+      // season" has to survive being copied out of the bar and reopened, and
+      // the Back button has to undo a tab switch rather than leave the site.
+      function writeRoute(push) {{
+        if (syncing) return;
+        var tab = activeOf(tabBtns, tabNames);
+        var friend = pills.length ? activeOf(pills, friendNames) : null;
+        var hash = '#' + (tab === 'friends' && friend ? 'friends/' + friend : tab);
+        if (hash === location.hash) return;
+        try {{
+          if (push) history.pushState(null, '', hash);
+          else history.replaceState(null, '', hash);
+        }} catch (e) {{
+          location.hash = hash;  // history API is restricted on file:// URLs
+        }}
+      }}
+
+      function applyRoute() {{
+        var raw = (location.hash || '').replace(/^#/, '');
+        if (!raw) return false;
+        var parts = raw.split('/');
+        var tab = parts[0], friend = parts[1];
+        // Links shared before routing existed pointed at "#friend-name".
+        if (raw.indexOf('friend-') === 0) {{ tab = 'friends'; friend = raw.slice(7); }}
+        syncing = true;
+        var ok = showTab(tab);
+        if (ok && friend) showFriend(friend);
+        syncing = false;
+        return ok;
+      }}
+
+      function activate(show, value) {{
+        if (show(value)) writeRoute(true);
+      }}
+
+      function keyNav(list, onPick) {{
+        return function (e) {{
+          var i = list.indexOf(e.currentTarget), n = -1;
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') n = (i + 1) % list.length;
+          else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') n = (i - 1 + list.length) % list.length;
+          else if (e.key === 'Home') n = 0;
+          else if (e.key === 'End') n = list.length - 1;
+          if (n < 0) return;
+          e.preventDefault();
+          onPick(list[n]);
+          list[n].focus();
+        }};
+      }}
+
+      tabBtns.forEach(function (b) {{
+        var pick = function (el) {{ activate(showTab, el.getAttribute('data-tab')); }};
+        b.addEventListener('click', function () {{ pick(b); }});
+        b.addEventListener('keydown', keyNav(tabBtns, pick));
+      }});
+
+      pills.forEach(function (pl) {{
+        var pick = function (el) {{ activate(showFriend, el.getAttribute('data-friend')); }};
+        pl.addEventListener('click', function () {{ pick(pl); }});
+        pl.addEventListener('keydown', keyNav(pills, pick));
+      }});
+
+      // Leaderboard rows open that player's card. The name stays a real link
+      // so copy-link and open-in-new-tab keep working; the row around it is
+      // just a bigger target for the same thing.
+      function openFriend(label) {{
+        showTab('friends');
+        showFriend(label);
+        writeRoute(true);
+        window.scrollTo(0, 0);
+        var card = document.getElementById('friend-' + label);
+        if (card && card.focus) {{
+          try {{ card.focus({{ preventScroll: true }}); }} catch (e) {{}}
+        }}
+      }}
+
       document.querySelectorAll('a[data-friend-link]').forEach(function (a) {{
         a.addEventListener('click', function (e) {{
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
           e.preventDefault();
-          var label = a.getAttribute('data-friend-link');
-          showTab('friends');
-          showFriend(label);
+          openFriend(a.getAttribute('data-friend-link'));
         }});
       }});
+
+      document.querySelectorAll('tr[data-friend-row]').forEach(function (tr) {{
+        tr.addEventListener('click', function (e) {{
+          if (e.target.closest && e.target.closest('a')) return;  // the link handles itself
+          var sel = window.getSelection && String(window.getSelection());
+          if (sel) return;                                        // don't hijack text selection
+          var a = tr.querySelector('a[data-friend-link]');
+          if (a) openFriend(a.getAttribute('data-friend-link'));
+        }});
+      }});
+
+      // Default to the top-ranked friend so the Friends panel is never blank,
+      // then let the URL override it.
+      if (pills.length) showFriend(friendNames[0]);
+      applyRoute();
+      window.addEventListener('hashchange', applyRoute);
+      window.addEventListener('popstate', applyRoute);
+
+      var skip = document.querySelector('.skip-link');
+      if (skip) {{
+        skip.addEventListener('click', function (e) {{
+          // Move focus without writing "#main" into the address bar, which
+          // would otherwise overwrite the current view's route.
+          e.preventDefault();
+          var m = document.getElementById('main');
+          if (m) {{ m.focus(); m.scrollIntoView(); }}
+        }});
+      }}
+
+      var toTop = document.getElementById('to-top');
+      if (toTop) {{
+        var pending = null;
+        function syncToTop() {{
+          var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+          toTop.classList.toggle('show', y > 520);
+        }}
+        // Trailing-edge throttle rather than requestAnimationFrame: rAF is
+        // suspended in background tabs, and the last sample always lands.
+        window.addEventListener('scroll', function () {{
+          if (pending) return;
+          pending = setTimeout(function () {{ pending = null; syncToTop(); }}, 100);
+        }}, {{ passive: true }});
+        syncToTop();
+        toTop.addEventListener('click', function () {{
+          try {{ window.scrollTo({{ top: 0, behavior: 'smooth' }}); }}
+          catch (e) {{ window.scrollTo(0, 0); }}
+        }});
+      }}
     }})();
   </script>
 </body>
