@@ -85,18 +85,22 @@ def snapshot_change_label(prev, curr):
     return None
 
 
-def net_change_label(first, last):
+def net_change_label(first, last, window="30d"):
     """Net movement across the whole visible window, for the small label
     under each line's end point. Same tier+division at both ends -> a plain
     net LP number; otherwise a compact 'was -> now' since raw LP isn't
-    comparable across a promotion/demotion."""
+    comparable across a promotion/demotion.
+
+    `window` only names the period in the text — callers measuring a
+    different span must say so, or the label contradicts its own column
+    header (the leaderboard's 7-day trend used to read "(30d)")."""
     first_score, last_score = tier_score(first), tier_score(last)
     direction = 1 if last_score > first_score else (-1 if last_score < first_score else 0)
     if _rank_snapshot_key(first) == _rank_snapshot_key(last):
         delta = (last.get("leaguePoints") or 0) - (first.get("leaguePoints") or 0)
         if delta == 0:
             return None
-        return {"text": f"{'+' if delta >= 0 else ''}{delta} LP (30d)", "direction": direction}
+        return {"text": f"{'+' if delta >= 0 else ''}{delta} LP ({window})", "direction": direction}
     first_short = rank_label(first).split(" &middot;")[0]
     last_short = rank_label(last).split(" &middot;")[0]
     return {"text": f"{first_short} → {last_short}", "direction": direction}
@@ -366,7 +370,7 @@ def weekly_trend_for(rank_history, label, now):
     window = [h for h in pts if h["date"] >= cutoff]
     if len(window) < 2:
         return None
-    return net_change_label(window[0], window[-1])
+    return net_change_label(window[0], window[-1], window="7d")
 
 
 def weekly_rank_leader(rank_history, now):
@@ -390,7 +394,7 @@ def weekly_rank_leader(rank_history, now):
         if delta <= 0:
             continue
         if best is None or delta > best["delta"]:
-            net = net_change_label(window[0], window[-1])
+            net = net_change_label(window[0], window[-1], window="7d")
             best = {"label": label, "delta": delta, "text": net["text"] if net else None}
     return best
 
@@ -1760,13 +1764,32 @@ def build_html(data):
      place rather than spill past the panel's rounded edge. */
   .table-scroll {{ overflow-x: auto; }}
   .leaderboard {{ table-layout: fixed; min-width: 100%; }}
-  .leaderboard th:nth-child(1), .leaderboard td:nth-child(1) {{ width: 5%; text-align: center; }}
-  .leaderboard th:nth-child(2), .leaderboard td:nth-child(2) {{ width: 24%; }}
-  .leaderboard th:nth-child(3), .leaderboard td:nth-child(3) {{ width: 17%; }}
-  .leaderboard th:nth-child(4), .leaderboard td:nth-child(4) {{ width: 11%; }}
-  .leaderboard th:nth-child(5), .leaderboard td:nth-child(5) {{ width: 16%; }}
-  .leaderboard th:nth-child(6), .leaderboard td:nth-child(6) {{ width: 27%; }}
-  @media (max-width: 720px) {{ .leaderboard {{ table-layout: auto; }} }}
+  /* Rank needs the most room of the text columns — "Platinum III · 91 LP"
+     plus an emblem — and previously got 17%, leaving ~3px of slack, so a
+     slightly wider glyph combination wrapped one row onto two lines. The
+     name column was the one carrying surplus, so the space comes from there. */
+  .leaderboard th:nth-child(1), .leaderboard td:nth-child(1) {{ width: 6%; text-align: center; }}
+  .leaderboard th:nth-child(2), .leaderboard td:nth-child(2) {{ width: 18%; }}
+  .leaderboard th:nth-child(3), .leaderboard td:nth-child(3) {{ width: 22%; }}
+  .leaderboard th:nth-child(4), .leaderboard td:nth-child(4) {{ width: 12%; }}
+  .leaderboard th:nth-child(5), .leaderboard td:nth-child(5) {{ width: 17%; }}
+  .leaderboard th:nth-child(6), .leaderboard td:nth-child(6) {{ width: 25%; }}
+  /* Belt and braces: these are all short single-line values, so never wrap
+     them even if a future tier name or record runs longer than expected. */
+  .leaderboard td:nth-child(3), .leaderboard td:nth-child(4),
+  .leaderboard td:nth-child(5), .leaderboard td:nth-child(6),
+  .leaderboard th {{ white-space: nowrap; }}
+  .leaderboard td:nth-child(4), .leaderboard td:nth-child(5) {{ font-variant-numeric: tabular-nums; }}
+  .leaderboard tbody td {{ padding-top: 12px; padding-bottom: 12px; }}
+  /* The name is the row's anchor, so it reads as text rather than a link,
+     and stops competing with the tier colour next to it. */
+  .leaderboard td:nth-child(2) a {{ color: var(--text-primary); font-weight: 700; }}
+  .leaderboard td:nth-child(2) a:hover {{ color: var(--accent); text-decoration: none; }}
+  .leaderboard tbody tr:hover td:nth-child(2) a {{ color: var(--accent); }}
+  @media (max-width: 720px) {{
+    .leaderboard {{ table-layout: auto; }}
+    .leaderboard tbody td {{ padding-top: 9px; padding-bottom: 9px; }}
+  }}
 
   /* Leaderboard position medals */
   .pos {{
