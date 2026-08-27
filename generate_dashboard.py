@@ -620,12 +620,14 @@ def render_leaderboard_row(f, i, trend=None):
     wr = (solo or {}).get("winrate")
     # Top three get a tinted medal chip; everyone else a neutral one.
     pos_cls = f"pos pos-{i}" if i <= 3 else "pos"
-    return f'''<tr>
+    # data-* hooks let the client-side "live ranks" refresh rewrite these
+    # cells in place without re-rendering the page.
+    return f'''<tr data-friend-row="{esc(f["label"])}">
       <td class="num"><span class="{pos_cls}">{i}</span></td>
       <td><a href="#friend-{f["label"].lower()}" data-friend-link="{f["label"].lower()}">{esc(f["label"])}</a></td>
-      <td class="rank-cell" style="color:var({var});font-weight:600;">{render_rank_icon((solo or {}).get("tier"))}{rank_label(solo)}</td>
-      <td class="num">{esc(wr) + '%' if wr is not None else '—'}</td>
-      <td class="num muted">{esc((solo or {}).get('wins', 0))}W / {esc((solo or {}).get('losses', 0))}L</td>
+      <td class="rank-cell" data-cell="rank" style="color:var({var});font-weight:600;">{render_rank_icon((solo or {}).get("tier"))}{rank_label(solo)}</td>
+      <td class="num" data-cell="winrate">{esc(wr) + '%' if wr is not None else '—'}</td>
+      <td class="num muted" data-cell="record">{esc((solo or {}).get('wins', 0))}W / {esc((solo or {}).get('losses', 0))}L</td>
       <td class="num">{render_trend_arrow(trend)}</td>
     </tr>'''
 
@@ -1538,6 +1540,19 @@ def build_html(data):
     ]
     season_export_json = json.dumps(season_export, ensure_ascii=False)
 
+    # Everything the client-side "live ranks" refresh needs to call Riot with a
+    # viewer's own key and rewrite the leaderboard: who to look up, which hosts
+    # to use, and how to rebuild a tier's colour and emblem. Deliberately no
+    # puuids — those stay out of the public page, so the browser resolves each
+    # Riot ID itself.
+    live_refresh_json = json.dumps({
+        "platform": data.get("platform", "euw1"),
+        "friends": [{"label": f["label"], "riotId": f.get("riotId", "")} for f in friends_sorted],
+        "tierVars": {t: tier_var(t) for t in TIER_ORDER},
+        "rankIconBase": RANK_ICON_BASE,
+        "apexTiers": sorted(APEX_TIERS),
+    }, ensure_ascii=False)
+
     demo_banner = ""
     if data.get("demo"):
         demo_banner = '''<div class="banner">This is sample data so you can preview the dashboard. Run
@@ -1935,6 +1950,11 @@ def build_html(data):
     border-color: transparent; color: #fff; box-shadow: 0 2px 10px var(--halo);
   }}
 
+  /* Rows updated by the client-side live-ranks refresh, so it's obvious
+     which figures are live and which came from the published snapshot. */
+  .row-live td {{ background: color-mix(in srgb, var(--accent) 7%, transparent); }}
+  .row-live [data-cell="rank"] {{ font-weight: 700; }}
+
   /* ---- Hosted controls: refresh + API key ---------------------------- */
   #refresh-data[hidden], #set-key[hidden] {{ display: none; }}
   #refresh-data:disabled, #set-key:disabled {{ opacity: .55; cursor: not-allowed; }}
@@ -2071,6 +2091,7 @@ def build_html(data):
       <div class="header-actions">
         <!-- Hosted-only controls: revealed by JS once /api/status answers, so
              a locally generated dashboard doesn't show buttons that can't work. -->
+        <button id="live-ranks" type="button" title="Update everyone's rank and LP right now, using your own Riot API key">⟳ Live ranks</button>
         <button id="refresh-data" class="hosted-only" type="button" hidden title="Re-fetch everyone's games from the Riot API">⟳ Refresh data</button>
         <button id="set-key" class="hosted-only" type="button" hidden title="Update the Riot API key (dev keys expire every 24h)">🔑 API key</button>
         <button id="export-csv" type="button" title="Download this season's match data as a CSV">⬇ Export CSV</button>
@@ -2145,6 +2166,7 @@ def build_html(data):
   </div>
 
   <script type="application/json" id="season-export-data">{season_export_json}</script>
+  <script type="application/json" id="live-refresh-data">{live_refresh_json}</script>
 
   <script>
     (function () {{
@@ -2213,6 +2235,192 @@ def build_html(data):
           }});
           el.style.opacity = willHide ? '0.35' : '1';
         }});
+      }});
+    }})();
+  </script>
+
+  <script>
+    // ---- Live ranks -------------------------------------------------------
+    // Updates everyone's rank/LP/record straight from Riot, in the viewer's
+    // own browser, using a key they supply themselves. Riot's API permits
+    // cross-origin calls, so this needs no server at all — which means it
+    // works on the plain static build with no storage and no functions.
+    //
+    // The key never leaves this browser except to Riot: it is not sent to
+    // this site's origin, not embedded in the page, and only kept in
+    // localStorage if the viewer ticks the box. Everyone using their own key
+    // also means the rate limit is spread across people rather than pooled
+    // onto one.
+    //
+    // Only rank data is refreshed. Match history, highlights and the LP chart
+    // come from the published snapshot, since rebuilding those needs the full
+    // per-match fetch the generator does.
+    (function () {{
+      var cfgEl = document.getElementById('live-refresh-data');
+      if (!cfgEl) return;
+      var CFG = JSON.parse(cfgEl.textContent);
+      var btn = document.getElementById('live-ranks');
+      var statusBox = document.getElementById('refresh-status');
+      var barFill = document.getElementById('refresh-bar-fill');
+      var statusText = document.getElementById('refresh-text');
+      var modal = document.getElementById('modal');
+      var modalTitle = document.getElementById('modal-title');
+      var modalBlurb = document.getElementById('modal-blurb');
+      var modalPass = document.getElementById('modal-pass');
+      var modalKey = document.getElementById('modal-key');
+      var modalKeyField = document.getElementById('modal-key-field');
+      var modalMsg = document.getElementById('modal-msg');
+      var modalOk = document.getElementById('modal-ok');
+      var modalCancel = document.getElementById('modal-cancel');
+      var KEY_STORE = 'league-dashboard/riot-key';
+
+      // Riot's regional routing host, derived from the platform id.
+      var ROUTING = {{
+        euw1: 'europe', eun1: 'europe', tr1: 'europe', ru: 'europe', me1: 'europe',
+        na1: 'americas', br1: 'americas', la1: 'americas', la2: 'americas',
+        kr: 'asia', jp1: 'asia',
+        oc1: 'sea', ph2: 'sea', sg2: 'sea', th2: 'sea', tw2: 'sea', vn2: 'sea'
+      }};
+      var platform = CFG.platform || 'euw1';
+      var routing = ROUTING[platform] || 'europe';
+
+      function say(msg, cls, pct) {{
+        statusBox.hidden = false;
+        statusText.textContent = msg;
+        statusText.className = 'refresh-text' + (cls ? ' ' + cls : '');
+        if (typeof pct === 'number') barFill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+      }}
+
+      function riot(host, path, key) {{
+        return fetch('https://' + host + '.api.riotgames.com' + path, {{
+          headers: {{ 'X-Riot-Token': key }}
+        }}).then(function (r) {{
+          if (r.status === 401 || r.status === 403) {{
+            var e = new Error('Riot rejected the key (' + r.status + '). Development keys expire ' +
+                              'after 24 hours — generate a fresh one at developer.riotgames.com.');
+            e.fatal = true; throw e;
+          }}
+          if (r.status === 429) {{
+            var e2 = new Error('Riot rate limit reached. Wait a minute and try again.');
+            e2.fatal = true; throw e2;
+          }}
+          if (r.status === 404) return null;
+          if (!r.ok) throw new Error('Riot returned HTTP ' + r.status);
+          return r.json();
+        }});
+      }}
+
+      function rankText(e) {{
+        if (!e || !e.tier) return 'Unranked';
+        var tier = e.tier.charAt(0) + e.tier.slice(1).toLowerCase();
+        if (CFG.apexTiers.indexOf(e.tier) !== -1) return tier + ' · ' + (e.leaguePoints || 0) + ' LP';
+        return tier + ' ' + (e.rank || '') + ' · ' + (e.leaguePoints || 0) + ' LP';
+      }}
+
+      function paint(label, entry) {{
+        var row = document.querySelector('tr[data-friend-row="' + CSS.escape(label) + '"]');
+        if (!row) return;
+        var rankCell = row.querySelector('[data-cell="rank"]');
+        var wrCell = row.querySelector('[data-cell="winrate"]');
+        var recCell = row.querySelector('[data-cell="record"]');
+        if (rankCell) {{
+          var v = CFG.tierVars[entry && entry.tier] || '--tier-unranked';
+          rankCell.style.color = 'var(' + v + ')';
+          var icon = '';
+          if (entry && entry.tier) {{
+            var src = CFG.rankIconBase.replace('{{tier}}', entry.tier.toLowerCase());
+            icon = '<img src="' + src + '" alt="" class="rank-icon" width="20" height="20" ' +
+                   'onerror="this.style.visibility=\\'hidden\\'">';
+          }}
+          rankCell.innerHTML = icon + rankText(entry);
+        }}
+        var wins = (entry && entry.wins) || 0, losses = (entry && entry.losses) || 0;
+        var total = wins + losses;
+        if (wrCell) wrCell.textContent = total ? (Math.round(wins / total * 1000) / 10) + '%' : '—';
+        if (recCell) recCell.textContent = wins + 'W / ' + losses + 'L';
+        row.classList.add('row-live');
+      }}
+
+      function run(key, remember) {{
+        btn.disabled = true;
+        try {{
+          if (remember) localStorage.setItem(KEY_STORE, key);
+          else localStorage.removeItem(KEY_STORE);
+        }} catch (e) {{ /* private mode — carry on without remembering */ }}
+
+        var friends = CFG.friends || [];
+        var done = 0, updated = 0;
+
+        function step(i) {{
+          if (i >= friends.length) {{
+            var when = new Date().toLocaleTimeString([], {{ hour: '2-digit', minute: '2-digit' }});
+            say('Ranks updated for ' + updated + ' of ' + friends.length +
+                ' friends, live as of ' + when + '. Match history and charts still show the ' +
+                'published snapshot.', 'done', 100);
+            btn.disabled = false;
+            return;
+          }}
+          var f = friends[i];
+          say('Looking up ' + f.label + '… (' + (i + 1) + ' of ' + friends.length + ')',
+              null, (i / friends.length) * 100);
+          var hash = f.riotId.indexOf('#');
+          var name = f.riotId.slice(0, hash), tag = f.riotId.slice(hash + 1);
+          riot(routing, '/riot/account/v1/accounts/by-riot-id/' +
+                        encodeURIComponent(name) + '/' + encodeURIComponent(tag), key)
+            .then(function (acct) {{
+              if (!acct || !acct.puuid) return null;
+              return riot(platform, '/lol/league/v4/entries/by-puuid/' + acct.puuid, key);
+            }})
+            .then(function (entries) {{
+              if (entries) {{
+                var solo = null;
+                for (var n = 0; n < entries.length; n++) {{
+                  if (entries[n].queueType === 'RANKED_SOLO_5x5') {{ solo = entries[n]; break; }}
+                }}
+                paint(f.label, solo);
+                updated++;
+              }}
+              done++;
+              step(i + 1);
+            }})
+            .catch(function (err) {{
+              if (err.fatal) {{ say(err.message, 'error'); btn.disabled = false; return; }}
+              // A single friend failing shouldn't abandon the rest.
+              done++;
+              step(i + 1);
+            }});
+        }}
+        step(0);
+      }}
+
+      btn.addEventListener('click', function () {{
+        var saved = '';
+        try {{ saved = localStorage.getItem(KEY_STORE) || ''; }} catch (e) {{}}
+        modalTitle.textContent = 'Live ranks';
+        modalBlurb.textContent = 'Uses your own Riot API key, straight from this browser — ' +
+          'it is never sent to this site. Get a free key at developer.riotgames.com (they last 24 hours).';
+        modalKeyField.style.display = '';
+        modalPass.parentElement.style.display = 'none';
+        modalKey.value = saved;
+        modalMsg.innerHTML = '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;' +
+          'color:var(--text-secondary);"><input type="checkbox" id="remember-key"' +
+          (saved ? ' checked' : '') + '> Remember this key in my browser</label>';
+        modalMsg.className = 'modal-msg';
+        modal.hidden = false;
+        setTimeout(function () {{ modalKey.focus(); }}, 30);
+
+        modalOk.onclick = function () {{
+          var key = modalKey.value.trim();
+          if (!/^RGAPI-/.test(key)) {{
+            modalMsg.textContent = 'That does not look like a Riot key (they start with RGAPI-).';
+            return;
+          }}
+          var remember = !!(document.getElementById('remember-key') || {{}}).checked;
+          modal.hidden = true;
+          modalOk.onclick = null;
+          run(key, remember);
+        }};
+        modalCancel.onclick = function () {{ modal.hidden = true; modalOk.onclick = null; }};
       }});
     }})();
   </script>
