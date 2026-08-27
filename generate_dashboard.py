@@ -10,6 +10,7 @@ Usage:
 import html
 import json
 import sys
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -128,6 +129,13 @@ def rank_label(ranked_entry):
     return f"{tier} {ranked_entry.get('rank', '')} &middot; {ranked_entry.get('leaguePoints', 0)} LP"
 
 
+def rank_label_text(ranked_entry):
+    """rank_label() without the HTML entity, for contexts that are not HTML:
+    the Open Graph raster card and meta attribute values (where escaping the
+    entity again would print a literal "&middot;")."""
+    return html.unescape(rank_label(ranked_entry))
+
+
 def esc(s):
     return html.escape(str(s)) if s is not None else ""
 
@@ -155,6 +163,16 @@ def champion_icon_url(champion_name):
     if not slug:
         return None
     return f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{slug}.png"
+
+
+def champion_splash_url(champion_name):
+    """Data Dragon splash art for a champion, used as the wash behind a
+    friend's card. Unlike the square icons this path carries no patch
+    version, so it needs nothing but the slug."""
+    slug = _ICON_CTX["map"].get(champion_name or "")
+    if not slug:
+        return None
+    return f"https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{slug}_0.jpg"
 
 
 def render_champion_icon(champion_name, size=20):
@@ -532,9 +550,23 @@ def render_friend_card(f, rank_position, now):
         if nemesis else ""
     )
 
+    # A friend's most-played champion, washed out behind the top of their
+    # card. Purely decorative, and the whole element removes itself if the
+    # image 404s, so a renamed or brand-new champion just means a plain card.
+    # Cards other than the visible one are display:none, so the browser never
+    # fetches six splashes nobody is looking at.
+    signature = (f.get("mastery") or [{}])[0].get("championName")
+    splash = champion_splash_url(signature)
+    card_art = (
+        f'<div class="card-art" aria-hidden="true"><img src="{esc(splash)}" alt="" '
+        f'loading="lazy" decoding="async" onerror="this.parentElement.remove()"></div>'
+    ) if splash else ""
+
     return f'''
     <section class="card" id="friend-{f["label"].lower()}" role="tabpanel"
-             aria-labelledby="pill-{f["label"].lower()}" tabindex="-1">
+             aria-labelledby="pill-{f["label"].lower()}" tabindex="-1"
+             style="--card-tier: var({solo_var});">
+      {card_art}
       <header class="card-head">
         <div class="rank-badge">#{rank_position}</div>
         <div>
@@ -1574,6 +1606,198 @@ def render_week_glance_panel(friends_sorted, awards, rank_history, now):
     </div>'''
 
 
+# ---------------------------------------------------------------------------
+# Brand assets
+#
+# The page had no favicon, no theme colour and no Open Graph tags, which for a
+# link whose entire job is to be pasted into a group chat meant a generic globe
+# in the tab and a bare unfurled URL in Discord. The mark is a double chevron
+# (climbing the ladder) on the same accent gradient the UI already uses.
+# ---------------------------------------------------------------------------
+
+BRAND_ACCENT = ("#4c8dff", "#17d3c1")
+
+# Inline so it needs no network request and no extra file next to the HTML.
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+    f'<stop offset="0" stop-color="{BRAND_ACCENT[0]}"/>'
+    f'<stop offset="1" stop-color="{BRAND_ACCENT[1]}"/>'
+    '</linearGradient></defs>'
+    '<rect width="64" height="64" rx="15" fill="url(#g)"/>'
+    '<path d="M18 43.5 32 29.5 46 43.5" fill="none" stroke="#fff" stroke-width="6.5" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M18 30.5 32 16.5 46 30.5" fill="none" stroke="#fff" stroke-width="6.5" '
+    'stroke-linecap="round" stroke-linejoin="round" opacity=".5"/>'
+    '</svg>'
+)
+
+# The same mark for the header, minus its own background — the .brand-mark
+# element already paints the gradient tile behind it.
+BRAND_MARK_SVG = (
+    '<svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true" focusable="false">'
+    '<path d="M18 43.5 32 29.5 46 43.5" fill="none" stroke="#fff" stroke-width="7" '
+    'stroke-linecap="round" stroke-linejoin="round"/>'
+    '<path d="M18 30.5 32 16.5 46 30.5" fill="none" stroke="#fff" stroke-width="7" '
+    'stroke-linecap="round" stroke-linejoin="round" opacity=".5"/>'
+    '</svg>'
+)
+
+
+def favicon_data_uri():
+    return "data:image/svg+xml," + urllib.parse.quote(FAVICON_SVG, safe="")
+
+
+def _og_font(size, bold=True):
+    """A real typeface for the share card, falling back through the usual
+    per-platform paths and finally to Pillow's built-in."""
+    from PIL import ImageFont
+    names = (["segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf", "Arial Bold.ttf"] if bold
+             else ["segoeui.ttf", "arial.ttf", "DejaVuSans.ttf", "Arial.ttf"])
+    roots = ["C:/Windows/Fonts/", "/usr/share/fonts/truetype/dejavu/",
+             "/System/Library/Fonts/Supplemental/", ""]
+    for root in roots:
+        for name in names:
+            try:
+                return ImageFont.truetype(root + name, size)
+            except Exception:
+                continue
+    try:
+        return ImageFont.load_default(size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _rounded_gradient(size, radius, colors):
+    """A rounded tile filled with a diagonal two-stop gradient."""
+    from PIL import Image, ImageDraw
+    w, h = size
+    c0 = tuple(int(colors[0][i:i + 2], 16) for i in (1, 3, 5))
+    c1 = tuple(int(colors[1][i:i + 2], 16) for i in (1, 3, 5))
+    grad = Image.new("RGB", (w, h))
+    px = grad.load()
+    for y in range(h):
+        for x in range(w):
+            t = (x / max(w - 1, 1) + y / max(h - 1, 1)) / 2
+            px[x, y] = tuple(int(c0[i] + (c1[i] - c0[i]) * t) for i in range(3))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
+    grad.putalpha(mask)
+    return grad
+
+
+def _og_glow(size, spots):
+    """Soft colour blooms behind the card, matching the page background."""
+    from PIL import Image, ImageDraw, ImageFilter
+    layer = Image.new("RGB", size, (0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for (cx, cy, r, colour) in spots:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=colour)
+    return layer.filter(ImageFilter.GaussianBlur(radius=160))
+
+
+def write_share_assets(out_dir, friends_sorted, platform, generated_at):
+    """Write og.png (1200x630 Open Graph card) and icon-180.png next to the
+    HTML. Returns the names actually written.
+
+    Everything here is best-effort: Pillow is only needed to publish a link
+    preview, so a machine without it still renders a perfectly good dashboard.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageChops
+    except Exception:
+        return []
+
+    written = []
+    try:
+        W, H = 1200, 630
+        card = Image.new("RGB", (W, H), (11, 13, 18))
+        glow = _og_glow((W, H), [
+            (110, 0, 250, (30, 58, 122)),
+            (1160, 30, 210, (8, 58, 60)),
+        ])
+        card = ImageChops.add(card, glow)
+        d = ImageDraw.Draw(card)
+
+        # Brand tile + chevrons, drawn at 4x and downsampled so the strokes
+        # come out smooth without any antialiasing work of our own.
+        S = 4
+        tile = _rounded_gradient((96 * S, 96 * S), 26 * S, BRAND_ACCENT)
+        td = ImageDraw.Draw(tile)
+        for pts, width, alpha in (
+                ([(27, 65), (48, 44), (69, 65)], 10, 255),
+                ([(27, 46), (48, 25), (69, 46)], 10, 130)):
+            td.line([(x * S, y * S) for x, y in pts], fill=(255, 255, 255, alpha),
+                    width=width * S, joint="curve")
+            for (x, y) in (pts[0], pts[-1]):
+                r = width * S / 2
+                td.ellipse([x * S - r, y * S - r, x * S + r, y * S + r],
+                           fill=(255, 255, 255, alpha))
+        tile = tile.resize((96, 96), Image.LANCZOS)
+        card.paste(tile, (80, 74), tile)
+
+        # The right third is otherwise dead space; an oversized, nearly
+        # invisible copy of the mark balances the composition.
+        wm = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        wd = ImageDraw.Draw(wm)
+        for pts in ([(880, 500), (1040, 340), (1200, 500)],
+                    [(880, 360), (1040, 200), (1200, 360)]):
+            wd.line(pts, fill=(255, 255, 255, 12), width=54, joint="curve")
+        card = Image.alpha_composite(card.convert("RGBA"), wm).convert("RGB")
+        d = ImageDraw.Draw(card)
+
+        d.text((196, 88), "League Friends", font=_og_font(46), fill=(241, 243, 247))
+        d.text((196, 138), "Dashboard", font=_og_font(46), fill=(241, 243, 247))
+
+        d.line([(80, 224), (1120, 224)], fill=(38, 43, 53), width=2)
+        d.text((80, 244), "LIVE STANDINGS", font=_og_font(17), fill=(110, 120, 138))
+
+        # Live standings, so a shared link previews the current ladder rather
+        # than a static poster.
+        y = 280
+        medal = [(230, 193, 92), (167, 177, 193), (204, 138, 91)]
+        for i, f in enumerate(friends_sorted[:5]):
+            solo = f["ranked"].get("solo")
+            tier = (solo or {}).get("tier")
+            colour = TIER_COLOR.get(tier, DEFAULT_TIER_COLOR)["dark"] if tier else \
+                DEFAULT_TIER_COLOR["dark"]
+            rgb = tuple(int(colour[j:j + 2], 16) for j in (1, 3, 5))
+            d.rounded_rectangle([80, y, 118, y + 38], radius=11,
+                                fill=(medal[i] if i < 3 else (44, 49, 60)))
+            num = str(i + 1)
+            nf = _og_font(20)
+            nb = d.textbbox((0, 0), num, font=nf)
+            d.text((99 - (nb[2] - nb[0]) / 2, y + 19 - (nb[3] - nb[1]) / 2 - nb[1]), num,
+                   font=nf, fill=(16, 18, 24) if i < 3 else (180, 187, 201))
+            d.text((136, y + 4), f["label"], font=_og_font(27), fill=(241, 243, 247))
+            d.text((410, y + 7), rank_label_text(solo), font=_og_font(24, bold=False), fill=rgb)
+            y += 50
+
+        foot = f"{len(friends_sorted)} players  ·  {platform.upper()}  ·  updated {generated_at}"
+        d.text((80, H - 78), foot, font=_og_font(22, bold=False), fill=(124, 134, 152))
+
+        og = Path(out_dir) / "og.png"
+        card.save(og, "PNG", optimize=True)
+        written.append(og.name)
+
+        icon = _rounded_gradient((180 * 2, 180 * 2), 40 * 2, BRAND_ACCENT)
+        idr = ImageDraw.Draw(icon)
+        for pts, alpha in (([(50, 122), (90, 83), (130, 122)], 255),
+                           ([(50, 86), (90, 47), (130, 86)], 130)):
+            idr.line([(x * 2, y * 2) for x, y in pts], fill=(255, 255, 255, alpha),
+                     width=19 * 2, joint="curve")
+            for (x, y) in (pts[0], pts[-1]):
+                idr.ellipse([x * 2 - 19, y * 2 - 19, x * 2 + 19, y * 2 + 19],
+                            fill=(255, 255, 255, alpha))
+        icon = icon.resize((180, 180), Image.LANCZOS).convert("RGB")
+        ip = Path(out_dir) / "icon-180.png"
+        icon.save(ip, "PNG", optimize=True)
+        written.append(ip.name)
+    except Exception as e:
+        print(f"  (skipped share images: {e})")
+    return written
+
+
 def build_html(data):
     friends = data.get("friends", [])
     friends_sorted = sorted(friends, key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)
@@ -1645,6 +1869,29 @@ def build_html(data):
         "apexTiers": sorted(APEX_TIERS),
     }, ensure_ascii=False)
 
+    # ---- Share metadata -------------------------------------------------
+    # A link into a group chat should unfurl with the current ladder, not a
+    # bare URL. og:image has to be absolute per the spec (Discord and iMessage
+    # both refuse relative ones), so the card is only advertised when
+    # config.json supplies site_url.
+    leader = friends_sorted[0] if friends_sorted else None
+    share_desc = (
+        f'Ranked Solo/Duo standings, per-game LP history and season stats for '
+        f'{len(friends_sorted)} friends on {esc(str(data.get("platform", "EUW")).upper())}.'
+    )
+    if leader:
+        share_desc += f' {esc(leader["label"])} leads at {esc(rank_label_text(leader["ranked"].get("solo")))}.'
+    site_url = (data.get("siteUrl") or "").rstrip("/")
+    og_tags = ""
+    if site_url:
+        og_tags = f"""
+<meta property="og:url" content="{esc(site_url)}/">
+<meta property="og:image" content="{esc(site_url)}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{esc(site_url)}/og.png">"""
+
     demo_banner = ""
     if data.get("demo"):
         demo_banner = '''<div class="banner">This is sample data so you can preview the dashboard. Run
@@ -1668,6 +1915,15 @@ def build_html(data):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>League Friends Dashboard</title>
+<meta name="description" content="{esc(share_desc)}">
+<link rel="icon" href="{favicon_data_uri()}">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#eceff5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#090a0e" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="League Friends Dashboard">
+<meta property="og:title" content="League Friends Dashboard">
+<meta property="og:description" content="{esc(share_desc)}">{og_tags}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1755,6 +2011,18 @@ def build_html(data):
     {friend_vars_dark}
   }}
   * {{ box-sizing: border-box; }}
+  html {{ scroll-behavior: smooth; }}
+  ::selection {{ background: color-mix(in srgb, var(--accent) 28%, transparent); }}
+  /* Themed scrollbars — the default light-grey ones cut straight through the
+     dark theme. .tabs and .friend-pills override this back to none. */
+  * {{ scrollbar-width: thin; scrollbar-color: var(--gridline) transparent; }}
+  ::-webkit-scrollbar {{ width: 11px; height: 11px; }}
+  ::-webkit-scrollbar-track {{ background: transparent; }}
+  ::-webkit-scrollbar-thumb {{
+    background: var(--gridline); border-radius: 999px; border: 3px solid transparent;
+    background-clip: content-box;
+  }}
+  ::-webkit-scrollbar-thumb:hover {{ background: var(--muted); background-clip: content-box; }}
   body {{
     margin: 0;
     font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -1961,6 +2229,44 @@ def build_html(data):
   .card {{
     background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 22px; margin-bottom: 20px; box-shadow: var(--shadow-sm);
+    position: relative; overflow: hidden;
+  }}
+  /* A tier-coloured hairline ties the card to the same colour the player's
+     rank uses everywhere else on the page. */
+  .card::before {{
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 2;
+    background: linear-gradient(90deg, var(--card-tier, var(--accent)), transparent 62%);
+  }}
+  /* The player's signature champion, behind the top-right of the card.
+     Positioned children paint above static ones, so the art would otherwise
+     cover the header — everything except the art is lifted above it.
+     The fade is three veils painted in the card's own surface colour rather
+     than a mask, so it needs no mask-image support and degrades to a plain
+     card if any of it is unsupported. */
+  .card-art {{
+    position: absolute; top: 0; right: 0; width: 66%; height: 215px;
+    pointer-events: none; user-select: none;
+  }}
+  .card > *:not(.card-art) {{ position: relative; z-index: 1; }}
+  .card-art img {{
+    width: 100%; height: 100%; display: block;
+    object-fit: cover; object-position: 56% 26%;
+    /* Held well back. The veils below only reach ~55% opacity where the rank
+       rows sit, so the art itself has to be faint for text to stay crisp —
+       especially in the light theme, where the veil is white over dark art. */
+    opacity: .4;
+  }}
+  .card-art::after {{
+    content: ""; position: absolute; inset: 0;
+    background:
+      linear-gradient(to right, var(--surface-1) 3%,
+                                color-mix(in srgb, var(--surface-1) 60%, transparent) 46%,
+                                color-mix(in srgb, var(--surface-1) 38%, transparent) 100%),
+      linear-gradient(to top, var(--surface-1) 8%,
+                              color-mix(in srgb, var(--surface-1) 48%, transparent) 58%,
+                              color-mix(in srgb, var(--surface-1) 18%, transparent) 100%),
+      linear-gradient(115deg, transparent 42%,
+                              color-mix(in srgb, var(--card-tier, var(--accent)) 30%, transparent) 100%);
   }}
   .card-head {{ display: flex; align-items: center; gap: 13px; margin-bottom: 18px; flex-wrap: wrap; }}
   .rank-badge {{
@@ -1971,7 +2277,10 @@ def build_html(data):
   .card-head h2 {{ margin: 0; font-size: 19px; }}
   .hot {{
     margin-left: auto; font-size: 11px; font-weight: 700; color: #d1740b;
-    background: rgba(235,104,52,0.14); border: 1px solid rgba(235,104,52,0.35);
+    /* Sits over the champion art, so it needs an opaque backing of its own
+       rather than a translucent tint. */
+    background: color-mix(in srgb, #eb6834 14%, var(--surface-1));
+    border: 1px solid rgba(235,104,52,0.35);
     border-radius: 999px; padding: 4px 11px;
   }}
 
@@ -2089,7 +2398,17 @@ def build_html(data):
     padding: 3px 9px; border-radius: 999px; background: var(--surface-2); font-weight: 600;
   }}
   .legend-item:hover {{ background: var(--gridline); }}
-  footer {{ text-align: center; color: var(--muted); font-size: 12px; margin-top: 28px; line-height: 1.6; }}
+  footer {{
+    text-align: center; color: var(--muted); font-size: 12px; line-height: 1.6;
+    margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--border);
+  }}
+  .footer-mark {{
+    width: 26px; height: 26px; border-radius: 8px; margin: 0 auto 10px;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(140deg, var(--accent), var(--accent-2));
+    opacity: .8;
+  }}
+  .footer-mark svg {{ width: 16px; height: 16px; }}
 
   /* ---- Tabs ---------------------------------------------------------- */
   .tabs {{
@@ -2217,6 +2536,10 @@ def build_html(data):
     .meta-chip:last-child::after {{ content: ""; }}
 
     .panel, .card {{ padding: 15px 13px; border-radius: 12px; }}
+    /* Narrower column means the horizontal veil has less room to fade, so
+       the art gets shorter and sits further back. */
+    .card-art {{ width: 100%; height: 148px; }}
+    .card-art img {{ object-position: 56% 22%; }}
     h2 {{ font-size: 16px; }}
 
     /* Touch targets: 34px tabs and 21px legend chips were well under the
@@ -2266,6 +2589,7 @@ def build_html(data):
   }}
   @media (prefers-reduced-motion: reduce) {{
     * {{ animation: none !important; transition: none !important; }}
+    html {{ scroll-behavior: auto !important; }}
   }}
 </style>
 </head>
@@ -2274,7 +2598,7 @@ def build_html(data):
   <div class="wrap">
     <header class="top">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">⚔️</div>
+        <div class="brand-mark" aria-hidden="true">{BRAND_MARK_SVG}</div>
         <div>
           <h1>League Friends Dashboard</h1>
           <div class="meta-row">
@@ -2355,6 +2679,7 @@ def build_html(data):
     </main>
 
     <footer>
+      <div class="footer-mark" aria-hidden="true">{BRAND_MARK_SVG}</div>
       Data via the Riot Games API. Not endorsed by Riot Games. Remake games (early
       surrender with no stat impact) are automatically excluded from every stat here.
       <div class="legend">
@@ -3010,6 +3335,22 @@ def build_html(data):
 </html>'''
 
 
+def load_site_url():
+    """Public URL of the deployed dashboard, from config.json.
+
+    Only used for the Open Graph card, which needs absolute image URLs. Absent
+    for a local-only dashboard, in which case the share tags are simply not
+    emitted rather than pointing at something that will not resolve.
+    """
+    cfg = Path(__file__).with_name("config.json")
+    if not cfg.exists():
+        return ""
+    try:
+        return (json.loads(cfg.read_text(encoding="utf-8")).get("site_url") or "").strip()
+    except Exception:
+        return ""
+
+
 def main():
     data_path = Path(sys.argv[1] if len(sys.argv) > 1 else "data.json")
     out_path = Path(sys.argv[2] if len(sys.argv) > 2 else "dashboard.html")
@@ -3017,8 +3358,16 @@ def main():
         print(f"Data file not found: {data_path}. Run fetch_data.py first (or use the bundled demo data.json).")
         sys.exit(1)
     data = json.loads(data_path.read_text(encoding="utf-8"))
+    data.setdefault("siteUrl", load_site_url())
     out_path.write_text(build_html(data), encoding="utf-8")
     print(f"Wrote {out_path}")
+
+    friends_sorted = sorted(data.get("friends", []),
+                            key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)
+    for name in write_share_assets(out_path.parent, friends_sorted,
+                                   data.get("platform", "euw1"),
+                                   data.get("generatedAt", "")):
+        print(f"Wrote {out_path.parent / name}")
 
 
 if __name__ == "__main__":

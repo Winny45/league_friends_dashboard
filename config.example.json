@@ -1,14 +1,24 @@
 {
   "api_key": "RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "platform": "euw1",
+  "site_url": "",
   "routing": "europe",
   "match_count": 10,
   "season_start": "2026-01-09",
   "max_season_matches": 5000,
   "discord_webhook_url": "",
   "friends": [
-    { "label": "Alex", "riot_id": "AlexPlays#EUW" },
-    { "label": "Sam", "riot_id": "SamTheMid#1234" },
-    { "label": "Jordan", "riot_id": "JordanJG#EUW" }
+    {
+      "label": "Alex",
+      "riot_id": "AlexPlays#EUW"
+    },
+    {
+      "label": "Sam",
+      "riot_id": "SamTheMid#1234"
+    },
+    {
+      "label": "Jordan",
+      "riot_id": "JordanJG#EUW"
+    }
   ]
 }
