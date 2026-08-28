@@ -2070,6 +2070,9 @@ def build_html(data):
   /* .hbtn sets display:flex, which would otherwise defeat the `hidden`
      attribute the hosted-only buttons rely on. */
   .hbtn[hidden] {{ display: none; }}
+  /* Two labels per button: the full one on desktop, a clipped one on phones,
+     where four buttons no longer fit across 375px. */
+  .btn-short {{ display: none; }}
   .hbtn:disabled {{ opacity: .55; cursor: not-allowed; transform: none; }}
   #theme-toggle {{ width: 40px; font-size: 17px; padding: 0; }}
   .hbtn:hover:not(:disabled) {{ transform: translateY(-1px); box-shadow: var(--shadow-md); background: var(--surface-2); }}
@@ -2555,7 +2558,16 @@ def build_html(data):
     background: color-mix(in srgb, var(--good) 10%, transparent);
     border-color: color-mix(in srgb, var(--good) 26%, transparent);
   }}
-  .modal-actions {{ display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }}
+  .modal-actions {{ display: flex; align-items: center; justify-content: flex-end; gap: 9px; margin-top: 20px; }}
+  /* Quiet, left-aligned: clearing a saved key is a real need on a shared
+     computer, but it is never the action someone opened the dialog for. */
+  .btn-link {{
+    appearance: none; background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 12.5px; font-weight: 600;
+    color: var(--muted); padding: 6px 2px; margin-right: auto;
+  }}
+  .btn-link:hover {{ color: var(--critical); text-decoration: underline; }}
+  .btn-link[hidden] {{ display: none; }}
   .btn-primary, .btn-ghost {{
     font-family: inherit; font-size: 13px; font-weight: 600;
     height: 40px; padding: 0 20px; border-radius: 10px; cursor: pointer;
@@ -2613,8 +2625,14 @@ def build_html(data):
     .legend-item {{ padding: 9px 12px; min-height: 38px; display: inline-flex; align-items: center; }}
     .range-btn {{ padding: 11px 18px; min-height: 40px; font-size: 13px; }}
     .pill {{ padding: 10px 16px; min-height: 40px; }}
-    .hbtn {{ height: 42px; padding: 0 12px; font-size: 12.5px; }}
+    .hbtn {{ height: 42px; padding: 0 11px; font-size: 12.5px; }}
     #theme-toggle {{ padding: 0; }}
+    .btn-long {{ display: none; }}
+    .btn-short {{ display: inline; }}
+    /* "Forget saved key" beside two half-width buttons overflowed the row,
+       so it takes a line of its own above them. */
+    .modal-actions {{ flex-wrap: wrap; }}
+    .btn-link {{ width: 100%; margin: 0 0 4px; text-align: left; order: -1; padding: 8px 2px; }}
     /* Seven friends wrapped into three rows of pills and pushed the card
        itself most of a screen down. One scrollable row instead, bled to the
        screen edges so it reads as scrollable. */
@@ -2678,10 +2696,11 @@ def build_html(data):
       <div class="header-actions">
         <!-- Hosted-only controls: revealed by JS once /api/status answers, so
              a locally generated dashboard doesn't show buttons that can't work. -->
-        <button id="live-ranks" class="hbtn primary" type="button" title="Update everyone's rank and LP right now, using your own Riot API key">⟳ Live ranks</button>
+        <button id="live-ranks" class="hbtn primary" type="button" title="Update everyone's rank and LP right now, using the key saved in this browser">⟳ <span class="btn-long">Refresh ranks</span><span class="btn-short">Refresh</span></button>
+        <button id="live-key" class="hbtn" type="button" title="Enter or replace your Riot API key (development keys expire every 24h)">🔑 <span class="btn-long">API key</span><span class="btn-short">Key</span></button>
         <button id="refresh-data" class="hbtn hosted-only" type="button" hidden title="Re-fetch everyone's games from the Riot API">⟳ Refresh data</button>
-        <button id="set-key" class="hbtn hosted-only" type="button" hidden title="Update the Riot API key (dev keys expire every 24h)">🔑 API key</button>
-        <button id="export-csv" class="hbtn" type="button" title="Download this season's match data as a CSV">⬇ Export CSV</button>
+        <button id="set-key" class="hbtn hosted-only" type="button" hidden title="Update the Riot API key stored on the server, used by Refresh data">🔑 Server key</button>
+        <button id="export-csv" class="hbtn" type="button" title="Download this season's match data as a CSV">⬇ <span class="btn-long">Export CSV</span><span class="btn-short">CSV</span></button>
         <button id="theme-toggle" class="hbtn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
       </div>
     </header>
@@ -2712,6 +2731,7 @@ def build_html(data):
         </label>
         <div class="modal-msg" id="modal-msg" role="status" aria-live="polite"></div>
         <div class="modal-actions">
+          <button type="button" class="btn-link" id="modal-forget" hidden>Forget saved key</button>
           <button type="button" class="btn-ghost" id="modal-cancel">Cancel</button>
           <button type="button" class="btn-primary" id="modal-ok">Confirm</button>
         </div>
@@ -2934,11 +2954,16 @@ def build_html(data):
       if (!cfgEl) return;
       var CFG = JSON.parse(cfgEl.textContent);
       var btn = document.getElementById('live-ranks');
+      var keyBtn = document.getElementById('live-key');
+      var modalForget = document.getElementById('modal-forget');
       function closeModal() {{
         modal.hidden = true;
         modalOk.onclick = null;
         modalGetKey.hidden = true;
         modalRememberRow.hidden = true;
+        modalForget.hidden = true;
+        modalOk.disabled = false;
+        modalOk.textContent = 'Confirm';
         var opener = modal._opener;
         modal._opener = null;
         if (opener && opener.focus) {{ try {{ opener.focus(); }} catch (e) {{}} }}
@@ -2984,14 +3009,15 @@ def build_html(data):
           headers: {{ 'X-Riot-Token': key }}
         }}).then(function (r) {{
           if (r.status === 401 || r.status === 403) {{
-            var e = new Error('Riot rejected the key (' + r.status + '). Development keys expire ' +
-                              'after 24 hours — generate a fresh one at developer.riotgames.com.');
-            e.fatal = true; throw e;
+            var e = new Error('Riot rejected the key (' + r.status + ') — development keys expire ' +
+                              'after 24 hours. Use the 🔑 API key button to paste a fresh one.');
+            e.fatal = true; e.rejected = true; throw e;
           }}
           if (r.status === 429) {{
             var e2 = new Error('Riot rate limit reached. Wait a minute and try again.');
             e2.fatal = true; throw e2;
           }}
+          if (r.status === 0) throw new Error('Could not reach Riot — check your connection.');
           if (r.status === 404) return null;
           if (!r.ok) throw new Error('Riot returned HTTP ' + r.status);
           return r.json();
@@ -3029,13 +3055,9 @@ def build_html(data):
         row.classList.add('row-live');
       }}
 
-      function run(key, remember) {{
+      function run(key) {{
         btn.disabled = true;
-        try {{
-          if (remember) localStorage.setItem(KEY_STORE, key);
-          else localStorage.removeItem(KEY_STORE);
-        }} catch (e) {{ /* private mode — carry on without remembering */ }}
-
+        keyBtn.disabled = true;
         var friends = CFG.friends || [];
         var done = 0, updated = 0;
 
@@ -3046,6 +3068,7 @@ def build_html(data):
                 ' friends, live as of ' + when + '. Match history and charts still show the ' +
                 'published snapshot.', 'done', 100);
             btn.disabled = false;
+            keyBtn.disabled = false;
             return;
           }}
           var f = friends[i];
@@ -3072,7 +3095,16 @@ def build_html(data):
               step(i + 1);
             }})
             .catch(function (err) {{
-              if (err.fatal) {{ say(err.message, 'error'); btn.disabled = false; return; }}
+              if (err.fatal) {{
+                say(err.message, 'error');
+                // A rejected key is not going to start working, so drop it.
+                // Otherwise every later Refresh would fail the same way with
+                // no hint that the saved key is the problem.
+                if (err.rejected) forgetKey();
+                btn.disabled = false;
+                keyBtn.disabled = false;
+                return;
+              }}
               // A single friend failing shouldn't abandon the rest.
               done++;
               step(i + 1);
@@ -3081,24 +3113,48 @@ def build_html(data):
         step(0);
       }}
 
-      btn.addEventListener('click', function () {{
-        var saved = '';
-        try {{ saved = localStorage.getItem(KEY_STORE) || ''; }} catch (e) {{}}
+      // ---- Key handling, split from refreshing ---------------------------
+      // One button used to do both, so every refresh stopped to ask for a key
+      // even when one was already saved. The key lives on its own button now
+      // and refreshing is a single click.
+      //
+      // sessionKey holds a key the user chose not to persist, so "don't
+      // remember" means "this visit only" rather than "ask me again in ten
+      // seconds".
+      var sessionKey = '';
+
+      function storedKey() {{
+        try {{ return localStorage.getItem(KEY_STORE) || ''; }} catch (e) {{ return ''; }}
+      }}
+      function currentKey() {{ return sessionKey || storedKey(); }}
+      function saveKey(key, remember) {{
+        sessionKey = key;
+        try {{
+          if (remember) localStorage.setItem(KEY_STORE, key);
+          else localStorage.removeItem(KEY_STORE);
+        }} catch (e) {{ /* private mode — carry on without persisting */ }}
+      }}
+      function forgetKey() {{
+        sessionKey = '';
+        try {{ localStorage.removeItem(KEY_STORE); }} catch (e) {{}}
+      }}
+
+      function openKeyDialog(opts) {{
+        var saved = currentKey();
         modal._opener = document.activeElement;
-        modalIcon.textContent = '⟳';
-        modalTitle.textContent = 'Live ranks';
-        modalBlurb.textContent = 'Uses your own Riot API key, straight from this browser — ' +
-          'it is never sent to this site. Riot development keys expire after 24 hours.';
+        modalIcon.textContent = opts.icon;
+        modalTitle.textContent = opts.title;
+        modalBlurb.textContent = opts.blurb;
         modalKeyField.style.display = '';
         modalPassField.style.display = 'none';
         modalKey.value = saved;
-        // The "get a key" pointer is a real link now, so it can actually be
-        // followed; it used to be an unclickable sentence in the blurb.
         modalGetKey.hidden = false;
         modalRememberRow.hidden = false;
-        modalRemember.checked = !!saved;
+        modalRemember.checked = true;
+        modalForget.hidden = !storedKey();
         modalMsg.textContent = '';
         modalMsg.className = 'modal-msg';
+        modalOk.textContent = opts.confirm;
         modal.hidden = false;
         setTimeout(function () {{ modalKey.focus(); modalKey.select(); }}, 30);
 
@@ -3114,13 +3170,75 @@ def build_html(data):
             modalKey.select();
             return;
           }}
-          // Read the checkbox, which now lives in its own row. It used to sit
-          // inside the message slot, so showing the error above wiped it out
-          // and silently un-ticked the choice.
-          var remember = modalRemember.checked;
-          closeModal();
-          run(key, remember);
+          opts.onKey(key, modalRemember.checked);
         }};
+      }}
+
+      modalForget.addEventListener('click', function () {{
+        forgetKey();
+        modalKey.value = '';
+        modalForget.hidden = true;
+        modalMsg.className = 'modal-msg ok';
+        modalMsg.textContent = 'Saved key cleared from this browser.';
+        modalKey.focus();
+      }});
+
+      // Refresh: use the saved key and go. Only ask if there is nothing saved.
+      btn.addEventListener('click', function () {{
+        var key = currentKey();
+        if (key) {{ run(key); return; }}
+        openKeyDialog({{
+          icon: '⟳',
+          title: 'Refresh ranks',
+          blurb: 'This needs your own Riot API key. It is used straight from this browser and ' +
+                 'is never sent to this site.',
+          confirm: 'Save & refresh',
+          onKey: function (key, remember) {{
+            saveKey(key, remember);
+            closeModal();
+            run(key);
+          }}
+        }});
+      }});
+
+      // API key: set or replace the key, and check it before storing so an
+      // expired one is caught here rather than half way through a refresh.
+      keyBtn.addEventListener('click', function () {{
+        openKeyDialog({{
+          icon: '🔑',
+          title: 'Riot API key',
+          blurb: storedKey()
+            ? 'A key is saved in this browser. Paste a new one to replace it — Riot development ' +
+              'keys expire after 24 hours.'
+            : 'Paste your own Riot API key. It stays in this browser, is never sent to this site, ' +
+              'and expires after 24 hours.',
+          confirm: 'Save key',
+          onKey: function (key, remember) {{
+            modalOk.disabled = true;
+            modalMsg.className = 'modal-msg';
+            modalMsg.textContent = 'Checking the key with Riot…';
+            // A status lookup needs no account data, so this validates the key
+            // without spending a call on anybody's match history.
+            riot(platform, '/lol/status/v4/platform-data', key).then(function () {{
+              saveKey(key, remember);
+              modalOk.disabled = false;
+              modalMsg.className = 'modal-msg ok';
+              modalMsg.textContent = remember
+                ? 'Key accepted and saved in this browser.'
+                : 'Key accepted for this visit.';
+              setTimeout(function () {{
+                closeModal();
+                say('Riot API key saved. Hit ⟳ Refresh ranks to update the leaderboard.', 'done', 0);
+              }}, 900);
+            }}).catch(function (err) {{
+              modalOk.disabled = false;
+              modalMsg.className = 'modal-msg';
+              modalMsg.textContent = err.rejected
+                ? 'Riot rejected that key. Development keys expire after 24 hours — generate a fresh one.'
+                : ('Could not check the key: ' + err.message);
+            }});
+          }}
+        }});
       }});
     }})();
   </script>
@@ -3174,6 +3292,7 @@ def build_html(data):
       function openModal(opts) {{
         modal._opener = document.activeElement;
         modalIcon.textContent = opts.icon || '⚙';
+        modalOk.textContent = opts.confirm || 'Confirm';
         modalTitle.textContent = opts.title;
         modalBlurb.textContent = opts.blurb;
         modalKeyField.style.display = opts.needsKey ? '' : 'none';
@@ -3204,6 +3323,10 @@ def build_html(data):
         modalGetKey.hidden = true;
         modalRememberRow.hidden = true;
         modalOk.disabled = false;
+        modalOk.textContent = 'Confirm';
+        // Declared in the live-ranks script, which is a separate IIFE.
+        var forget = document.getElementById('modal-forget');
+        if (forget) forget.hidden = true;
         // Put focus back on whatever opened the dialog rather than dropping
         // it at the top of the document. Parked on the element because the
         // live-ranks script is a different IIFE with no shared scope.
