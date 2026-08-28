@@ -483,8 +483,6 @@ def compute_duo_synergy(friends):
 
     rows = []
     for (a, b), st in pair_stats.items():
-        if st["total"]["games"] < 2:
-            continue
         row = {"a": a, "b": b,
                "aVar": friend_var(min(order.get(a, 0), len(FRIEND_PALETTE) - 1)),
                "bVar": friend_var(min(order.get(b, 0), len(FRIEND_PALETTE) - 1))}
@@ -493,7 +491,8 @@ def compute_duo_synergy(friends):
             row[q] = bucket_stats(a, b, st[q])
         rows.append(row)
     rows.sort(key=lambda r: (-r["total"]["games"], -r["total"]["winrate"]))
-    return rows
+    # own[] feeds the matrix diagonal and the per-queue baselines.
+    return {"rows": rows, "own": own, "players": [f["label"] for f in friends]}
 
 
 def weekly_trend_for(rank_history, label, now):
@@ -1717,43 +1716,26 @@ DUO_THIN_GAMES = 10
 
 
 def render_duo_synergy_panel(friends):
-    rows = compute_duo_synergy(friends)
-    if not rows:
+    """A matrix, not a list of cards.
+
+    Seventeen near-identical cards in a three-column grid make it impossible
+    to see who plays with whom, and a bar running from 0% wastes its whole
+    length on a range nobody occupies — the signal in a winrate sits within
+    about ten points of even. A grid of everyone against everyone fits in less
+    space than three cards and shows the shape of the group at once.
+    """
+    data = compute_duo_synergy(friends)
+    rows, own, players = data["rows"], data["own"], data["players"]
+    if not [r for r in rows if r["total"]["games"] >= 2]:
         return ""
 
-    # Everyone who appears in at least one pair, in leaderboard order, for the
-    # filter row. Someone with no duos would be a chip that always shows
-    # nothing, so they are left out.
-    seen = []
-    for f in friends:
-        if any(f["label"] in (r["a"], r["b"]) for r in rows):
-            seen.append(f["label"])
-    filter_chips = "".join(
-        f'<button type="button" class="duo-chip" data-who="{esc(x)}">{esc(x)}</button>'
-        for x in seen
-    )
+    by_pair = {tuple(sorted([r["a"], r["b"]])): r for r in rows}
+    idx = {label: i for i, label in enumerate(players)}
 
-    def lift_html(b):
-        if b["lift"] is None:
-            return '<div class="duo-lift flat"></div>'
-        cls = "up" if b["lift"] > 0 else ("down" if b["lift"] < 0 else "flat")
-        sign = "+" if b["lift"] > 0 else ("\u2212" if b["lift"] < 0 else "\u00b1")
-        return (f'<div class="duo-lift {cls}">{sign}{abs(b["lift"]):.1f} pts '
-                f'<span class="muted">vs their usual {b["baseline"]:.0f}%</span></div>')
-
-    def games_html(b):
-        thin = (' <span class="duo-thin">&middot; small sample</span>'
-                if 0 < b["games"] < DUO_THIN_GAMES else "")
-        return f'<div class="duo-games">{b["games"]} games together{thin}</div>'
-
-    # Every queue view is written onto the card, so switching between them is a
-    # read from the element rather than a recalculation that could disagree
-    # with what the build produced. "total" is rendered as the visible state so
-    # the panel still reads correctly with no scripting.
-    def queue_attrs(r):
+    def qattrs(prefix, buckets):
         out = []
         for q in ("total", "solo", "flex"):
-            b = r[q]
+            b = buckets[q]
             out.append(
                 f'data-{q}-games="{b["games"]}" data-{q}-wr="{b["winrate"]}" '
                 f'data-{q}-w="{b["wins"]}" data-{q}-l="{b["losses"]}" '
@@ -1761,61 +1743,81 @@ def render_duo_synergy_panel(friends):
                 f'data-{q}-base="{b["baseline"] if b["baseline"] is not None else ""}"')
         return " ".join(out)
 
-    cards = "".join(
-        f'<article class="duo-card" data-a="{esc(r["a"])}" data-b="{esc(r["b"])}" {queue_attrs(r)}>'
-        f'<div class="duo-names">'
-        f'<span style="color:var({r["aVar"]});">{esc(r["a"])}</span>'
-        f'<span class="duo-amp">&amp;</span>'
-        f'<span style="color:var({r["bVar"]});">{esc(r["b"])}</span>'
-        f'</div>'
-        f'<div class="duo-figure"><span class="duo-wr">{r["total"]["winrate"]}%</span>'
-        f'<span class="duo-record">{r["total"]["wins"]}W {r["total"]["losses"]}L</span></div>'
-        f'<div class="duo-track"><div class="duo-fill{" good" if r["total"]["winrate"] >= 50 else " bad"}" '
-        f'style="width:{max(2, min(100, r["total"]["winrate"]))}%;"></div></div>'
-        f'{lift_html(r["total"])}'
-        f'{games_html(r["total"])}'
-        f'</article>'
-        for r in rows
+    head = "".join(
+        f'<th scope="col"><span style="color:var({friend_var(min(idx[x], len(FRIEND_PALETTE) - 1))});">'
+        f'{esc(x)}</span></th>' for x in players
     )
 
-    body = "".join(
+    body = []
+    for a in players:
+        cells = []
+        for b in players:
+            if a == b:
+                # The diagonal is the player's own winrate, which is the number
+                # every cell in that row is being compared against.
+                rates = own.get(a, {})
+                attrs = " ".join(
+                    f'data-{q}-games="0" data-{q}-wr="{round(rates[q], 1) if q in rates else 0}" '
+                    f'data-{q}-lift="-999" data-{q}-base=""'
+                    for q in ("total", "solo", "flex"))
+                cells.append(f'<td class="duo-cell duo-self" {attrs}>'
+                             f'<span class="cell-wr"></span><span class="cell-g">alone</span></td>')
+                continue
+            r = by_pair.get(tuple(sorted([a, b])))
+            if not r:
+                cells.append('<td class="duo-cell duo-none"><span class="cell-wr">\u2013</span></td>')
+                continue
+            cells.append(
+                f'<td class="duo-cell" tabindex="0" role="button" '
+                f'data-a="{esc(r["a"])}" data-b="{esc(r["b"])}" {qattrs("", r)}>'
+                f'<span class="cell-wr"></span><span class="cell-g"></span></td>')
+        colour = friend_var(min(idx[a], len(FRIEND_PALETTE) - 1))
+        body.append(f'<tr><th scope="row"><span style="color:var({colour});">{esc(a)}</span></th>'
+                    f'{"".join(cells)}</tr>')
+
+    table_rows = "".join(
         f'<tr><td>{esc(r["a"])} &amp; {esc(r["b"])}</td>'
         f'<td class="num">{r["total"]["games"]}</td>'
         f'<td class="num">{r["solo"]["games"]}</td>'
         f'<td class="num">{r["flex"]["games"]}</td>'
         f'<td class="num">{r["total"]["wins"]}W {r["total"]["losses"]}L</td>'
         f'<td class="num">{r["total"]["winrate"]}%</td></tr>'
-        for r in rows
+        for r in rows if r["total"]["games"] >= 2
     )
 
     return f'''
     <div class="panel">
       <h2 style="margin-bottom:4px;">Duo synergy</h2>
-      <p class="panel-hint" style="margin:6px 0 14px;">Winrate when two friends were on the same team
-      in a ranked game this season, and how that compares with how often each of them wins
-      otherwise. Two games is a small sample &mdash; the games count is there for a reason.</p>
-      <div class="duo-filters" role="group" aria-label="Filter by player">
-        <button type="button" class="duo-chip active" data-who="">Everyone</button>{filter_chips}
-      </div>
+      <p class="panel-hint" style="margin:6px 0 14px;">Every pair who played ranked on the same team
+      this season. The number is their winrate together; the colour is whether that beats how often
+      those two win apart, so green means the pairing helps. The diagonal is each player on their own.</p>
       <div class="duo-controls">
         <div class="range-toggle" role="group" aria-label="Queue">
           <button type="button" class="range-btn active" data-queue="total">All queues</button>
           <button type="button" class="range-btn" data-queue="solo">Solo/Duo</button>
           <button type="button" class="range-btn" data-queue="flex">Flex</button>
         </div>
-        <div class="range-toggle" role="group" aria-label="Sort pairs">
-          <button type="button" class="range-btn active" data-sort="games">Most played</button>
-          <button type="button" class="range-btn" data-sort="winrate">Best winrate</button>
-          <button type="button" class="range-btn" data-sort="lift">Biggest lift</button>
+        <div class="duo-scale" aria-hidden="true">
+          <span>worse together</span>
+          <span class="sw lift-down-2"></span><span class="sw lift-down-1"></span>
+          <span class="sw lift-flat"></span>
+          <span class="sw lift-up-1"></span><span class="sw lift-up-2"></span>
+          <span>better</span>
         </div>
       </div>
-      <div class="duo-grid">{cards}</div>
-      <div class="duo-empty" hidden></div>
+      <div class="duo-matrix-wrap">
+        <table class="duo-matrix">
+          <thead><tr><td></td>{head}</tr></thead>
+          <tbody>{"".join(body)}</tbody>
+        </table>
+      </div>
+      <div class="duo-highlights" data-duo-highlights></div>
+      <div class="duo-detail" data-duo-detail hidden></div>
       <details class="matches-details" style="margin-top:12px;">
         <summary>View as table</summary>
         <table class="matches-table">
           <thead><tr><th>Pair</th><th class="num">Games</th><th class="num">Solo/Duo</th><th class="num">Flex</th><th class="num">Record</th><th class="num">Winrate</th></tr></thead>
-          <tbody>{body}</tbody>
+          <tbody>{table_rows}</tbody>
         </table>
       </details>
     </div>'''
@@ -3217,55 +3219,61 @@ def build_html(data):
 
   /* ---- Duo synergy ---------------------------------------------------- */
   .duo-controls {{
-    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
     justify-content: space-between; margin-bottom: 14px;
   }}
-  .duo-filters {{ display: flex; flex-wrap: wrap; gap: 6px; }}
-  .duo-chip {{
-    appearance: none; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600;
-    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
-    background: var(--surface-1); color: var(--text-secondary);
-    transition: background .14s ease, border-color .14s ease, color .14s ease;
+  .duo-scale {{ display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }}
+  .duo-scale .sw {{ width: 16px; height: 12px; border-radius: 3px; display: inline-block; }}
+
+  /* On a phone the grid is wider than the screen; it scrolls in place rather
+     than shrinking the cells past readability. */
+  .duo-matrix-wrap {{ overflow-x: auto; }}
+  .duo-matrix {{ border-collapse: separate; border-spacing: 3px; width: 100%; }}
+  .duo-matrix th {{
+    font-size: 11.5px; font-weight: 700; padding: 4px 6px; border: none;
+    text-transform: none; letter-spacing: 0; white-space: nowrap;
   }}
-  .duo-chip:hover {{ background: var(--surface-2); color: var(--text-primary); }}
-  .duo-chip.active {{
-    background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 62%, var(--accent-2)));
-    border-color: transparent; color: #fff;
+  .duo-matrix thead th {{ text-align: center; }}
+  .duo-matrix tbody th {{ text-align: right; }}
+  .duo-cell {{
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 4px;
+    text-align: center; background: var(--surface-2); min-width: 62px;
+    transition: transform .12s ease, box-shadow .12s ease;
   }}
-  .duo-grid {{
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 12px;
+  .duo-cell[tabindex] {{ cursor: pointer; }}
+  .duo-cell[tabindex]:hover {{ transform: scale(1.06); box-shadow: var(--shadow-md); }}
+  .duo-cell.selected {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
+  .cell-wr {{
+    display: block; font-size: 13.5px; font-weight: 700;
+    font-variant-numeric: tabular-nums; line-height: 1.2;
   }}
-  .duo-card {{
-    background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
-    padding: 14px 15px; transition: transform .16s ease, border-color .16s ease;
+  .cell-g {{ display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }}
+  /* Never played together, and the diagonal: both are context, not results. */
+  .duo-none, .duo-self {{ background: transparent; border-style: dashed; color: var(--muted); }}
+  .duo-self .cell-wr {{ color: var(--text-secondary); font-weight: 600; }}
+  /* Fewer than DUO_THIN_GAMES games: shown, but not coloured as if it meant
+     something. */
+  .duo-cell.thin {{ opacity: .55; }}
+
+  /* Diverging scale on how the pair does versus how those two do apart. */
+  .lift-flat    {{ background: var(--surface-2); }}
+  .lift-up-1    {{ background: color-mix(in srgb, var(--good) 22%, var(--surface-2)); }}
+  .lift-up-2    {{ background: color-mix(in srgb, var(--good) 45%, var(--surface-2)); }}
+  .lift-down-1  {{ background: color-mix(in srgb, var(--critical) 22%, var(--surface-2)); }}
+  .lift-down-2  {{ background: color-mix(in srgb, var(--critical) 45%, var(--surface-2)); }}
+
+  .duo-highlights {{ font-size: 12.5px; color: var(--text-secondary); margin-top: 12px; line-height: 1.6; }}
+  .duo-highlights b {{ font-weight: 700; }}
+  .duo-detail {{
+    margin-top: 12px; padding: 13px 15px; border-radius: 11px;
+    background: var(--surface-2); border: 1px solid var(--border);
   }}
-  .duo-card[hidden] {{ display: none; }}
-  .duo-card:hover {{ transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }}
-  .duo-names {{ display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; flex-wrap: wrap; }}
-  .duo-amp {{ color: var(--muted); font-weight: 500; }}
-  /* The winrate is the headline; the record sits on its baseline so the two
-     read as one figure rather than competing. */
-  .duo-figure {{ display: flex; align-items: baseline; gap: 8px; margin: 9px 0 7px; }}
-  .duo-wr {{
-    font-family: "Outfit", "Inter", sans-serif; font-size: 24px; font-weight: 700;
-    letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1;
-  }}
-  .duo-record {{ font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }}
-  .duo-track {{ height: 7px; border-radius: 999px; background: var(--gridline); overflow: hidden; }}
-  .duo-fill {{ height: 100%; border-radius: 999px; }}
-  .duo-fill.good {{ background: linear-gradient(90deg, color-mix(in srgb, var(--good) 70%, transparent), var(--good)); }}
-  .duo-fill.bad {{ background: linear-gradient(90deg, color-mix(in srgb, var(--critical) 70%, transparent), var(--critical)); }}
-  .duo-lift {{ font-size: 11.5px; font-weight: 600; margin-top: 9px; }}
-  .duo-lift.up {{ color: var(--good); }}
-  .duo-lift.down {{ color: var(--critical); }}
-  .duo-lift.flat {{ color: var(--muted); }}
-  .duo-lift .muted {{ font-weight: 500; }}
-  .duo-games {{ font-size: 11.5px; color: var(--muted); margin-top: 4px; }}
-  /* Under five games a winrate swings on a single result; say so rather than
-     letting a sort by lift imply the pair is genuinely better. */
-  .duo-thin {{ color: var(--critical); opacity: .75; font-weight: 600; }}
-  .duo-empty {{ font-size: 13px; color: var(--muted); padding: 18px 0; }}
-  .duo-empty[hidden] {{ display: none; }}
+  .duo-detail[hidden] {{ display: none; }}
+  .duo-detail-names {{ font-weight: 700; font-size: 14px; margin-bottom: 6px; }}
+  .duo-detail-line {{ font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }}
+  .duo-thin {{ color: var(--critical); opacity: .8; font-weight: 600; }}
+  .duo-lift-up {{ color: var(--good); font-weight: 700; }}
+  .duo-lift-down {{ color: var(--critical); font-weight: 700; }}
 
   /* ---- Patch notes ---------------------------------------------------- */
   #patch-notes {{ width: 40px; padding: 0; font-size: 16px; position: relative; }}
@@ -3594,13 +3602,15 @@ def build_html(data):
     /* Narrower column means the horizontal veil has less room to fade, so
        the art gets shorter and sits further back. */
     .ext-link {{ min-height: 38px; padding: 8px 13px; font-size: 12px; }}
-    .duo-grid {{ grid-template-columns: 1fr; }}
-    .duo-chip {{ min-height: 38px; padding: 9px 14px; }}
-    .duo-controls {{ gap: 12px; }}
-    /* Three sort labels at the shared .range-btn padding wrapped onto a second
-       row inside the pill, which reads as broken rather than as a toggle. */
+    .duo-controls {{ gap: 10px; }}
+    /* Three labels at the shared .range-btn padding wrapped onto a second row
+       inside the pill, which reads as broken rather than as a toggle. */
     .duo-controls .range-toggle {{ width: 100%; }}
     .duo-controls .range-btn {{ flex: 1; padding: 11px 6px; font-size: 12px; }}
+    .duo-matrix {{ border-spacing: 2px; }}
+    .duo-cell {{ min-width: 52px; padding: 6px 2px; }}
+    .cell-wr {{ font-size: 12px; }}
+    .duo-matrix th {{ font-size: 10.5px; padding: 3px 4px; }}
     .card-art {{ width: 100%; height: 148px; }}
     .card-art img {{ object-position: 56% 22%; }}
     h2 {{ font-size: 16px; }}
@@ -3884,99 +3894,117 @@ def build_html(data):
   </script>
 
   <script>
-    // Duo synergy: filter by player and re-order the cards. Everything is
-    // already in the DOM, so this only hides and reorders.
+    // Duo synergy matrix. Every queue's numbers are written onto each cell at
+    // build time, so switching queue is a read, never a recalculation that
+    // could disagree with the build.
     (function () {{
-      var grid = document.querySelector('.duo-grid');
-      if (!grid) return;
-      var cards = [].slice.call(grid.querySelectorAll('.duo-card'));
-      var empty = document.querySelector('.duo-empty');
-      var who = '', sortBy = 'games', queue = 'total';
-      var SORT_KEY = {{ games: 'games', winrate: 'wr', lift: 'lift' }};
-      var THIN = {DUO_THIN_GAMES};   // matches DUO_THIN_GAMES in the generator
+      var table = document.querySelector('.duo-matrix');
+      if (!table) return;
+      var cells = [].slice.call(table.querySelectorAll('.duo-cell'));
+      var pairCells = cells.filter(function (c) {{ return c.hasAttribute('data-a'); }});
+      var detail = document.querySelector('[data-duo-detail]');
+      var highlights = document.querySelector('[data-duo-highlights]');
+      var THIN = {DUO_THIN_GAMES};
+      var queue = 'total', selected = null;
       var QUEUE_NAME = {{ total: 'any queue', solo: 'Solo/Duo', flex: 'Flex' }};
 
-      function num(card, key) {{
-        return parseFloat(card.getAttribute('data-' + queue + '-' + key)) || 0;
+      function num(c, key) {{
+        return parseFloat(c.getAttribute('data-' + queue + '-' + key));
+      }}
+      function liftClass(v, games) {{
+        if (isNaN(v) || v === -999 || games < THIN) return 'lift-flat';
+        if (v >= 5) return 'lift-up-2';
+        if (v >= 1.5) return 'lift-up-1';
+        if (v <= -5) return 'lift-down-2';
+        if (v <= -1.5) return 'lift-down-1';
+        return 'lift-flat';
+      }}
+      function signed(v) {{
+        return (v > 0 ? '+' : (v < 0 ? '\u2212' : '\u00b1')) + Math.abs(v).toFixed(1);
       }}
 
-      // Redraw one card for the selected queue. Every view was written onto
-      // the element at build time, so this only reads and never recomputes.
-      function paintCard(c) {{
-        var games = num(c, 'games'), wr = num(c, 'wr');
-        var wrEl = c.querySelector('.duo-wr'), recEl = c.querySelector('.duo-record');
-        var fill = c.querySelector('.duo-fill'), lift = c.querySelector('.duo-lift');
-        var gamesEl = c.querySelector('.duo-games');
-        if (wrEl) wrEl.textContent = wr.toFixed(1) + '%';
-        if (recEl) recEl.textContent = num(c, 'w') + 'W ' + num(c, 'l') + 'L';
-        if (fill) {{
-          fill.style.width = Math.max(2, Math.min(100, wr)) + '%';
-          fill.className = 'duo-fill ' + (wr >= 50 ? 'good' : 'bad');
-        }}
-        if (lift) {{
-          var raw = c.getAttribute('data-' + queue + '-lift');
-          var base = c.getAttribute('data-' + queue + '-base');
-          var v = parseFloat(raw);
-          if (raw === '-999' || isNaN(v) || !base) {{
-            lift.textContent = '';
-            lift.className = 'duo-lift flat';
-          }} else {{
-            var sign = v > 0 ? '+' : (v < 0 ? '\u2212' : '\u00b1');
-            lift.className = 'duo-lift ' + (v > 0 ? 'up' : (v < 0 ? 'down' : 'flat'));
-            lift.innerHTML = sign + Math.abs(v).toFixed(1) + ' pts ' +
-              '<span class="muted">vs their usual ' + Math.round(parseFloat(base)) + '%</span>';
+      function paint() {{
+        cells.forEach(function (c) {{
+          var wrEl = c.querySelector('.cell-wr'), gEl = c.querySelector('.cell-g');
+          c.className = c.className.replace(/ ?lift-[a-z0-9-]+| ?thin/g, '');
+          if (c.classList.contains('duo-none')) return;
+          var wr = num(c, 'wr'), games = num(c, 'games');
+          if (c.classList.contains('duo-self')) {{
+            // No games played "with yourself"; this is the reference number.
+            if (wrEl) wrEl.textContent = isNaN(wr) || wr === 0 ? '\u2013' : wr.toFixed(1) + '%';
+            return;
           }}
-        }}
-        if (gamesEl) {{
-          gamesEl.innerHTML = games + ' games together' +
-            (games > 0 && games < THIN ? ' <span class="duo-thin">&middot; small sample</span>' : '');
-        }}
+          if (!games) {{
+            if (wrEl) wrEl.textContent = '\u2013';
+            if (gEl) gEl.textContent = '';
+            c.classList.add('lift-flat');
+            return;
+          }}
+          if (wrEl) wrEl.textContent = wr.toFixed(0) + '%';
+          if (gEl) gEl.textContent = games + 'g';
+          c.classList.add(liftClass(num(c, 'lift'), games));
+          if (games < THIN) c.classList.add('thin');
+        }});
+        showHighlights();
+        if (selected) showDetail(selected);
       }}
 
-      function apply() {{
-        var shown = 0;
-        cards.forEach(function (c) {{
-          var mine = !who || c.getAttribute('data-a') === who || c.getAttribute('data-b') === who;
-          // A pair with one game in this queue is not a duo record worth
-          // showing, the same cutoff the panel uses overall.
-          var enough = num(c, 'games') >= 2;
-          c.hidden = !(mine && enough);
-          if (!c.hidden) {{ paintCard(c); shown++; }}
+      function showHighlights() {{
+        if (!highlights) return;
+        var rated = pairCells.filter(function (c) {{
+          return num(c, 'games') >= THIN && num(c, 'lift') !== -999 && !isNaN(num(c, 'lift'));
         }});
-        var sorted = cards.slice().sort(function (a, b) {{
-          // Ties break on games played, so the more trustworthy number wins
-          // when two pairs share a winrate.
-          var d = num(b, SORT_KEY[sortBy]) - num(a, SORT_KEY[sortBy]);
-          return d !== 0 ? d : num(b, 'games') - num(a, 'games');
-        }});
-        sorted.forEach(function (c) {{ grid.appendChild(c); }});
-        if (empty) {{
-          empty.hidden = shown > 0;
-          empty.textContent = who
-            ? 'No pairs for ' + who + ' in ' + QUEUE_NAME[queue] + '.'
-            : 'No pairs with two or more games in ' + QUEUE_NAME[queue] + '.';
+        if (!rated.length) {{
+          highlights.innerHTML = '<span class="muted">No pair has ' + THIN +
+            ' or more games in ' + QUEUE_NAME[queue] + ' yet.</span>';
+          return;
         }}
+        rated.sort(function (a, b) {{ return num(b, 'lift') - num(a, 'lift'); }});
+        var best = rated[0], worst = rated[rated.length - 1];
+        var most = pairCells.slice().sort(function (a, b) {{
+          return num(b, 'games') - num(a, 'games');
+        }})[0];
+        function name(c) {{ return c.getAttribute('data-a') + ' &amp; ' + c.getAttribute('data-b'); }}
+        highlights.innerHTML =
+          'Best together: <b>' + name(best) + '</b> <span class="duo-lift-up">' +
+            signed(num(best, 'lift')) + ' pts</span> over ' + num(best, 'games') + ' games' +
+          ' &nbsp;\u00b7&nbsp; Worst: <b>' + name(worst) + '</b> <span class="duo-lift-down">' +
+            signed(num(worst, 'lift')) + ' pts</span> over ' + num(worst, 'games') + ' games' +
+          ' &nbsp;\u00b7&nbsp; Most played: <b>' + name(most) + '</b>, ' +
+            num(most, 'games') + ' games';
       }}
 
-      apply();
+      function showDetail(c) {{
+        if (!detail) return;
+        var games = num(c, 'games');
+        if (!games) {{ detail.hidden = true; return; }}
+        var lift = num(c, 'lift'), base = c.getAttribute('data-' + queue + '-base');
+        var liftTxt = (lift === -999 || isNaN(lift) || !base) ? ''
+          : ' &nbsp;\u00b7&nbsp; <span class="duo-lift-' + (lift >= 0 ? 'up' : 'down') + '">' +
+            signed(lift) + ' pts</span> vs their usual ' + Math.round(parseFloat(base)) + '%';
+        detail.hidden = false;
+        detail.innerHTML =
+          '<div class="duo-detail-names">' + c.getAttribute('data-a') + ' &amp; ' +
+            c.getAttribute('data-b') + '</div>' +
+          '<div class="duo-detail-line">' + num(c, 'wr').toFixed(1) + '% \u00b7 ' +
+            num(c, 'w') + 'W ' + num(c, 'l') + 'L over ' + games + ' games in ' +
+            QUEUE_NAME[queue] + liftTxt +
+            (games < THIN ? ' <span class="duo-thin">\u00b7 small sample</span>' : '') +
+          '</div>';
+      }}
 
-      document.querySelectorAll('.duo-chip').forEach(function (b) {{
-        b.addEventListener('click', function () {{
-          who = b.getAttribute('data-who') || '';
-          document.querySelectorAll('.duo-chip').forEach(function (o) {{
-            o.classList.toggle('active', o === b);
-          }});
-          apply();
-        }});
-      }});
+      function select(c) {{
+        cells.forEach(function (o) {{ o.classList.remove('selected'); }});
+        if (!c || !num(c, 'games')) {{ selected = null; if (detail) detail.hidden = true; return; }}
+        c.classList.add('selected');
+        selected = c;
+        showDetail(c);
+      }}
 
-      document.querySelectorAll('.range-btn[data-sort]').forEach(function (b) {{
-        b.addEventListener('click', function () {{
-          sortBy = b.getAttribute('data-sort');
-          document.querySelectorAll('.range-btn[data-sort]').forEach(function (o) {{
-            o.classList.toggle('active', o === b);
-          }});
-          apply();
+      pairCells.forEach(function (c) {{
+        c.addEventListener('click', function () {{ select(c === selected ? null : c); }});
+        c.addEventListener('keydown', function (e) {{
+          if (e.key === 'Enter' || e.key === ' ') {{ e.preventDefault(); select(c === selected ? null : c); }}
         }});
       }});
 
@@ -3986,9 +4014,13 @@ def build_html(data):
           document.querySelectorAll('.range-btn[data-queue]').forEach(function (o) {{
             o.classList.toggle('active', o === b);
           }});
-          apply();
+          // A pair with no games in this queue cannot stay selected.
+          if (selected && !num(selected, 'games')) select(null);
+          paint();
         }});
       }});
+
+      paint();
     }})();
   </script>
 
