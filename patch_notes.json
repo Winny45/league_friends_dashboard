@@ -1,15 +1,19 @@
 [
   {
     "date": "2026-08-29",
-    "title": "Refreshing now picks up new games",
+    "title": "Refreshing now updates games and the LP chart",
     "items": [
       {
         "type": "fixed",
         "text": "Refresh ranks only ever updated the leaderboard's rank and record. Everyone's Form dots and recent match list stayed on whatever was published, so a refresh looked like it had done nothing. It now pulls each player's new ranked games too, and marks them so you can see what arrived."
       },
       {
+        "type": "fixed",
+        "text": "The LP per game chart now redraws with those new games as well, and the standings above it follow. Your zoom setting and any lines you have hidden survive the redraw."
+      },
+      {
         "type": "improved",
-        "text": "Season totals, the champion breakdown and the LP chart still come from the published snapshot — those need a player's whole season, which a browser cannot rebuild. The status line now says so instead of leaving you to work it out."
+        "text": "Season totals and the champion breakdown still come from the published snapshot — those need a player's whole season, which a browser cannot rebuild. The status line says what did and did not move."
       }
     ]
   },
