@@ -2773,6 +2773,40 @@ def build_html(data):
   <script type="application/json" id="live-refresh-data">{live_refresh_json}</script>
 
   <script>
+    // Riot key validation, shared by both dialog flows below.
+    //
+    // Checking only the RGAPI- prefix accepted a doubled paste: pasting a new
+    // key into a box that still held the old one gives
+    // "RGAPI-<old>RGAPI-<new>", which starts with RGAPI-, sails through, and
+    // comes back from Riot as a 401 that reads like the new key was rejected.
+    // A development key is RGAPI- plus a UUID, so check the whole shape and
+    // say specifically what is wrong.
+    window.RiotKey = {{
+      RE: /^RGAPI-[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$/i,
+      LEN: 42,
+      // Keys arrive pasted out of a browser tab or a chat message, so strip
+      // stray whitespace and wrapping quotes rather than failing on them.
+      // A key is hex and hyphens, so dropping everything outside printable
+      // ASCII cannot lose anything legitimate.
+      clean: function (v) {{
+        return String(v == null ? '' : v)
+          .replace(/[^!-~]+/g, '')      // spaces, newlines, smart quotes
+          .replace(/^["']+|["']+$/g, '');  // quotes wrapped round a pasted value
+      }},
+      problem: function (k) {{
+        if (!k) return 'Paste your Riot API key first.';
+        if (this.RE.test(k)) return null;
+        if (k.indexOf('RGAPI-') !== 0) return 'A Riot key starts with RGAPI- — that one does not.';
+        if (k.length > this.LEN) return 'That looks like two keys run together (' + k.length +
+          ' characters, expected ' + this.LEN + '). Clear the box, then paste just the new key.';
+        if (k.length < this.LEN) return 'That key is incomplete — ' + k.length +
+          ' characters, expected ' + this.LEN + '. Copy the whole key from developer.riotgames.com.';
+        return 'That is not a valid Riot key — expected RGAPI- followed by 36 characters.';
+      }}
+    }};
+  </script>
+
+  <script>
     (function () {{
       var root = document.documentElement;
       var btn = document.getElementById('theme-toggle');
@@ -3069,10 +3103,15 @@ def build_html(data):
         setTimeout(function () {{ modalKey.focus(); modalKey.select(); }}, 30);
 
         modalOk.onclick = function () {{
-          var key = modalKey.value.trim();
-          if (!/^RGAPI-/.test(key)) {{
-            modalMsg.textContent = 'That does not look like a Riot key — they start with RGAPI-.';
+          // Write the cleaned value back so the box shows exactly what will
+          // be sent, rather than hiding a stray space or newline.
+          var key = window.RiotKey.clean(modalKey.value);
+          modalKey.value = key;
+          var problem = window.RiotKey.problem(key);
+          if (problem) {{
+            modalMsg.textContent = problem;
             modalKey.focus();
+            modalKey.select();
             return;
           }}
           // Read the checkbox, which now lives in its own row. It used to sit
@@ -3149,7 +3188,11 @@ def build_html(data):
         modalKey.value = '';
         modal.hidden = false;
         onConfirm = opts.onConfirm;
-        setTimeout(function () {{ (opts.needsPass ? modalPass : modalKey).focus(); }}, 30);
+        setTimeout(function () {{
+          var el = opts.needsPass ? modalPass : modalKey;
+          el.focus();
+          if (el === modalKey) el.select();
+        }}, 30);
       }}
       function closeModal() {{
         modal.hidden = true;
@@ -3193,8 +3236,10 @@ def build_html(data):
           blurb: 'Riot development keys expire every 24 hours. Grab a fresh one from developer.riotgames.com and paste it here.',
           needsKey: true, needsPass: false,
           onConfirm: function () {{
-            var key = modalKey.value.trim();
-            if (!/^RGAPI-/.test(key)) {{ modalMsg.textContent = 'That does not look like a Riot key (should start with RGAPI-).'; return; }}
+            var key = window.RiotKey.clean(modalKey.value);
+            modalKey.value = key;
+            var problem = window.RiotKey.problem(key);
+            if (problem) {{ modalMsg.textContent = problem; modalKey.focus(); modalKey.select(); return; }}
             modalOk.disabled = true;
             modalMsg.className = 'modal-msg';
             modalMsg.textContent = 'Checking the key against Riot…';
