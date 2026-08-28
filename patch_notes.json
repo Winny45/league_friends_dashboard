@@ -4,6 +4,10 @@
     "title": "Duo synergy is easier to read",
     "items": [
       {
+        "type": "fixed",
+        "text": "Duo synergy was missing most of its games. It only counted a pair when both players' records carried a team id, and only about one match in ten does — so Brett and Winny showed 6 games together instead of 130, and ten pairs including Neel and Winny did not appear at all. It now works out who was on the same team from the result, which every record has."
+      },
+      {
         "type": "improved",
         "text": "The table is now a card per pair, with a winrate bar you can scan at a glance instead of four columns of numbers."
       },
