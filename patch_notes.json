@@ -1,6 +1,32 @@
 [
   {
     "date": "2026-08-29",
+    "title": "Duo synergy is easier to read",
+    "items": [
+      {
+        "type": "improved",
+        "text": "The table is now a card per pair, with a winrate bar you can scan at a glance instead of four columns of numbers."
+      },
+      {
+        "type": "added",
+        "text": "Each pair is compared against how often those two win otherwise, so you can see whether a duo is genuinely better — \"+14.5 pts vs their usual 52%\" — rather than just a number with nothing to judge it by."
+      },
+      {
+        "type": "added",
+        "text": "Filter to one player to see only their pairs, and sort by most played, best winrate or biggest lift."
+      },
+      {
+        "type": "added",
+        "text": "Pairs with fewer than five games together are flagged as a small sample, because two games can look like a 100% winrate."
+      },
+      {
+        "type": "fixed",
+        "text": "Remade games (the early-surrender kind that count for nothing) were being included in duo records. They are excluded everywhere else and now here too."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "Refreshing now updates games and the LP chart",
     "items": [
       {
