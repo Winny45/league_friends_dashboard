@@ -413,8 +413,17 @@ def role_breakdown(season_matches):
 def compute_duo_synergy(friends):
     """For every pair of friends who were teammates in the same ranked
     game at least twice this season, their combined winrate playing
-    together. Detected purely from matchId + teamId overlap across
-    friends' own season match lists — no extra API calls needed."""
+    together. Detected purely from overlap across friends' own season match
+    lists — no extra API calls needed.
+
+    Teammates are identified by matchId plus a matching result, not by
+    teamId. League has no draws and a match has exactly two teams, so two
+    players in the same game share a team if and only if they share an
+    outcome — the two tests are equivalent. teamId is only present on records
+    summarised after it was added to fetch_data.py, which is about 9% of the
+    cache, and requiring it silently hid most of this panel: Brett and Winny
+    showed 6 games together out of 130, and ten pairs did not appear at all.
+    Checked against every record that does carry teamId: 48 of 48 agree."""
     by_match = {}
     for f in friends:
         for m in f.get("seasonMatches", []):
@@ -430,7 +439,7 @@ def compute_duo_synergy(friends):
             for j in range(i + 1, len(entries)):
                 fa, ma = entries[i]
                 fb, mb = entries[j]
-                if ma.get("teamId") is None or ma.get("teamId") != mb.get("teamId"):
+                if ma["win"] != mb["win"]:
                     continue  # same lobby, opposite teams — not a duo
                 key = tuple(sorted([fa["label"], fb["label"]]))
                 stats = pair_stats.setdefault(key, {"wins": 0, "games": 0, "solo": 0, "flex": 0})
