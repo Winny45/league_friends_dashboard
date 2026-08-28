@@ -165,6 +165,72 @@ def champion_icon_url(champion_name):
     return f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{slug}.png"
 
 
+# ---------------------------------------------------------------------------
+# Third-party profile links
+#
+# Every League stats site keys profiles by Riot ID, but they disagree on how to
+# name a region: op.gg and League of Graphs take a short slug ("euw"), u.gg
+# takes the platform id itself ("euw1"). A platform that is not in the table
+# gets no links at all rather than a guessed slug that would 404.
+# ---------------------------------------------------------------------------
+
+SHORT_REGION = {
+    "euw1": "euw", "eun1": "eune", "na1": "na", "kr": "kr", "jp1": "jp",
+    "br1": "br", "la1": "lan", "la2": "las", "oc1": "oce", "ru": "ru",
+    "tr1": "tr", "ph2": "ph", "sg2": "sg", "th2": "th", "tw2": "tw",
+    "vn2": "vn", "me1": "me",
+}
+
+EXTERNAL_SITES = (
+    ("op.gg", "https://www.op.gg/summoners/{short}/{name}-{tag}"),
+    ("u.gg", "https://u.gg/lol/profile/{platform}/{name}-{tag}/overview"),
+    ("League of Graphs", "https://www.leagueofgraphs.com/summoner/{short}/{name}-{tag}"),
+)
+
+_PLATFORM = {"id": "euw1"}
+
+
+def set_platform(platform):
+    """Set once per render, so the render_* helpers can build region-specific
+    URLs without threading the platform through every signature."""
+    _PLATFORM["id"] = (platform or "euw1").lower()
+
+
+def external_profile_links(riot_id):
+    """[(site name, url)] for one "Name#TAG" Riot ID, or [] if it cannot be
+    built — an ID with no tag, or a region none of the sites are mapped for."""
+    if not riot_id or "#" not in riot_id:
+        return []
+    name, tag = riot_id.split("#", 1)
+    if not name or not tag:
+        return []
+    short = SHORT_REGION.get(_PLATFORM["id"])
+    if not short:
+        return []
+    parts = {
+        "short": short,
+        "platform": _PLATFORM["id"],
+        # safe="" so a space becomes %20 rather than being left raw, and a
+        # name containing / or ? cannot break out of the path.
+        "name": urllib.parse.quote(name, safe=""),
+        "tag": urllib.parse.quote(tag, safe=""),
+    }
+    return [(label, tpl.format(**parts)) for label, tpl in EXTERNAL_SITES]
+
+
+def render_profile_links(riot_id):
+    links = external_profile_links(riot_id)
+    if not links:
+        return ""
+    chips = "".join(
+        f'<a class="ext-link" href="{esc(url)}" target="_blank" rel="noopener noreferrer" '
+        f'title="Open this player on {esc(label)}">{esc(label)}'
+        f'<span class="ext" aria-hidden="true">\u2197</span></a>'
+        for label, url in links
+    )
+    return f'<div class="ext-links">{chips}</div>'
+
+
 def champion_splash_url(champion_name):
     """Data Dragon splash art for a champion, used as the wash behind a
     friend's card. Unlike the square icons this path carries no patch
@@ -572,6 +638,7 @@ def render_friend_card(f, rank_position, now):
         <div>
           <h2>{esc(f["label"])}</h2>
           <div class="muted small">{esc(f["riotId"])} &middot; Level {esc(f.get("summonerLevel", "?"))}</div>
+          {render_profile_links(f.get("riotId", ""))}
         </div>
         {'<div class="hot">🔥 Hot streak</div>' if (solo or {}).get("hotStreak") else ""}
       </header>
@@ -1804,6 +1871,7 @@ def build_html(data):
     now = datetime.now()
     rank_history = data.get("rankHistory", [])
     set_icon_context(data.get("ddragonVersion"), data.get("championIconMap", {}))
+    set_platform(data.get("platform"))
 
     leaderboard_rows = "".join(
         render_leaderboard_row(f, i + 1, weekly_trend_for(rank_history, f["label"], now))
@@ -2354,6 +2422,24 @@ def build_html(data):
   .chip-level {{ font-size: 11px; color: var(--accent); font-weight: 700; }}
   .chip-points {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }}
 
+  /* ---- External profile links ---------------------------------------- */
+  /* Opaque chips rather than plain links: they sit over the champion art on
+     a phone, where the veils are thinnest. */
+  .ext-links {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }}
+  .ext-link {{
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11.5px; font-weight: 600; color: var(--text-secondary);
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 11px; white-space: nowrap;
+    transition: color .14s ease, border-color .14s ease, background .14s ease;
+  }}
+  .ext-link:hover {{
+    color: var(--accent); text-decoration: none;
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface-2));
+  }}
+  .ext-link .ext {{ font-size: 9.5px; opacity: .65; }}
+
   .champ-icon {{ border-radius: 6px; vertical-align: middle; flex-shrink: 0; object-fit: cover; }}
   .champ-icon-ph {{ display: inline-block; }}
   .champ-cell {{ display: flex; align-items: center; gap: 8px; }}
@@ -2613,6 +2699,7 @@ def build_html(data):
     .panel, .card {{ padding: 15px 13px; border-radius: 12px; }}
     /* Narrower column means the horizontal veil has less room to fade, so
        the art gets shorter and sits further back. */
+    .ext-link {{ min-height: 38px; padding: 8px 13px; font-size: 12px; }}
     .card-art {{ width: 100%; height: 148px; }}
     .card-art img {{ object-position: 56% 22%; }}
     h2 {{ font-size: 16px; }}
