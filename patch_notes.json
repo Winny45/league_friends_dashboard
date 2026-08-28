@@ -1,58 +1,132 @@
 [
   {
+    "date": "2026-08-29",
+    "title": "Refreshing now picks up new games",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Refresh ranks only ever updated the leaderboard's rank and record. Everyone's Form dots and recent match list stayed on whatever was published, so a refresh looked like it had done nothing. It now pulls each player's new ranked games too, and marks them so you can see what arrived."
+      },
+      {
+        "type": "improved",
+        "text": "Season totals, the champion breakdown and the LP chart still come from the published snapshot — those need a player's whole season, which a browser cannot rebuild. The status line now says so instead of leaving you to work it out."
+      }
+    ]
+  },
+  {
     "date": "2026-08-28",
     "title": "Patch notes",
     "items": [
-      { "type": "added", "text": "This panel. The sparkle button in the header lists what has changed on the dashboard, and shows a dot when there is something you have not read yet." }
+      {
+        "type": "added",
+        "text": "This panel. The sparkle button in the header lists what has changed on the dashboard, and shows a dot when there is something you have not read yet."
+      }
     ]
   },
   {
     "date": "2026-08-28",
     "title": "Links to op.gg, u.gg and League of Graphs",
     "items": [
-      { "type": "added", "text": "Every friend card now has op.gg, u.gg and League of Graphs links under the player's Riot ID, each opening in a new tab." }
+      {
+        "type": "added",
+        "text": "Every friend card now has op.gg, u.gg and League of Graphs links under the player's Riot ID, each opening in a new tab."
+      }
     ]
   },
   {
     "date": "2026-08-28",
     "title": "Refreshing and the API key are separate buttons",
     "items": [
-      { "type": "improved", "text": "Refresh ranks now uses your saved key and goes, instead of stopping to ask for a key every single time." },
-      { "type": "added", "text": "The API key button handles the key on its own, and checks it against Riot before saving, so a bad or expired key is caught right there rather than half way through a refresh." },
-      { "type": "added", "text": "A Forget saved key option, for when someone else uses your computer." },
-      { "type": "fixed", "text": "When Riot rejects a key it is now cleared automatically, so the next refresh asks for a new one instead of failing the same way with no explanation." },
-      { "type": "improved", "text": "Choosing not to remember a key now keeps it for the rest of your visit, rather than forgetting it immediately and asking again seconds later." }
+      {
+        "type": "improved",
+        "text": "Refresh ranks now uses your saved key and goes, instead of stopping to ask for a key every single time."
+      },
+      {
+        "type": "added",
+        "text": "The API key button handles the key on its own, and checks it against Riot before saving, so a bad or expired key is caught right there rather than half way through a refresh."
+      },
+      {
+        "type": "added",
+        "text": "A Forget saved key option, for when someone else uses your computer."
+      },
+      {
+        "type": "fixed",
+        "text": "When Riot rejects a key it is now cleared automatically, so the next refresh asks for a new one instead of failing the same way with no explanation."
+      },
+      {
+        "type": "improved",
+        "text": "Choosing not to remember a key now keeps it for the rest of your visit, rather than forgetting it immediately and asking again seconds later."
+      }
     ]
   },
   {
     "date": "2026-08-28",
     "title": "Riot API key box rebuilt",
     "items": [
-      { "type": "fixed", "text": "Ticking \"Remember this key\" and then mistyping the key wiped the tickbox, so the key was silently never saved." },
-      { "type": "fixed", "text": "Pasting a new key over an old one joined the two together. That still started with RGAPI-, so it was accepted and Riot answered with a confusing 401. The whole key is now checked, and the box selects itself so a paste replaces what is there." },
-      { "type": "added", "text": "developer.riotgames.com is a real link you can click, instead of a line of text you had to retype." },
-      { "type": "improved", "text": "Redesigned box: the key is shown in a monospaced font so a wrong character stands out, errors say what is actually wrong, and the buttons are finger sized on a phone." }
+      {
+        "type": "fixed",
+        "text": "Ticking \"Remember this key\" and then mistyping the key wiped the tickbox, so the key was silently never saved."
+      },
+      {
+        "type": "fixed",
+        "text": "Pasting a new key over an old one joined the two together. That still started with RGAPI-, so it was accepted and Riot answered with a confusing 401. The whole key is now checked, and the box selects itself so a paste replaces what is there."
+      },
+      {
+        "type": "added",
+        "text": "developer.riotgames.com is a real link you can click, instead of a line of text you had to retype."
+      },
+      {
+        "type": "improved",
+        "text": "Redesigned box: the key is shown in a monospaced font so a wrong character stands out, errors say what is actually wrong, and the buttons are finger sized on a phone."
+      }
     ]
   },
   {
     "date": "2026-08-27",
     "title": "A proper look",
     "items": [
-      { "type": "added", "text": "An icon in the browser tab, and a preview card when the link is shared into Discord or WhatsApp showing the current top five." },
-      { "type": "added", "text": "Each player's most played champion now sits as artwork behind the top of their card, tinted with their rank colour." },
-      { "type": "fixed", "text": "Three of the header buttons had no styling at all and rendered as plain grey browser buttons next to the styled ones." },
-      { "type": "improved", "text": "Tidier header, scrollbars that match the theme, and a real footer." }
+      {
+        "type": "added",
+        "text": "An icon in the browser tab, and a preview card when the link is shared into Discord or WhatsApp showing the current top five."
+      },
+      {
+        "type": "added",
+        "text": "Each player's most played champion now sits as artwork behind the top of their card, tinted with their rank colour."
+      },
+      {
+        "type": "fixed",
+        "text": "Three of the header buttons had no styling at all and rendered as plain grey browser buttons next to the styled ones."
+      },
+      {
+        "type": "improved",
+        "text": "Tidier header, scrollbars that match the theme, and a real footer."
+      }
     ]
   },
   {
     "date": "2026-08-27",
     "title": "Getting around the dashboard",
     "items": [
-      { "type": "added", "text": "The address bar now follows what you are looking at, so you can send someone a link that opens straight on a player or on the rank chart." },
-      { "type": "added", "text": "The back button moves between tabs instead of leaving the site." },
-      { "type": "improved", "text": "The tab bar stays on screen as you scroll, whole leaderboard rows are clickable rather than just the name, and there is a back to top button." },
-      { "type": "improved", "text": "On a phone the player buttons scroll along one row instead of stacking three rows deep and pushing everything down the screen." },
-      { "type": "added", "text": "Arrow keys move between tabs and between players." }
+      {
+        "type": "added",
+        "text": "The address bar now follows what you are looking at, so you can send someone a link that opens straight on a player or on the rank chart."
+      },
+      {
+        "type": "added",
+        "text": "The back button moves between tabs instead of leaving the site."
+      },
+      {
+        "type": "improved",
+        "text": "The tab bar stays on screen as you scroll, whole leaderboard rows are clickable rather than just the name, and there is a back to top button."
+      },
+      {
+        "type": "improved",
+        "text": "On a phone the player buttons scroll along one row instead of stacking three rows deep and pushing everything down the screen."
+      },
+      {
+        "type": "added",
+        "text": "Arrow keys move between tabs and between players."
+      }
     ]
   }
 ]
