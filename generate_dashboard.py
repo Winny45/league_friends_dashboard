@@ -442,44 +442,57 @@ def compute_duo_synergy(friends):
                 if ma["win"] != mb["win"]:
                     continue  # same lobby, opposite teams — not a duo
                 key = tuple(sorted([fa["label"], fb["label"]]))
-                stats = pair_stats.setdefault(key, {"wins": 0, "games": 0, "solo": 0, "flex": 0})
-                stats["games"] += 1
-                if ma["win"]:
-                    stats["wins"] += 1
-                if ma.get("queue") == "Ranked Solo/Duo":
-                    stats["solo"] += 1
-                else:
-                    stats["flex"] += 1
+                stats = pair_stats.setdefault(key, {q: {"games": 0, "wins": 0}
+                                                     for q in ("total", "solo", "flex")})
+                bucket = "solo" if ma.get("queue") == "Ranked Solo/Duo" else "flex"
+                for q in ("total", bucket):
+                    stats[q]["games"] += 1
+                    if ma["win"]:
+                        stats[q]["wins"] += 1
 
-    # Each player's own ranked winrate this season, so a pair's number can be
-    # read against something. "66.7% together" means nothing until you know
-    # whether these two usually win 45% or 60% of their games.
-    solo_rate = {}
+    # Each player's own winrate, per queue, so a pair's number can be read
+    # against something. "66.7% together" means nothing until you know whether
+    # those two usually win 45% or 60%. Per queue because flex and solo are
+    # different ladders and comparing across them would be misleading.
+    own = {}
     order = {}
     for i, f in enumerate(friends):
         order[f["label"]] = i
         played = [m for m in f.get("seasonMatches", []) if not m.get("remake")]
-        if played:
-            solo_rate[f["label"]] = 100 * sum(1 for m in played if m["win"]) / len(played)
+        rates = {}
+        for q, want in (("total", None), ("solo", True), ("flex", False)):
+            pool = [m for m in played
+                    if want is None or (m.get("queue") == "Ranked Solo/Duo") == want]
+            if pool:
+                rates[q] = 100 * sum(1 for m in pool if m["win"]) / len(pool)
+        own[f["label"]] = rates
 
-    rows = []
-    for (a, b), s in pair_stats.items():
-        if s["games"] < 2:
-            continue
-        winrate = round(100 * s["wins"] / s["games"], 1)
-        base = [solo_rate[x] for x in (a, b) if x in solo_rate]
+    def bucket_stats(a, b, st):
+        games, wins = st["games"], st["wins"]
+        if not games:
+            return {"games": 0, "wins": 0, "losses": 0, "winrate": 0.0,
+                    "baseline": None, "lift": None}
+        winrate = round(100 * wins / games, 1)
+        base = [own[x][q] for x in (a, b) for q in [st["_q"]] if q in own.get(x, {})]
         baseline = sum(base) / len(base) if base else None
-        rows.append({
-            "a": a, "b": b, "games": s["games"], "wins": s["wins"],
-            "losses": s["games"] - s["wins"],
-            "winrate": winrate,
-            "solo": s["solo"], "flex": s["flex"],
+        return {
+            "games": games, "wins": wins, "losses": games - wins, "winrate": winrate,
             "baseline": round(baseline, 1) if baseline is not None else None,
             "lift": round(winrate - baseline, 1) if baseline is not None else None,
-            "aVar": friend_var(min(order.get(a, 0), len(FRIEND_PALETTE) - 1)),
-            "bVar": friend_var(min(order.get(b, 0), len(FRIEND_PALETTE) - 1)),
-        })
-    rows.sort(key=lambda r: (-r["games"], -r["winrate"]))
+        }
+
+    rows = []
+    for (a, b), st in pair_stats.items():
+        if st["total"]["games"] < 2:
+            continue
+        row = {"a": a, "b": b,
+               "aVar": friend_var(min(order.get(a, 0), len(FRIEND_PALETTE) - 1)),
+               "bVar": friend_var(min(order.get(b, 0), len(FRIEND_PALETTE) - 1))}
+        for q in ("total", "solo", "flex"):
+            st[q]["_q"] = q
+            row[q] = bucket_stats(a, b, st[q])
+        rows.append(row)
+    rows.sort(key=lambda r: (-r["total"]["games"], -r["total"]["winrate"]))
     return rows
 
 
@@ -1698,6 +1711,11 @@ def render_award(a):
     </div>'''
 
 
+# Below this many games together a winrate says more about luck than about
+# the pair — a 5-game pair was topping "biggest lift" at +33 points.
+DUO_THIN_GAMES = 10
+
+
 def render_duo_synergy_panel(friends):
     rows = compute_duo_synergy(friends)
     if not rows:
@@ -1715,38 +1733,58 @@ def render_duo_synergy_panel(friends):
         for x in seen
     )
 
-    def lift_html(r):
-        if r["lift"] is None:
-            return ""
-        cls = "up" if r["lift"] > 0 else ("down" if r["lift"] < 0 else "flat")
-        sign = "+" if r["lift"] > 0 else ("\u2212" if r["lift"] < 0 else "\u00b1")
-        return (f'<div class="duo-lift {cls}">{sign}{abs(r["lift"]):.1f} pts '
-                f'<span class="muted">vs their usual {r["baseline"]:.0f}%</span></div>')
+    def lift_html(b):
+        if b["lift"] is None:
+            return '<div class="duo-lift flat"></div>'
+        cls = "up" if b["lift"] > 0 else ("down" if b["lift"] < 0 else "flat")
+        sign = "+" if b["lift"] > 0 else ("\u2212" if b["lift"] < 0 else "\u00b1")
+        return (f'<div class="duo-lift {cls}">{sign}{abs(b["lift"]):.1f} pts '
+                f'<span class="muted">vs their usual {b["baseline"]:.0f}%</span></div>')
+
+    def games_html(b):
+        thin = (' <span class="duo-thin">&middot; small sample</span>'
+                if 0 < b["games"] < DUO_THIN_GAMES else "")
+        return f'<div class="duo-games">{b["games"]} games together{thin}</div>'
+
+    # Every queue view is written onto the card, so switching between them is a
+    # read from the element rather than a recalculation that could disagree
+    # with what the build produced. "total" is rendered as the visible state so
+    # the panel still reads correctly with no scripting.
+    def queue_attrs(r):
+        out = []
+        for q in ("total", "solo", "flex"):
+            b = r[q]
+            out.append(
+                f'data-{q}-games="{b["games"]}" data-{q}-wr="{b["winrate"]}" '
+                f'data-{q}-w="{b["wins"]}" data-{q}-l="{b["losses"]}" '
+                f'data-{q}-lift="{b["lift"] if b["lift"] is not None else -999}" '
+                f'data-{q}-base="{b["baseline"] if b["baseline"] is not None else ""}"')
+        return " ".join(out)
 
     cards = "".join(
-        f'<article class="duo-card" data-a="{esc(r["a"])}" data-b="{esc(r["b"])}" '
-        f'data-games="{r["games"]}" data-winrate="{r["winrate"]}" '
-        f'data-lift="{r["lift"] if r["lift"] is not None else -999}">'
+        f'<article class="duo-card" data-a="{esc(r["a"])}" data-b="{esc(r["b"])}" {queue_attrs(r)}>'
         f'<div class="duo-names">'
         f'<span style="color:var({r["aVar"]});">{esc(r["a"])}</span>'
         f'<span class="duo-amp">&amp;</span>'
         f'<span style="color:var({r["bVar"]});">{esc(r["b"])}</span>'
         f'</div>'
-        f'<div class="duo-figure"><span class="duo-wr">{r["winrate"]}%</span>'
-        f'<span class="duo-record">{r["wins"]}W {r["losses"]}L</span></div>'
-        f'<div class="duo-track"><div class="duo-fill{" good" if r["winrate"] >= 50 else " bad"}" '
-        f'style="width:{max(2, min(100, r["winrate"]))}%;"></div></div>'
-        f'{lift_html(r)}'
-        f'<div class="duo-games">{r["games"]} games together'
-        f'{f" &middot; {r["flex"]} flex" if r["flex"] else ""}'
-        f'{" <span class='duo-thin'>&middot; small sample</span>" if r["games"] < 5 else ""}</div>'
+        f'<div class="duo-figure"><span class="duo-wr">{r["total"]["winrate"]}%</span>'
+        f'<span class="duo-record">{r["total"]["wins"]}W {r["total"]["losses"]}L</span></div>'
+        f'<div class="duo-track"><div class="duo-fill{" good" if r["total"]["winrate"] >= 50 else " bad"}" '
+        f'style="width:{max(2, min(100, r["total"]["winrate"]))}%;"></div></div>'
+        f'{lift_html(r["total"])}'
+        f'{games_html(r["total"])}'
         f'</article>'
         for r in rows
     )
 
     body = "".join(
-        f'<tr><td>{esc(r["a"])} &amp; {esc(r["b"])}</td><td class="num">{r["games"]}</td>'
-        f'<td class="num">{r["wins"]}W {r["losses"]}L</td><td class="num">{r["winrate"]}%</td></tr>'
+        f'<tr><td>{esc(r["a"])} &amp; {esc(r["b"])}</td>'
+        f'<td class="num">{r["total"]["games"]}</td>'
+        f'<td class="num">{r["solo"]["games"]}</td>'
+        f'<td class="num">{r["flex"]["games"]}</td>'
+        f'<td class="num">{r["total"]["wins"]}W {r["total"]["losses"]}L</td>'
+        f'<td class="num">{r["total"]["winrate"]}%</td></tr>'
         for r in rows
     )
 
@@ -1756,9 +1794,14 @@ def render_duo_synergy_panel(friends):
       <p class="panel-hint" style="margin:6px 0 14px;">Winrate when two friends were on the same team
       in a ranked game this season, and how that compares with how often each of them wins
       otherwise. Two games is a small sample &mdash; the games count is there for a reason.</p>
+      <div class="duo-filters" role="group" aria-label="Filter by player">
+        <button type="button" class="duo-chip active" data-who="">Everyone</button>{filter_chips}
+      </div>
       <div class="duo-controls">
-        <div class="duo-filters" role="group" aria-label="Filter by player">
-          <button type="button" class="duo-chip active" data-who="">Everyone</button>{filter_chips}
+        <div class="range-toggle" role="group" aria-label="Queue">
+          <button type="button" class="range-btn active" data-queue="total">All queues</button>
+          <button type="button" class="range-btn" data-queue="solo">Solo/Duo</button>
+          <button type="button" class="range-btn" data-queue="flex">Flex</button>
         </div>
         <div class="range-toggle" role="group" aria-label="Sort pairs">
           <button type="button" class="range-btn active" data-sort="games">Most played</button>
@@ -1767,11 +1810,11 @@ def render_duo_synergy_panel(friends):
         </div>
       </div>
       <div class="duo-grid">{cards}</div>
-      <div class="duo-empty" hidden>No pairs for that player.</div>
+      <div class="duo-empty" hidden></div>
       <details class="matches-details" style="margin-top:12px;">
         <summary>View as table</summary>
         <table class="matches-table">
-          <thead><tr><th>Pair</th><th class="num">Games together</th><th class="num">Record</th><th class="num">Winrate</th></tr></thead>
+          <thead><tr><th>Pair</th><th class="num">Games</th><th class="num">Solo/Duo</th><th class="num">Flex</th><th class="num">Record</th><th class="num">Winrate</th></tr></thead>
           <tbody>{body}</tbody>
         </table>
       </details>
@@ -3848,26 +3891,74 @@ def build_html(data):
       if (!grid) return;
       var cards = [].slice.call(grid.querySelectorAll('.duo-card'));
       var empty = document.querySelector('.duo-empty');
-      var who = '', sortBy = 'games';
+      var who = '', sortBy = 'games', queue = 'total';
+      var SORT_KEY = {{ games: 'games', winrate: 'wr', lift: 'lift' }};
+      var THIN = {DUO_THIN_GAMES};   // matches DUO_THIN_GAMES in the generator
+      var QUEUE_NAME = {{ total: 'any queue', solo: 'Solo/Duo', flex: 'Flex' }};
 
-      function num(card, key) {{ return parseFloat(card.getAttribute('data-' + key)) || 0; }}
+      function num(card, key) {{
+        return parseFloat(card.getAttribute('data-' + queue + '-' + key)) || 0;
+      }}
+
+      // Redraw one card for the selected queue. Every view was written onto
+      // the element at build time, so this only reads and never recomputes.
+      function paintCard(c) {{
+        var games = num(c, 'games'), wr = num(c, 'wr');
+        var wrEl = c.querySelector('.duo-wr'), recEl = c.querySelector('.duo-record');
+        var fill = c.querySelector('.duo-fill'), lift = c.querySelector('.duo-lift');
+        var gamesEl = c.querySelector('.duo-games');
+        if (wrEl) wrEl.textContent = wr.toFixed(1) + '%';
+        if (recEl) recEl.textContent = num(c, 'w') + 'W ' + num(c, 'l') + 'L';
+        if (fill) {{
+          fill.style.width = Math.max(2, Math.min(100, wr)) + '%';
+          fill.className = 'duo-fill ' + (wr >= 50 ? 'good' : 'bad');
+        }}
+        if (lift) {{
+          var raw = c.getAttribute('data-' + queue + '-lift');
+          var base = c.getAttribute('data-' + queue + '-base');
+          var v = parseFloat(raw);
+          if (raw === '-999' || isNaN(v) || !base) {{
+            lift.textContent = '';
+            lift.className = 'duo-lift flat';
+          }} else {{
+            var sign = v > 0 ? '+' : (v < 0 ? '\u2212' : '\u00b1');
+            lift.className = 'duo-lift ' + (v > 0 ? 'up' : (v < 0 ? 'down' : 'flat'));
+            lift.innerHTML = sign + Math.abs(v).toFixed(1) + ' pts ' +
+              '<span class="muted">vs their usual ' + Math.round(parseFloat(base)) + '%</span>';
+          }}
+        }}
+        if (gamesEl) {{
+          gamesEl.innerHTML = games + ' games together' +
+            (games > 0 && games < THIN ? ' <span class="duo-thin">&middot; small sample</span>' : '');
+        }}
+      }}
 
       function apply() {{
         var shown = 0;
         cards.forEach(function (c) {{
-          var match = !who || c.getAttribute('data-a') === who || c.getAttribute('data-b') === who;
-          c.hidden = !match;
-          if (match) shown++;
+          var mine = !who || c.getAttribute('data-a') === who || c.getAttribute('data-b') === who;
+          // A pair with one game in this queue is not a duo record worth
+          // showing, the same cutoff the panel uses overall.
+          var enough = num(c, 'games') >= 2;
+          c.hidden = !(mine && enough);
+          if (!c.hidden) {{ paintCard(c); shown++; }}
         }});
         var sorted = cards.slice().sort(function (a, b) {{
           // Ties break on games played, so the more trustworthy number wins
           // when two pairs share a winrate.
-          var d = num(b, sortBy) - num(a, sortBy);
+          var d = num(b, SORT_KEY[sortBy]) - num(a, SORT_KEY[sortBy]);
           return d !== 0 ? d : num(b, 'games') - num(a, 'games');
         }});
         sorted.forEach(function (c) {{ grid.appendChild(c); }});
-        if (empty) empty.hidden = shown > 0;
+        if (empty) {{
+          empty.hidden = shown > 0;
+          empty.textContent = who
+            ? 'No pairs for ' + who + ' in ' + QUEUE_NAME[queue] + '.'
+            : 'No pairs with two or more games in ' + QUEUE_NAME[queue] + '.';
+        }}
       }}
+
+      apply();
 
       document.querySelectorAll('.duo-chip').forEach(function (b) {{
         b.addEventListener('click', function () {{
@@ -3883,6 +3974,16 @@ def build_html(data):
         b.addEventListener('click', function () {{
           sortBy = b.getAttribute('data-sort');
           document.querySelectorAll('.range-btn[data-sort]').forEach(function (o) {{
+            o.classList.toggle('active', o === b);
+          }});
+          apply();
+        }});
+      }});
+
+      document.querySelectorAll('.range-btn[data-queue]').forEach(function (b) {{
+        b.addEventListener('click', function () {{
+          queue = b.getAttribute('data-queue');
+          document.querySelectorAll('.range-btn[data-queue]').forEach(function (o) {{
             o.classList.toggle('active', o === b);
           }});
           apply();
