@@ -2477,37 +2477,100 @@ def build_html(data):
   .refresh-text.done {{ color: var(--good); }}
 
   .modal-backdrop {{
-    position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px);
+    position: fixed; inset: 0; background: rgba(6,8,12,0.62);
+    -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
     display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
   }}
   .modal-backdrop[hidden] {{ display: none; }}
   .modal {{
     background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 22px; width: 100%; max-width: 420px; box-shadow: var(--shadow-lg);
+    padding: 24px; width: 100%; max-width: 448px; box-shadow: var(--shadow-lg);
+    animation: modal-in .18s cubic-bezier(.2,.8,.3,1) both;
   }}
-  .modal h3 {{ margin: 0 0 6px; font-size: 17px; }}
-  .modal .field {{ display: block; margin-top: 14px; }}
-  .modal .field span {{ display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }}
-  .modal input {{
-    width: 100%; font-family: inherit; font-size: 13px; padding: 9px 11px;
-    border-radius: 9px; border: 1px solid var(--border);
+  @keyframes modal-in {{
+    from {{ opacity: 0; transform: translateY(10px) scale(.985); }}
+    to {{ opacity: 1; transform: none; }}
+  }}
+  /* Title block: the same gradient tile as the page's brand mark, so the
+     dialog reads as part of the site rather than a browser prompt. */
+  .modal-head {{ display: flex; gap: 13px; align-items: flex-start; }}
+  .modal-icon {{
+    width: 38px; height: 38px; border-radius: 11px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; color: #fff;
+    background: linear-gradient(140deg, var(--accent), var(--accent-2));
+    box-shadow: 0 4px 14px var(--halo);
+  }}
+  .modal h3 {{ margin: 1px 0 5px; font-size: 17px; letter-spacing: -0.01em; }}
+  .modal-head p {{ margin: 0; line-height: 1.5; }}
+  .modal .field {{ display: block; margin-top: 16px; }}
+  .modal .field span {{ display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }}
+  .modal input[type="text"], .modal input[type="password"] {{
+    width: 100%; font-family: inherit; font-size: 13px; padding: 11px 12px;
+    border-radius: 10px; border: 1px solid var(--border);
     background: var(--surface-2); color: var(--text-primary);
+    transition: border-color .14s ease, box-shadow .14s ease;
   }}
-  .modal input:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
-  .modal-msg {{ font-size: 12px; margin-top: 12px; min-height: 16px; color: var(--critical); }}
-  .modal-msg.ok {{ color: var(--good); }}
-  .modal-actions {{ display: flex; justify-content: flex-end; gap: 9px; margin-top: 16px; }}
+  /* An API key is a token, not prose — monospace makes a mistyped character
+     findable instead of hiding it in proportional text. */
+  #modal-key {{ font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }}
+  .modal input:focus {{
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }}
+  .modal-link {{
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+    padding: 5px 0; font-size: 12.5px; font-weight: 600; color: var(--accent);
+  }}
+  .modal-link[hidden] {{ display: none; }}
+  .modal-link .ext {{ font-size: 11px; opacity: .8; }}
+  /* Its own row, not a line of the message slot: writing an error message
+     used to replace this checkbox outright, silently clearing the choice. */
+  .checkrow {{
+    display: flex; align-items: center; gap: 10px; margin-top: 16px;
+    padding: 11px 13px; border-radius: 10px; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 12.5px; color: var(--text-secondary); user-select: none;
+    transition: border-color .14s ease, background .14s ease;
+  }}
+  .checkrow[hidden] {{ display: none; }}
+  .checkrow:hover {{ border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); }}
+  .checkrow input {{
+    width: 17px; height: 17px; flex-shrink: 0; margin: 0;
+    accent-color: var(--accent); cursor: pointer;
+  }}
+  .modal-msg {{
+    font-size: 12.5px; margin-top: 14px; line-height: 1.45;
+    padding: 10px 12px; border-radius: 9px;
+    color: var(--critical);
+    background: color-mix(in srgb, var(--critical) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--critical) 26%, transparent);
+  }}
+  /* No permanent blank gap when there is nothing to say — collapsed rather
+     than display:none, which would drop the live region out of the
+     accessibility tree and stop screen readers announcing errors. */
+  .modal-msg:empty {{ margin: 0; padding: 0; border: none; background: none; }}
+  .modal-msg.ok {{
+    color: var(--good);
+    background: color-mix(in srgb, var(--good) 10%, transparent);
+    border-color: color-mix(in srgb, var(--good) 26%, transparent);
+  }}
+  .modal-actions {{ display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }}
   .btn-primary, .btn-ghost {{
-    font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 16px;
-    border-radius: 9px; cursor: pointer; border: 1px solid var(--border);
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    height: 40px; padding: 0 20px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--border);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: transform .14s ease, box-shadow .14s ease, background .14s ease;
   }}
   .btn-ghost {{ background: var(--surface-2); color: var(--text-secondary); }}
   .btn-ghost:hover {{ background: var(--gridline); }}
   .btn-primary {{
     background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 62%, var(--accent-2)));
-    border-color: transparent; color: #fff;
+    border-color: transparent; color: #fff; box-shadow: 0 2px 10px var(--halo);
   }}
-  .btn-primary:disabled {{ opacity: .6; cursor: not-allowed; }}
+  .btn-primary:hover:not(:disabled) {{ transform: translateY(-1px); box-shadow: var(--shadow-md); }}
+  .btn-primary:disabled {{ opacity: .6; cursor: not-allowed; transform: none; }}
 
   /* ---- Entrance animation -------------------------------------------- */
   @keyframes rise {{ from {{ opacity: 0; transform: translateY(9px); }} to {{ opacity: 1; transform: none; }} }}
@@ -2579,6 +2642,10 @@ def build_html(data):
     table {{ font-size: 13px; }}
     td, th {{ padding: 8px 6px; }}
     .modal {{ padding: 18px; }}
+    .checkrow {{ min-height: 46px; }}
+    /* A 15px-tall link is not a tap target. */
+    .modal-link {{ min-height: 40px; padding: 10px 0; }}
+    .btn-primary, .btn-ghost {{ height: 44px; flex: 1; }}
     .refresh-status {{ padding: 12px 14px; }}
   }}
 
@@ -2626,13 +2693,24 @@ def build_html(data):
 
     <div class="modal-backdrop" id="modal" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <h3 id="modal-title">Admin</h3>
-        <p class="muted small" id="modal-blurb"></p>
-        <label class="field"><span>Admin password</span>
+        <div class="modal-head">
+          <div class="modal-icon" id="modal-icon" aria-hidden="true">⚡</div>
+          <div>
+            <h3 id="modal-title">Admin</h3>
+            <p class="muted small" id="modal-blurb"></p>
+          </div>
+        </div>
+        <label class="field" id="modal-pass-field"><span>Admin password</span>
           <input type="password" id="modal-pass" autocomplete="current-password"></label>
         <label class="field" id="modal-key-field"><span>Riot API key</span>
           <input type="text" id="modal-key" placeholder="RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false"></label>
-        <div class="modal-msg" id="modal-msg"></div>
+        <a class="modal-link" id="modal-getkey" href="https://developer.riotgames.com/"
+           target="_blank" rel="noopener noreferrer" hidden>Get a free key at developer.riotgames.com<span class="ext" aria-hidden="true">↗</span></a>
+        <label class="checkrow" id="modal-remember-row" hidden>
+          <input type="checkbox" id="remember-key">
+          <span>Remember this key in this browser</span>
+        </label>
+        <div class="modal-msg" id="modal-msg" role="status" aria-live="polite"></div>
         <div class="modal-actions">
           <button type="button" class="btn-ghost" id="modal-cancel">Cancel</button>
           <button type="button" class="btn-primary" id="modal-ok">Confirm</button>
@@ -2822,6 +2900,15 @@ def build_html(data):
       if (!cfgEl) return;
       var CFG = JSON.parse(cfgEl.textContent);
       var btn = document.getElementById('live-ranks');
+      function closeModal() {{
+        modal.hidden = true;
+        modalOk.onclick = null;
+        modalGetKey.hidden = true;
+        modalRememberRow.hidden = true;
+        var opener = modal._opener;
+        modal._opener = null;
+        if (opener && opener.focus) {{ try {{ opener.focus(); }} catch (e) {{}} }}
+      }}
       var statusBox = document.getElementById('refresh-status');
       var barFill = document.getElementById('refresh-bar-fill');
       var statusText = document.getElementById('refresh-text');
@@ -2831,6 +2918,11 @@ def build_html(data):
       var modalPass = document.getElementById('modal-pass');
       var modalKey = document.getElementById('modal-key');
       var modalKeyField = document.getElementById('modal-key-field');
+      var modalPassField = document.getElementById('modal-pass-field');
+      var modalIcon = document.getElementById('modal-icon');
+      var modalGetKey = document.getElementById('modal-getkey');
+      var modalRememberRow = document.getElementById('modal-remember-row');
+      var modalRemember = document.getElementById('remember-key');
       var modalMsg = document.getElementById('modal-msg');
       var modalOk = document.getElementById('modal-ok');
       var modalCancel = document.getElementById('modal-cancel');
@@ -2958,31 +3050,38 @@ def build_html(data):
       btn.addEventListener('click', function () {{
         var saved = '';
         try {{ saved = localStorage.getItem(KEY_STORE) || ''; }} catch (e) {{}}
+        modal._opener = document.activeElement;
+        modalIcon.textContent = '⟳';
         modalTitle.textContent = 'Live ranks';
         modalBlurb.textContent = 'Uses your own Riot API key, straight from this browser — ' +
-          'it is never sent to this site. Get a free key at developer.riotgames.com (they last 24 hours).';
+          'it is never sent to this site. Riot development keys expire after 24 hours.';
         modalKeyField.style.display = '';
-        modalPass.parentElement.style.display = 'none';
+        modalPassField.style.display = 'none';
         modalKey.value = saved;
-        modalMsg.innerHTML = '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;' +
-          'color:var(--text-secondary);"><input type="checkbox" id="remember-key"' +
-          (saved ? ' checked' : '') + '> Remember this key in my browser</label>';
+        // The "get a key" pointer is a real link now, so it can actually be
+        // followed; it used to be an unclickable sentence in the blurb.
+        modalGetKey.hidden = false;
+        modalRememberRow.hidden = false;
+        modalRemember.checked = !!saved;
+        modalMsg.textContent = '';
         modalMsg.className = 'modal-msg';
         modal.hidden = false;
-        setTimeout(function () {{ modalKey.focus(); }}, 30);
+        setTimeout(function () {{ modalKey.focus(); modalKey.select(); }}, 30);
 
         modalOk.onclick = function () {{
           var key = modalKey.value.trim();
           if (!/^RGAPI-/.test(key)) {{
-            modalMsg.textContent = 'That does not look like a Riot key (they start with RGAPI-).';
+            modalMsg.textContent = 'That does not look like a Riot key — they start with RGAPI-.';
+            modalKey.focus();
             return;
           }}
-          var remember = !!(document.getElementById('remember-key') || {{}}).checked;
-          modal.hidden = true;
-          modalOk.onclick = null;
+          // Read the checkbox, which now lives in its own row. It used to sit
+          // inside the message slot, so showing the error above wiped it out
+          // and silently un-ticked the choice.
+          var remember = modalRemember.checked;
+          closeModal();
           run(key, remember);
         }};
-        modalCancel.onclick = function () {{ modal.hidden = true; modalOk.onclick = null; }};
       }});
     }})();
   </script>
@@ -3003,6 +3102,11 @@ def build_html(data):
       var modalPass = document.getElementById('modal-pass');
       var modalKey = document.getElementById('modal-key');
       var modalKeyField = document.getElementById('modal-key-field');
+      var modalPassField = document.getElementById('modal-pass-field');
+      var modalIcon = document.getElementById('modal-icon');
+      var modalGetKey = document.getElementById('modal-getkey');
+      var modalRememberRow = document.getElementById('modal-remember-row');
+      var modalRemember = document.getElementById('remember-key');
       var modalMsg = document.getElementById('modal-msg');
       var modalOk = document.getElementById('modal-ok');
       var modalCancel = document.getElementById('modal-cancel');
@@ -3029,11 +3133,16 @@ def build_html(data):
 
       var onConfirm = null;
       function openModal(opts) {{
+        modal._opener = document.activeElement;
+        modalIcon.textContent = opts.icon || '⚙';
         modalTitle.textContent = opts.title;
         modalBlurb.textContent = opts.blurb;
         modalKeyField.style.display = opts.needsKey ? '' : 'none';
         // Replacing an expired key needs no password; spending Riot quota does.
-        modalPass.parentElement.style.display = opts.needsPass ? '' : 'none';
+        modalPassField.style.display = opts.needsPass ? '' : 'none';
+        // Anywhere a key is asked for, offer the place to get one.
+        modalGetKey.hidden = !opts.needsKey;
+        modalRememberRow.hidden = true;
         modalMsg.textContent = '';
         modalMsg.className = 'modal-msg';
         modalPass.value = '';
@@ -3049,12 +3158,21 @@ def build_html(data):
         // directly. Escape used to leave that binding in place, so a later
         // hosted confirm would fire the stale live-ranks handler as well.
         modalOk.onclick = null;
+        modalGetKey.hidden = true;
+        modalRememberRow.hidden = true;
+        modalOk.disabled = false;
+        // Put focus back on whatever opened the dialog rather than dropping
+        // it at the top of the document. Parked on the element because the
+        // live-ranks script is a different IIFE with no shared scope.
+        var opener = modal._opener;
+        modal._opener = null;
+        if (opener && opener.focus) {{ try {{ opener.focus(); }} catch (e) {{}} }}
       }}
       modalCancel.addEventListener('click', closeModal);
       modal.addEventListener('click', function (e) {{ if (e.target === modal) closeModal(); }});
       document.addEventListener('keydown', function (e) {{
         if (e.key === 'Escape' && !modal.hidden) closeModal();
-        if (e.key === 'Enter' && !modal.hidden) modalOk.click();
+        if (e.key === 'Enter' && !modal.hidden && e.target !== modalGetKey) modalOk.click();
       }});
       modalOk.addEventListener('click', function () {{ if (onConfirm) onConfirm(); }});
 
@@ -3071,7 +3189,7 @@ def build_html(data):
 
       keyBtn.addEventListener('click', function () {{
         openModal({{
-          title: 'Update Riot API key',
+          icon: '🔑', title: 'Update Riot API key',
           blurb: 'Riot development keys expire every 24 hours. Grab a fresh one from developer.riotgames.com and paste it here.',
           needsKey: true, needsPass: false,
           onConfirm: function () {{
