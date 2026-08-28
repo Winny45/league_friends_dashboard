@@ -992,10 +992,19 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             tl = timelines[f["label"]]
             pts = tl[-(tail + 1):] if tail and len(tl) > tail + 1 else tl
             base = pts[0]["idx"]
+            start_i = len(tl) - len(pts)
             # idx drives the x position and is rebased to 0; origIdx keeps the
             # real game number so a tooltip in the zoomed view doesn't call
-            # someone's 30th game their 1st.
-            view[f["label"]] = [dict(p, idx=p["idx"] - base, origIdx=p["idx"]) for p in pts]
+            # someone's 30th game their 1st. prevScore carries the score of the
+            # game before this one *in the full timeline*: the zoomed view's
+            # first point has a real predecessor outside the slice, and reading
+            # it as tl[n - 1] with n = 0 quietly indexed the last point instead,
+            # so that tooltip's LP step was measured against the wrong game.
+            view[f["label"]] = [
+                dict(p, idx=p["idx"] - base, origIdx=p["idx"],
+                     prevScore=(tl[start_i + n - 1]["score"] if start_i + n - 1 >= 0 else p["score"]))
+                for n, p in enumerate(pts)
+            ]
         max_games = max((len(v) - 1 for v in view.values()), default=0) or 1
         vis_scores = [p["score"] for v in view.values() for p in v]
         y_min, y_max = min(vis_scores), max(vis_scores)
@@ -1070,7 +1079,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             for n, ((x, y), p) in enumerate(zip(coords, tl)):
                 m = p["match"]
                 if m:
-                    move = lp_step_label(tl[n - 1]["score"], p["score"], p["delta"], p["exact"])
+                    move = lp_step_label(p["prevScore"], p["score"], p["delta"], p["exact"])
                     title = (f"{f['label']} — game {p.get('origIdx', p['idx'])} — {'Win' if m['win'] else 'Loss'} on {m['champion']} — "
                              f"{move} → {score_to_rank_label(p['score'])}").replace("&middot;", "·")
                     fill = "var(--good)" if m["win"] else "var(--critical)"
@@ -1183,6 +1192,36 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         omitted_note = (f'<div class="muted small" style="margin-top:8px;">Not shown: {esc(", ".join(omitted))} '
                         f'(chart shows up to {len(FRIEND_PALETTE)} friends at once).</div>')
 
+    # Everything the browser needs to rebuild this chart with games played
+    # since the publish. Only the solo queue and only the charted friends,
+    # since that is all the chart draws.
+    lp_chart_json = json.dumps({
+        "tierOrder": TIER_ORDER,
+        "rankScore": RANK_SCORE,
+        "apexTiers": sorted(APEX_TIERS),
+        "lpPerDivision": LP_PER_DIVISION,
+        "divisionsPerTier": DIVISIONS_PER_TIER,
+        "nominalLp": NOMINAL_LP,
+        "tailGames": TAIL_GAMES,
+        "rankIconBase": RANK_ICON_BASE,
+        "friends": [
+            {
+                "label": f["label"],
+                "history": [
+                    {"date": h["date"], "tier": h.get("tier"), "rank": h.get("rank"),
+                     "leaguePoints": h.get("leaguePoints")}
+                    for h in solo_history_by_label[f["label"]]
+                ],
+                "matches": [
+                    {"dateKey": m.get("dateKey"), "gameStartMs": m.get("gameStartMs"),
+                     "win": bool(m.get("win")), "champion": m.get("champion")}
+                    for m in f.get("seasonMatches", []) if m.get("queue") == "Ranked Solo/Duo"
+                ],
+            }
+            for f in chart_friends
+        ],
+    }, ensure_ascii=False)
+
     # The compact chart has no end-of-line labels, so the per-friend net LP
     # moves into the standings chip where a phone can still read it.
     standings_html = "".join(
@@ -1219,9 +1258,10 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         estimate even though every snapshot it passes through is exact.
       </div>
       <div class="muted small" style="margin-bottom:6px;">Current standings</div>
-      <div class="standings">{standings_html}</div>
+      <div class="standings" data-lp-standings>{standings_html}</div>
       {zoom_toggle}
-      {charts_svg}
+      <div data-lp-charts>{charts_svg}</div>
+      <script type="application/json" id="lp-chart-data">{lp_chart_json}</script>
       <div class="legend" style="justify-content:flex-start;">{"".join(legend_items)}</div>
       <div class="muted small" style="margin-top:2px;">Hover or tap a name to highlight that line; click to hide it. Tap any point for the game behind it.</div>
       {omitted_note}
@@ -1925,6 +1965,527 @@ def render_patch_notes(entries):
             f'<ul>{"".join(lis)}</ul>'
             f'</article>')
     return "".join(blocks), str(entries[0].get("date", ""))
+
+
+# The LP chart renderer, ported to JavaScript. Held as a plain (non-f)
+# string so its braces need no doubling when it lands in the page's
+# f-string — 400 lines of doubled braces is how escaping bugs happen.
+LP_CHART_JS = r'''
+// ---------------------------------------------------------------------------
+// LP chart, rendered in the browser.
+//
+// A port of render_lp_chart() and the ladder maths it depends on. It exists so
+// a refresh can redraw the chart with games played since the last publish: the
+// chart's x-scale, y-range, gridlines and label layout all derive from the
+// whole season, so unlike the match lists it cannot be patched in place.
+//
+// This is a second copy of maths that also lives in generate_dashboard.py.
+// The guard against the two drifting apart is that rendering the *unmodified*
+// data must reproduce the server's SVG exactly; verifySelf() checks that and
+// is what the build test calls.
+// ---------------------------------------------------------------------------
+window.LpChart = (function () {
+  'use strict';
+
+  var D = null;
+
+  function esc(s) {
+    // Matches Python's html.escape(quote=True), including &#x27; for an
+    // apostrophe, so the two renderers produce identical bytes.
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+  }
+
+  function fixed(n, places) {
+    // Python's format() rounds half to even; toFixed rounds half away from
+    // zero. They only disagree when the double sits exactly on the boundary,
+    // which is rarer than it looks: 625.85 as a double is
+    // 625.85000000000002, a hair above, and both correctly give 625.9. A true
+    // midpoint like 229.25 is exactly representable, and there Python gives
+    // 229.2 where toFixed gives 229.3.
+    //
+    // Detecting it needs the double's real expansion, not its shortest form
+    // ("625.85") and not a scaled copy (x10 collapses the near-miss onto the
+    // boundary). 18 places is enough to expose the difference.
+    var exact = n.toFixed(18), dot = exact.indexOf('.');
+    var next = exact.charAt(dot + 1 + places);
+    var rest = exact.slice(dot + 2 + places);
+    if (next === '5' && !/[1-9]/.test(rest)) {
+      var f = Math.pow(10, places);
+      return ((2 * Math.round(n * f / 2)) / f).toFixed(places);
+    }
+    return n.toFixed(places);
+  }
+
+
+  function ladderLp(entry) {
+    var tier = entry.tier;
+    if (!tier) return 0;
+    var ti = D.tierOrder.indexOf(tier);
+    if (ti < 0) ti = 0;
+    var lp = entry.leaguePoints || 0;
+    if (D.apexTiers.indexOf(tier) !== -1) {
+      return ti * D.divisionsPerTier * D.lpPerDivision + lp;
+    }
+    var division = D.rankScore[entry.rank] || 0;
+    return (ti * D.divisionsPerTier + division) * D.lpPerDivision + lp;
+  }
+
+  function ladderDecompose(value) {
+    value = Math.max(0, Math.round(value));
+    var steps = Math.floor(value / D.lpPerDivision);
+    var lp = value - steps * D.lpPerDivision;
+    var ti = Math.min(Math.floor(steps / D.divisionsPerTier), D.tierOrder.length - 1);
+    var division = steps - ti * D.divisionsPerTier;
+    return [ti, Math.min(division, D.divisionsPerTier - 1), lp];
+  }
+
+  function cap(t) { return t.charAt(0) + t.slice(1).toLowerCase(); }
+
+  function rankBySc(division) {
+    var keys = Object.keys(D.rankScore);
+    for (var i = 0; i < keys.length; i++) {
+      if (D.rankScore[keys[i]] === division) return keys[i];
+    }
+    return 'IV';
+  }
+
+  function scoreToRankLabel(value) {
+    var d = ladderDecompose(value), tier = D.tierOrder[d[0]];
+    if (D.apexTiers.indexOf(tier) !== -1) return cap(tier) + ' &middot; ' + d[2] + ' LP';
+    return cap(tier) + ' ' + rankBySc(d[1]) + ' &middot; ' + d[2] + ' LP';
+  }
+
+  function lpStepLabel(prevValue, value, delta, exact) {
+    var a = ladderDecompose(prevValue), b = ladderDecompose(value);
+    if (a[0] !== b[0] || a[1] !== b[1]) return delta >= 0 ? 'promoted' : 'demoted';
+    return (delta >= 0 ? '+' : '\u2212') + fixed(Math.abs(delta), 0) + ' LP' +
+           (exact ? '' : ' (est.)');
+  }
+
+  // Split a known net LP change across the games that produced it: the win and
+  // loss steps closest to a nominal 20 LP that still land on the next real
+  // snapshot. Riot does not expose per-game LP, so the shape between two
+  // snapshots is an estimate while every snapshot itself is measured.
+  function segmentDeltas(wins, net) {
+    if (!wins.length) return [];
+    var W = 0, i;
+    for (i = 0; i < wins.length; i++) if (wins[i]) W++;
+    var L = wins.length - W;
+    var lam = (net - D.nominalLp * (W - L)) / (W * W + L * L);
+    var gain = Math.max(D.nominalLp + lam * W, 1.0);
+    var loss = Math.max(D.nominalLp - lam * L, 1.0);
+    var deltas = wins.map(function (w) { return w ? gain : -loss; });
+    var sum = 0;
+    for (i = 0; i < deltas.length; i++) sum += deltas[i];
+    var residual = net - sum;
+    if (Math.abs(residual) > 1e-9) {
+      var share = residual / deltas.length;
+      deltas = deltas.map(function (d) { return d + share; });
+    }
+    return deltas;
+  }
+
+  function buildLpTimeline(soloPts, soloMatches) {
+    if (soloPts.length < 2) return [];
+    var byDate = {}, i;
+    for (i = 0; i < soloMatches.length; i++) {
+      var m = soloMatches[i];
+      (byDate[m.dateKey] = byDate[m.dateKey] || []).push(m);
+    }
+    Object.keys(byDate).forEach(function (d) {
+      byDate[d].sort(function (a, b) { return (a.gameStartMs || 0) - (b.gameStartMs || 0); });
+    });
+    var dates = Object.keys(byDate).sort();
+
+    var points = [{ idx: 0, score: ladderLp(soloPts[0]), delta: null, match: null, exact: true }];
+    var idx = 0;
+    for (i = 0; i + 1 < soloPts.length; i++) {
+      var prev = soloPts[i], cur = soloPts[i + 1];
+      var seg = [];
+      dates.forEach(function (d) {
+        if (prev.date < d && d <= cur.date) seg = seg.concat(byDate[d]);
+      });
+      if (!seg.length) continue;
+      var start = ladderLp(prev), end = ladderLp(cur), run = start;
+      var deltas = segmentDeltas(seg.map(function (m) { return !!m.win; }), end - start);
+      for (var n = 0; n < seg.length; n++) {
+        run += deltas[n];
+        idx++;
+        points.push({ idx: idx, score: run, delta: deltas[n], match: seg[n], exact: false });
+      }
+      points[points.length - 1].score = end;
+      points[points.length - 1].exact = true;
+    }
+    return points;
+  }
+
+  // Labels stack in the reserved right gutter with a leader back to their real
+  // end point: lines finish at different x, so anchoring each label to its own
+  // line put them on top of the plot and each other.
+  function endLabelGroups(entries, prefix, gutterX) {
+    var MIN_LABEL_GAP = 26, ICON_SIZE = 14, out = [];
+    entries.sort(function (a, b) { return a.ly - b.ly; });
+    entries.forEach(function (e, i) {
+      e.drawY = i === 0 ? e.ly : Math.max(e.ly, entries[i - 1].drawY + MIN_LABEL_GAP);
+    });
+    entries.forEach(function (e) {
+      var anchorX = gutterX === null ? e.lx : gutterX;
+      var parts = [];
+      if (Math.abs(e.drawY - e.ly) > 3 || (gutterX !== null && anchorX - e.lx > 10)) {
+        parts.push('<path d="M' + fixed(e.lx + 4, 1) + ',' + fixed(e.ly, 1) + ' L' +
+          fixed(anchorX - 4, 1) + ',' + fixed(e.drawY, 1) + '" fill="none" stroke="var(' +
+          e.varName + ')" stroke-width="1" stroke-dasharray="2,3" opacity="0.45" />');
+      }
+      var textX = anchorX;
+      if (e.tier) {
+        var url = D.rankIconBase.replace('{tier}', e.tier.toLowerCase());
+        parts.push('<image href="' + esc(url) + '" x="' + fixed(anchorX, 1) + '" y="' +
+          fixed(e.drawY - ICON_SIZE / 2, 1) + '" width="' + ICON_SIZE + '" height="' + ICON_SIZE +
+          '" onerror="this.style.visibility=&#x27;hidden&#x27;" />');
+        textX = anchorX + ICON_SIZE + 3;
+      }
+      parts.push('<text x="' + fixed(textX, 1) + '" y="' + fixed(e.drawY + 3, 1) +
+        '" font-size="11" font-weight="700" fill="var(' + e.varName + ')">' + esc(e.label) + '</text>');
+      if (e.net) {
+        var c = e.net.direction > 0 ? 'var(--good)'
+              : (e.net.direction < 0 ? 'var(--critical)' : 'var(--muted)');
+        parts.push('<text x="' + fixed(textX, 1) + '" y="' + fixed(e.drawY + 15, 1) +
+          '" font-size="10" fill="' + c + '">' + esc(e.net.text) + '</text>');
+      }
+      out.push('<g id="' + prefix + '-label-' + e.idx + '">' + parts.join('') + '</g>');
+    });
+    return out;
+  }
+
+  function buildSvg(state, compact, tail) {
+    var friends = state.friends, timelines = state.timelines;
+    var prefix = (compact ? 'lpm' : 'lp') + (tail ? 't' : '');
+    var view = {}, i;
+    friends.forEach(function (f) {
+      var tl = timelines[f.label];
+      var pts = (tail && tl.length > tail + 1) ? tl.slice(tl.length - (tail + 1)) : tl;
+      var base = pts[0].idx, startI = tl.length - pts.length;
+      view[f.label] = pts.map(function (p, n) {
+        var q = {}; for (var k in p) q[k] = p[k];
+        q.origIdx = p.idx;
+        q.idx = p.idx - base;
+        // The score of the game before this one in the full timeline; the
+        // zoomed view's first point has one outside the slice.
+        q.prevScore = (startI + n - 1 >= 0) ? tl[startI + n - 1].score : p.score;
+        return q;
+      });
+    });
+    var maxGames = 0;
+    Object.keys(view).forEach(function (k) { maxGames = Math.max(maxGames, view[k].length - 1); });
+    if (!maxGames) maxGames = 1;
+    var scores = [];
+    Object.keys(view).forEach(function (k) {
+      view[k].forEach(function (p) { scores.push(p.score); });
+    });
+    var yMin = Math.min.apply(null, scores), yMax = Math.max.apply(null, scores);
+    var pad = Math.max(40, (yMax - yMin) * 0.16);
+    yMin -= pad; yMax += pad;
+    if (yMax <= yMin) yMax = yMin + 200;
+
+    var W, H, PAD_L, PAD_R, PAD_T, PAD_B;
+    if (compact) {
+      W = 360; H = Math.max(240, Math.min(420, 20 * friends.length + 190));
+      PAD_L = 38; PAD_R = 10; PAD_T = 12; PAD_B = 28;
+    } else {
+      W = 900; H = Math.max(300, Math.min(660, 34 * friends.length + 140));
+      PAD_L = 64; PAD_R = 175; PAD_T = 16; PAD_B = 34;
+    }
+    var plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+    function xy(gi, score) {
+      return [PAD_L + (maxGames ? gi / maxGames : 0) * plotW,
+              PAD_T + (1 - (score - yMin) / (yMax - yMin)) * plotH];
+    }
+
+    var tierSpan = D.divisionsPerTier * D.lpPerDivision;
+    var yTicks = [];
+    var firstDiv = Math.floor(yMin / D.lpPerDivision);
+    var lastDiv = Math.floor(yMax / D.lpPerDivision);
+    var showDivisions = (lastDiv - firstDiv) <= 12 && !compact;
+    for (var steps = Math.max(firstDiv, 0); steps <= lastDiv; steps++) {
+      var tick = steps * D.lpPerDivision;
+      if (tick < yMin || tick > yMax) continue;
+      var dec = ladderDecompose(tick);
+      if (dec[0] >= D.tierOrder.length) continue;
+      if (tick % tierSpan === 0) yTicks.push([xy(0, tick)[1], cap(D.tierOrder[dec[0]])]);
+      else if (showDivisions) yTicks.push([xy(0, tick)[1], rankBySc(dec[1])]);
+    }
+
+    var step = Math.max(1, Math.round(maxGames / (compact ? 3 : 6)));
+    var tickIdxs = [];
+    for (i = 0; i <= maxGames; i += step) tickIdxs.push(i);
+    if (tickIdxs[tickIdxs.length - 1] !== maxGames) {
+      if (maxGames - tickIdxs[tickIdxs.length - 1] < step * 0.6) tickIdxs.pop();
+      tickIdxs.push(maxGames);
+    }
+    function tickLabel(gi) {
+      if (tail) {
+        var back = maxGames - gi;
+        return back === 0 ? 'Latest' : (compact ? '\u2212' + back : back + ' ago');
+      }
+      return gi === 0 ? 'Start' : (compact ? String(gi) : 'Game ' + gi);
+    }
+    var xTicks = tickIdxs.map(function (gi) { return [xy(gi, yMin)[0], tickLabel(gi)]; });
+
+    var seriesGroups = [], labelEntries = [];
+    friends.forEach(function (f, fi) {
+      var varName = '--series-f' + fi;
+      var tl = view[f.label];
+      var coords = tl.map(function (p) { return xy(p.idx, p.score); });
+      var parts = [];
+      var d = coords.map(function (c, n) {
+        return (n === 0 ? 'M' : 'L') + fixed(c[0], 1) + ',' + fixed(c[1], 1);
+      }).join(' ');
+      parts.push('<path d="' + d + '" fill="none" stroke="var(' + varName +
+                 ')" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />');
+      tl.forEach(function (p, n) {
+        var m = p.match, title, fill, r;
+        if (m) {
+          var move = lpStepLabel(p.prevScore, p.score, p.delta, p.exact);
+          title = (f.label + ' \u2014 game ' + (p.origIdx === undefined ? p.idx : p.origIdx) +
+                   ' \u2014 ' + (m.win ? 'Win' : 'Loss') + ' on ' + m.champion + ' \u2014 ' +
+                   move + ' \u2192 ' + scoreToRankLabel(p.score)).replace('&middot;', '\u00b7');
+          fill = m.win ? 'var(--good)' : 'var(--critical)';
+          r = compact ? 3 : 3.5;
+        } else {
+          title = (f.label + ' \u2014 tracking started \u2014 ' +
+                   scoreToRankLabel(p.score)).replace('&middot;', '\u00b7');
+          fill = 'var(' + varName + ')';
+          r = compact ? 3.5 : 4;
+        }
+        parts.push('<circle cx="' + fixed(coords[n][0], 1) + '" cy="' + fixed(coords[n][1], 1) +
+          '" r="' + r + '" fill="' + fill + '" stroke="var(--surface-1)" stroke-width="1.5">' +
+          '<title>' + esc(title) + '</title></circle>');
+      });
+      seriesGroups.push('<g id="' + prefix + '-series-' + fi + '">' + parts.join('') + '</g>');
+
+      if (!compact) {
+        var last = coords[coords.length - 1];
+        var net;
+        if (tail && tl.length > 1) {
+          var dd = tl[tl.length - 1].score - tl[0].score;
+          net = { text: (dd >= 0 ? '+' : '\u2212') + fixed(Math.abs(dd), 0) +
+                        ' LP \u00b7 last ' + (tl.length - 1),
+                  direction: dd > 0 ? 1 : (dd < 0 ? -1 : 0) };
+        } else {
+          net = state.netLabels[fi];
+        }
+        labelEntries.push({ idx: fi, varName: varName, label: f.label,
+                            lx: last[0], ly: last[1], net: net, tier: state.tiers[fi] });
+      }
+    });
+
+    var labelGroups = compact ? [] : endLabelGroups(labelEntries, prefix, W - PAD_R + 10);
+
+    var gridSvg = yTicks.map(function (t) {
+      return '<line x1="' + PAD_L + '" y1="' + fixed(t[0], 1) + '" x2="' + (W - PAD_R) +
+        '" y2="' + fixed(t[0], 1) + '" class="chart-grid" /><text x="' + (PAD_L - 6) +
+        '" y="' + fixed(t[0] + 4, 1) + '" text-anchor="end" class="chart-tick">' +
+        esc(t[1]) + '</text>';
+    }).join('');
+    var xticksSvg = xTicks.map(function (t) {
+      return '<text x="' + fixed(t[0], 1) + '" y="' + (H - PAD_B + (compact ? 16 : 20)) +
+        '" text-anchor="middle" class="chart-tick">' + esc(t[1]) + '</text>';
+    }).join('');
+    var cls = compact ? 'rank-chart chart-compact' : 'rank-chart chart-wide';
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="' + cls + '" role="img" ' +
+      'aria-label="Ranked Solo/Duo LP game by game">' + gridSvg + xticksSvg +
+      seriesGroups.join('') + labelGroups.join('') + '</svg>';
+  }
+
+  // Per-friend summary text, shared by both renders. Mirrors the block at the
+  // end of render_lp_chart().
+  function summarize(friends, timelines) {
+    var netLabels = [], tiers = [], standings = [];
+    friends.forEach(function (f, i) {
+      var tl = timelines[f.label];
+      var netLp = tl[tl.length - 1].score - tl[0].score;
+      var games = tl.length - 1, wins = 0;
+      for (var n = 1; n < tl.length; n++) if (tl[n].match && tl[n].match.win) wins++;
+      var hist = f.history, first = hist[0], last = hist[hist.length - 1];
+      var record = wins + 'W ' + (games - wins) + 'L';
+      var moveText;
+      // Raw LP only means the same thing while tier and division hold still —
+      // a promotion resets LP, so across one the ladder distance is not an LP
+      // number worth printing.
+      if (first.tier === last.tier && first.rank === last.rank) {
+        var lp = (last.leaguePoints || 0) - (first.leaguePoints || 0);
+        moveText = (lp >= 0 ? '+' : '\u2212') + Math.abs(lp) + ' LP';
+      } else {
+        moveText = rankName(first) + ' \u2192 ' + rankName(last);
+      }
+      netLabels.push({ text: moveText, direction: netLp > 0 ? 1 : (netLp < 0 ? -1 : 0) });
+      tiers.push(last.tier);
+      standings.push({ varName: '--series-f' + i, label: f.label, tier: last.tier,
+                       rankLabel: rankLabelOf(last), games: games,
+                       net: moveText + ' \u00b7 ' + record });
+    });
+    return { netLabels: netLabels, tiers: tiers, standings: standings };
+  }
+
+  function rankName(h) {
+    if (!h.tier) return 'Unranked';
+    var t = cap(h.tier);
+    return D.apexTiers.indexOf(h.tier) !== -1 ? t : t + ' ' + (h.rank || '');
+  }
+  function rankLabelOf(h) {
+    // rank_label() emits "&middot;" and the chip template interpolates it
+    // without escaping, so the entity has to survive here too.
+    if (!h.tier) return 'Unranked';
+    return rankName(h) + ' &middot; ' + (h.leaguePoints || 0) + ' LP';
+  }
+
+  function computeState(friends) {
+    var timelines = {}, kept = [];
+    friends.forEach(function (f) {
+      var tl = buildLpTimeline(f.history, f.matches);
+      if (tl.length >= 2) { timelines[f.label] = tl; kept.push(f); }
+    });
+    if (!kept.length) return null;
+    var s = summarize(kept, timelines);
+    return { friends: kept, timelines: timelines, netLabels: s.netLabels,
+             tiers: s.tiers, standings: s.standings };
+  }
+
+  function chartsHtml(state) {
+    var longest = 0;
+    state.friends.forEach(function (f) {
+      longest = Math.max(longest, state.timelines[f.label].length - 1);
+    });
+    var html = '<div class="chart-view" data-range="all">' +
+      buildSvg(state, false, null) + buildSvg(state, true, null) + '</div>';
+    if (longest > D.tailGames + 4) {
+      html += '<div class="chart-view" data-range="tail" hidden>' +
+        buildSvg(state, false, D.tailGames) + buildSvg(state, true, D.tailGames) + '</div>';
+    }
+    return html;
+  }
+
+  function standingsHtml(state) {
+    return state.standings.map(function (s) {
+      var icon = s.tier
+        ? '<img src="' + esc(D.rankIconBase.replace('{tier}', s.tier.toLowerCase())) +
+          '" alt="" class="rank-icon" width="22" height="22" loading="lazy" ' +
+          'onerror="this.style.visibility=&#x27;hidden&#x27;">'
+        : '<span class="rank-icon rank-icon-ph" style="width:22px;height:22px;"></span>';
+      return '<div class="standing-chip" style="border-color:var(' + s.varName + ');">' + icon +
+        '<span class="name" style="color:var(' + s.varName + ');">' + esc(s.label) + '</span>' +
+        '<span class="rank">' + s.rankLabel + '</span>' +
+        '<span class="rank muted">\u00b7 ' + s.games + 'g</span>' +
+        '<span class="rank muted chip-net">\u00b7 ' + esc(s.net) + '</span></div>';
+    }).join('');
+  }
+
+  function init() {
+    var el = document.getElementById('lp-chart-data');
+    if (!el) return false;
+    try { D = JSON.parse(el.textContent); } catch (e) { return false; }
+    return true;
+  }
+
+  // Render the untouched data and compare against what the server produced.
+  // Any difference means the two renderers have drifted, which is the one
+  // failure mode a second copy of this maths can have.
+  function verifySelf() {
+    if (!D) return { ok: false, reason: 'no data' };
+    var state = computeState(JSON.parse(JSON.stringify(D.friends)));
+    if (!state) return { ok: false, reason: 'no timelines' };
+    var host = document.querySelector('[data-lp-charts]');
+    if (!host) return { ok: false, reason: 'no host' };
+    // Both sides must be read back through the DOM: innerHTML rewrites
+    // self-closing SVG tags (<line /> becomes <line></line>), so comparing a
+    // freshly built string against a parsed one reports differences that are
+    // not there.
+    var box = document.createElement('div');
+    box.innerHTML = chartsHtml(state);
+    // Rank emblems come from a community CDN and their onerror handler writes
+    // an inline style when one fails to load. That is runtime state on the
+    // live page, not a rendering difference, so drop it from both sides.
+    function norm(h) { return h.replace(/ style="visibility: hidden;"/g, ''); }
+    var mine = norm(box.innerHTML), theirs = norm(host.innerHTML);
+    if (mine === theirs) return { ok: true, bytes: mine.length };
+    var at = 0;
+    while (at < mine.length && at < theirs.length && mine[at] === theirs[at]) at++;
+    return { ok: false, at: at, mine: mine.slice(Math.max(0, at - 70), at + 70),
+             theirs: theirs.slice(Math.max(0, at - 70), at + 70),
+             lens: [mine.length, theirs.length] };
+  }
+
+  // Redraw with a live LP reading and any games played since the publish.
+  // `live` is { label: {tier, rank, leaguePoints, matches: [...] } }.
+  function rerender(live) {
+    if (!D) return 0;
+    var today = new Date();
+    var dateKey = today.getFullYear() + '-' +
+                  ('0' + (today.getMonth() + 1)).slice(-2) + '-' +
+                  ('0' + today.getDate()).slice(-2);
+    var touched = 0;
+    var friends = D.friends.map(function (f) {
+      var copy = { label: f.label, history: f.history.slice(), matches: f.matches.slice() };
+      var l = live[f.label];
+      if (!l || !l.tier) return copy;
+      var added = (l.matches || []).filter(function (m) {
+        return m.queue === 'Ranked Solo/Duo';
+      }).map(function (m) {
+        return { dateKey: dateKey, gameStartMs: m.gameStartMs, win: !!m.win,
+                 champion: m.champion };
+      });
+      if (!added.length) return copy;
+      // The live reading becomes today's snapshot, so the new games are an
+      // ordinary segment between two measured points — the same shape every
+      // other part of this chart is built from.
+      var lastHist = copy.history[copy.history.length - 1];
+      var snap = { date: dateKey, tier: l.tier, rank: l.rank, leaguePoints: l.leaguePoints };
+      if (lastHist && lastHist.date === dateKey) copy.history[copy.history.length - 1] = snap;
+      else copy.history.push(snap);
+      copy.matches = copy.matches.concat(added);
+      touched += added.length;
+      return copy;
+    });
+    if (!touched) return 0;
+    var state = computeState(friends);
+    if (!state) return 0;
+    var host = document.querySelector('[data-lp-charts]');
+    var chips = document.querySelector('[data-lp-standings]');
+    if (!host) return 0;
+
+    // Replacing the SVGs throws away two things the viewer chose. The legend
+    // and zoom handlers survive (they live outside this element and look
+    // groups up by id at click time), but the state they wrote does not.
+    var hidden = [];
+    host.querySelectorAll('g[id*="-series-"]').forEach(function (g) {
+      if (g.style.display === 'none') hidden.push(g.id);
+    });
+    var activeRange = null;
+    var activeBtn = document.querySelector('.range-btn.active');
+    if (activeBtn) activeRange = activeBtn.getAttribute('data-range');
+
+    host.innerHTML = chartsHtml(state);
+    if (chips) chips.innerHTML = standingsHtml(state);
+
+    hidden.forEach(function (id) {
+      var g = document.getElementById(id);
+      if (g) g.style.display = 'none';
+      var lbl = document.getElementById(id.replace('-series-', '-label-'));
+      if (lbl) lbl.style.display = 'none';
+    });
+    if (activeRange) {
+      host.querySelectorAll('.chart-view').forEach(function (v) {
+        v.hidden = v.getAttribute('data-range') !== activeRange;
+      });
+    }
+    return touched;
+  }
+
+  return { init: init, verifySelf: verifySelf, rerender: rerender };
+})();
+'''
 
 
 def build_html(data):
@@ -3033,6 +3594,8 @@ def build_html(data):
   <script type="application/json" id="season-export-data">{season_export_json}</script>
   <script type="application/json" id="live-refresh-data">{live_refresh_json}</script>
 
+  <script>{LP_CHART_JS}</script>
+
   <script>
     // Riot key validation, shared by both dialog flows below.
     //
@@ -3193,6 +3756,7 @@ def build_html(data):
     (function () {{
       var cfgEl = document.getElementById('live-refresh-data');
       if (!cfgEl) return;
+      if (window.LpChart) LpChart.init();
       var CFG = JSON.parse(cfgEl.textContent);
       var btn = document.getElementById('live-ranks');
       var keyBtn = document.getElementById('live-key');
@@ -3437,7 +4001,7 @@ def build_html(data):
         }}
 
         return nextQueue(0).then(function () {{
-          if (!ids.length) return 0;
+          if (!ids.length) return [];
           // Newest first, so if the budget does run out it is the oldest of
           // the unseen games that get dropped, not the ones people care about.
           ids.sort(function (a, b) {{ return a < b ? 1 : (a > b ? -1 : 0); }});
@@ -3457,7 +4021,8 @@ def build_html(data):
           }}
           return nextMatch(0).then(function () {{
             out.sort(function (a, b) {{ return b.gameStartMs - a.gameStartMs; }});
-            return applyMatches(f.label, out);
+            applyMatches(f.label, out);
+            return out;
           }});
         }});
       }}
@@ -3491,9 +4056,18 @@ def build_html(data):
         keyBtn.disabled = true;
         var friends = CFG.friends || [];
         var done = 0, updated = 0, newGames = 0;
+        // Per friend: the live rank reading plus whatever games came back, fed
+        // to the chart at the end so it redraws once rather than seven times.
+        var live = {{}};
 
         function step(i) {{
           if (i >= friends.length) {{
+            // The chart is rebuilt from the whole season, so it redraws once
+            // here rather than per friend.
+            var charted = 0;
+            if (window.LpChart) {{
+              try {{ charted = LpChart.rerender(live) || 0; }} catch (e) {{ charted = 0; }}
+            }}
             var when = new Date().toLocaleTimeString([], {{ hour: '2-digit', minute: '2-digit' }});
             // Be explicit about what did and did not move: the season tiles and
             // the LP chart need the whole season, which the browser cannot
@@ -3504,8 +4078,10 @@ def build_html(data):
                             (budgetSpent ? ' (some older ones skipped to stay inside Riot’s ' +
                                            'rate limit — refresh again for the rest)' : '')
                           : ', no new games since the last build') +
-                '. Live as of ' + when + '. Season totals and the LP chart still show the ' +
-                'published snapshot.', 'done', 100);
+                '. Live as of ' + when + '.' +
+                (charted ? ' The LP chart has been redrawn with them.' : '') +
+                ' Season totals and the champion breakdown still show the published ' +
+                'snapshot.', 'done', 100);
             btn.disabled = false;
             keyBtn.disabled = false;
             return;
@@ -3530,15 +4106,21 @@ def build_html(data):
                   if (entries[n].queueType === 'RANKED_SOLO_5x5') {{ solo = entries[n]; break; }}
                 }}
                 paint(f.label, solo);
+                if (solo) {{
+                  live[f.label] = {{ tier: solo.tier, rank: solo.rank,
+                                     leaguePoints: solo.leaguePoints || 0, matches: [] }};
+                }}
                 updated++;
               }}
-              if (!puuid) return 0;
+              if (!puuid) return [];
               say('Checking ' + f.label + '’s recent games… (' + (i + 1) + ' of ' +
                   friends.length + ')', null, ((i + 0.5) / friends.length) * 100);
               return refreshGames(f, puuid, key);
             }})
             .then(function (added) {{
-              newGames += (added || 0);
+              added = added || [];
+              newGames += added.length;
+              if (live[f.label]) live[f.label].matches = added;
               done++;
               step(i + 1);
             }})
