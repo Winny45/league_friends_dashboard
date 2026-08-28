@@ -130,6 +130,21 @@ Open `config.json` and fill in:
   server's channel at the end of every run. Leave it as `""` to skip this.
   See "Post updates to Discord" below for how to get a webhook URL.
 
+### Patch notes
+
+`patch_notes.json` drives the ✨ button in the header. Newest entry first:
+
+```json
+{ "date": "2026-08-28", "title": "Short headline",
+  "items": [ { "type": "added", "text": "What a player can now do." } ] }
+```
+
+`type` is `added`, `fixed` or `improved`. The newest entry's `date` doubles as
+the read marker for the unread dot, so a new entry needs a new date or
+returning visitors will not see one. The file is optional — without it the
+button is not rendered at all.
+
+
 ## 3. Run it
 
 You need Python 3 (no extra packages required — it only uses the standard

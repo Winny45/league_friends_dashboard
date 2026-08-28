@@ -1865,6 +1865,62 @@ def write_share_assets(out_dir, friends_sorted, platform, generated_at):
     return written
 
 
+# ---------------------------------------------------------------------------
+# Patch notes
+#
+# Content lives in patch_notes.json rather than in here, so adding an entry is
+# a small data edit and cannot break the generator. Newest entry first; the
+# file is optional, and without it the button simply is not rendered.
+# ---------------------------------------------------------------------------
+
+NOTE_KINDS = {
+    "added": ("New", "note-new"),
+    "fixed": ("Fixed", "note-fix"),
+    "improved": ("Better", "note-better"),
+}
+
+
+def load_patch_notes():
+    path = Path(__file__).with_name("patch_notes.json")
+    if not path.exists():
+        return []
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"  (skipped patch notes: {exc})")
+        return []
+    return entries if isinstance(entries, list) else []
+
+
+def format_note_date(value):
+    """2026-08-28 -> 28 Aug 2026, leaving anything unparseable alone."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%d %b %Y").lstrip("0")
+    except Exception:
+        return value
+
+
+def render_patch_notes(entries):
+    """(html, latest date). The date doubles as the "have you read this"
+    marker the unread dot compares against."""
+    if not entries:
+        return "", ""
+    blocks = []
+    for entry in entries:
+        lis = []
+        for item in entry.get("items", []):
+            word, cls = NOTE_KINDS.get(item.get("type", "added"), NOTE_KINDS["added"])
+            lis.append(f'<li><span class="note-tag {cls}">{esc(word)}</span>'
+                       f'<span>{esc(item.get("text", ""))}</span></li>')
+        blocks.append(
+            f'<article class="note">'
+            f'<div class="note-date">{esc(format_note_date(entry.get("date", "")))}</div>'
+            f'<h4>{esc(entry.get("title", ""))}</h4>'
+            f'<ul>{"".join(lis)}</ul>'
+            f'</article>')
+    return "".join(blocks), str(entries[0].get("date", ""))
+
+
 def build_html(data):
     friends = data.get("friends", [])
     friends_sorted = sorted(friends, key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)
@@ -1900,6 +1956,8 @@ def build_html(data):
 
     week_glance_panel = render_week_glance_panel(friends_sorted, awards, rank_history, now)
     duo_synergy_panel = render_duo_synergy_panel(friends_sorted)
+
+    notes_html, notes_latest = render_patch_notes(load_patch_notes())
 
     tracking_since = data.get("rankTrackingSince", "recently")
     # Per-game LP is the primary view; it needs at least one snapshot-to-
@@ -2422,6 +2480,55 @@ def build_html(data):
   .chip-level {{ font-size: 11px; color: var(--accent); font-weight: 700; }}
   .chip-points {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }}
 
+  /* ---- Patch notes ---------------------------------------------------- */
+  #patch-notes {{ width: 40px; padding: 0; font-size: 16px; position: relative; }}
+  /* Unread marker. Sits on the button rather than beside it so the header
+     keeps its shape whether or not there is anything new. */
+  .note-dot {{
+    position: absolute; top: 6px; right: 6px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--critical);
+    box-shadow: 0 0 0 2px var(--surface-1);
+  }}
+  .note-dot[hidden] {{ display: none; }}
+  /* Both are single-class selectors and this block is declared before
+     .modal, so it needs the extra class to win on specificity. */
+  .modal.notes-modal {{ max-width: 570px; }}
+  .notes-body {{
+    margin-top: 18px; max-height: min(58vh, 470px); overflow-y: auto; padding-right: 8px;
+  }}
+  .note {{ padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--gridline); }}
+  .note:last-child {{ padding-bottom: 0; margin-bottom: 0; border-bottom: none; }}
+  .note-date {{
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted);
+  }}
+  .note h4 {{
+    margin: 4px 0 10px; font-size: 15px; letter-spacing: -0.01em;
+    font-family: "Outfit", "Inter", system-ui, sans-serif;
+  }}
+  .note ul {{ margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; }}
+  .note li {{
+    display: flex; gap: 9px; align-items: flex-start;
+    font-size: 13px; line-height: 1.5; color: var(--text-secondary);
+  }}
+  .note-tag {{
+    flex-shrink: 0; min-width: 54px; text-align: center; margin-top: 1px;
+    font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    border-radius: 999px; padding: 3px 7px;
+  }}
+  .note-new {{
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  }}
+  .note-fix {{
+    color: var(--good); background: color-mix(in srgb, var(--good) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--good) 34%, transparent);
+  }}
+  .note-better {{
+    color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-2) 34%, transparent);
+  }}
+
   /* ---- External profile links ---------------------------------------- */
   /* Opaque chips rather than plain links: they sit over the champion art on
      a phone, where the veils are thinnest. */
@@ -2713,7 +2820,7 @@ def build_html(data):
     .range-btn {{ padding: 11px 18px; min-height: 40px; font-size: 13px; }}
     .pill {{ padding: 10px 16px; min-height: 40px; }}
     .hbtn {{ height: 42px; padding: 0 11px; font-size: 12.5px; }}
-    #theme-toggle {{ padding: 0; }}
+    #theme-toggle, #patch-notes {{ padding: 0; }}
     .btn-long {{ display: none; }}
     .btn-short {{ display: inline; }}
     /* "Forget saved key" beside two half-width buttons overflowed the row,
@@ -2788,6 +2895,7 @@ def build_html(data):
         <button id="refresh-data" class="hbtn hosted-only" type="button" hidden title="Re-fetch everyone's games from the Riot API">⟳ Refresh data</button>
         <button id="set-key" class="hbtn hosted-only" type="button" hidden title="Update the Riot API key stored on the server, used by Refresh data">🔑 Server key</button>
         <button id="export-csv" class="hbtn" type="button" title="Download this season's match data as a CSV">⬇ <span class="btn-long">Export CSV</span><span class="btn-short">CSV</span></button>
+        {'<button id="patch-notes" class="hbtn" type="button" title="What&#39;s new on this dashboard" aria-label="What&#39;s new on this dashboard">✨<span class="note-dot" id="note-dot" hidden></span></button>' if notes_html else ""}
         <button id="theme-toggle" class="hbtn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
       </div>
     </header>
@@ -2824,6 +2932,22 @@ def build_html(data):
         </div>
       </div>
     </div>
+
+    {f'''<div class="modal-backdrop" id="notes-modal" data-latest="{esc(notes_latest)}" hidden>
+      <div class="modal notes-modal" role="dialog" aria-modal="true" aria-labelledby="notes-title">
+        <div class="modal-head">
+          <div class="modal-icon" aria-hidden="true">✨</div>
+          <div>
+            <h3 id="notes-title">What&#39;s new</h3>
+            <p class="muted small">Recent changes to this dashboard.</p>
+          </div>
+        </div>
+        <div class="notes-body" tabindex="0">{notes_html}</div>
+        <div class="modal-actions">
+          <button type="button" class="btn-primary" id="notes-close">Close</button>
+        </div>
+      </div>
+    </div>''' if notes_html else ""}
 
     {demo_banner}
 
@@ -3528,6 +3652,49 @@ def build_html(data):
           keyBtn.disabled = false;
         }});
       }}
+    }})();
+  </script>
+
+  <script>
+    // Patch notes. Deliberately its own dialog rather than the shared admin
+    // one: that dialog carries key-entry state, and entangling the two is how
+    // a stale handler ends up firing on the wrong confirm.
+    (function () {{
+      var btn = document.getElementById('patch-notes');
+      var modal = document.getElementById('notes-modal');
+      if (!btn || !modal) return;
+      var dot = document.getElementById('note-dot');
+      var closeBtn = document.getElementById('notes-close');
+      var SEEN = 'league-dashboard/notes-seen';
+      var latest = modal.getAttribute('data-latest') || '';
+
+      function lastSeen() {{
+        try {{ return localStorage.getItem(SEEN) || ''; }} catch (e) {{ return ''; }}
+      }}
+      function syncDot() {{ dot.hidden = lastSeen() === latest; }}
+
+      function open() {{
+        modal._opener = document.activeElement;
+        modal.hidden = false;
+        // Opening counts as reading: the dot is a nudge, not a task list.
+        try {{ localStorage.setItem(SEEN, latest); }} catch (e) {{}}
+        syncDot();
+        setTimeout(function () {{ closeBtn.focus(); }}, 30);
+      }}
+      function close() {{
+        modal.hidden = true;
+        var opener = modal._opener;
+        modal._opener = null;
+        if (opener && opener.focus) {{ try {{ opener.focus(); }} catch (e) {{}} }}
+      }}
+
+      btn.addEventListener('click', open);
+      closeBtn.addEventListener('click', close);
+      modal.addEventListener('click', function (e) {{ if (e.target === modal) close(); }});
+      document.addEventListener('keydown', function (e) {{
+        if (e.key === 'Escape' && !modal.hidden) close();
+      }});
+      syncDot();
     }})();
   </script>
 
