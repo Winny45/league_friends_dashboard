@@ -12,6 +12,10 @@
         "text": "The LP per game chart now redraws with those new games as well, and the standings above it follow. Your zoom setting and any lines you have hidden survive the redraw."
       },
       {
+        "type": "fixed",
+        "text": "The leaderboard is ordered when the page is built, so a refresh used to update everyone's LP without moving them — leaving #1 on 80 LP sitting above #2 on 26 LP. Rows now re-sort and renumber, medals included, and each player's card badge follows."
+      },
+      {
         "type": "improved",
         "text": "Season totals and the champion breakdown still come from the published snapshot — those need a player's whole season, which a browser cannot rebuild. The status line says what did and did not move."
       }

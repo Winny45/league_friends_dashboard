@@ -2563,6 +2563,13 @@ def build_html(data):
         "tierVars": {t: tier_var(t) for t in TIER_ORDER},
         "rankIconBase": RANK_ICON_BASE,
         "apexTiers": sorted(APEX_TIERS),
+        # Enough to work out a ladder position in the browser. Rows are sorted
+        # server-side at build time, so without this a refresh leaves everyone
+        # in their old order while showing their new LP.
+        "tierOrder": TIER_ORDER,
+        "rankScore": RANK_SCORE,
+        "baseScores": {f["label"]: ladder_lp(f["ranked"].get("solo") or {})
+                       for f in friends_sorted},
         "ddragonVersion": data.get("ddragonVersion"),
         "championIcons": data.get("championIconMap", {}),
         "rankedQueues": LIVE_RANKED_QUEUES,
@@ -4027,6 +4034,47 @@ def build_html(data):
         }});
       }}
 
+      // Absolute ladder position, so Emerald IV 80 LP sorts above Emerald IV
+      // 26 LP. Mirrors ladder_lp() in the generator.
+      function ladderScore(entry) {{
+        if (!entry || !entry.tier) return 0;
+        var order = CFG.tierOrder || [];
+        var ti = order.indexOf(entry.tier);
+        if (ti < 0) ti = 0;
+        var lp = entry.leaguePoints || 0;
+        if ((CFG.apexTiers || []).indexOf(entry.tier) !== -1) return ti * 4 * 100 + lp;
+        var division = (CFG.rankScore || {{}})[entry.rank] || 0;
+        return (ti * 4 + division) * 100 + lp;
+      }}
+
+      // The table is ordered at build time, so after a refresh moves people
+      // the rows still sit in their old positions with their new LP beside
+      // them — #1 on 80 LP above #2 on 26 LP. Re-sort and renumber.
+      function resortLeaderboard(live) {{
+        var rows = [].slice.call(document.querySelectorAll('tr[data-friend-row]'));
+        if (rows.length < 2) return;
+        var body = rows[0].parentNode;
+        rows.forEach(function (tr) {{
+          var label = tr.getAttribute('data-friend-row');
+          var l = live[label];
+          // Anyone whose lookup failed keeps the position the build gave them.
+          tr._score = l ? ladderScore(l) : ((CFG.baseScores || {{}})[label] || 0);
+        }});
+        rows.sort(function (a, b) {{ return b._score - a._score; }});
+        rows.forEach(function (tr, i) {{
+          body.appendChild(tr);
+          var pos = tr.querySelector('.pos');
+          if (pos) {{
+            pos.textContent = i + 1;
+            pos.className = i < 3 ? 'pos pos-' + (i + 1) : 'pos';
+          }}
+          // The friend card carries the same standing.
+          var card = document.getElementById('friend-' + tr.getAttribute('data-friend-row').toLowerCase());
+          var badge = card && card.querySelector('.rank-badge');
+          if (badge) badge.textContent = '#' + (i + 1);
+        }});
+      }}
+
       function paint(label, entry) {{
         var row = document.querySelector('tr[data-friend-row="' + CSS.escape(label) + '"]');
         if (!row) return;
@@ -4062,6 +4110,7 @@ def build_html(data):
 
         function step(i) {{
           if (i >= friends.length) {{
+            resortLeaderboard(live);
             // The chart is rebuilt from the whole season, so it redraws once
             // here rather than per friend.
             var charted = 0;
