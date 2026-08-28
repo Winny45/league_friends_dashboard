@@ -8,6 +8,10 @@
         "text": "Duo synergy was missing most of its games. It only counted a pair when both players' records carried a team id, and only about one match in ten does — so Brett and Winny showed 6 games together instead of 130, and ten pairs including Neel and Winny did not appear at all. It now works out who was on the same team from the result, which every record has."
       },
       {
+        "type": "added",
+        "text": "Split duos by queue: all queues, Solo/Duo only, or Flex only. Every figure follows the choice, including the comparison against each player's usual winrate, which is worked out separately for each queue. Several pairs turn out to play only one of the two — Neel and Winny's 20 games together are all Flex."
+      },
+      {
         "type": "improved",
         "text": "The table is now a card per pair, with a winrate bar you can scan at a glance instead of four columns of numbers."
       },
