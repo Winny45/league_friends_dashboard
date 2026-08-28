@@ -267,6 +267,12 @@ def render_champion_icon(champion_name, size=20):
 # Community-run means the path could change on Riot's end without notice;
 # same graceful degradation as champion icons handles that (blank, not
 # broken) if it ever does.
+# Queues the live refresh asks Riot for. Riot filters by queue server-side,
+# so a normal game never costs a call. Names must match the strings
+# fetch_data.py stores, or a live row would read differently from a built one.
+LIVE_RANKED_QUEUES = [420, 440]
+LIVE_QUEUE_NAMES = {"420": "Ranked Solo/Duo", "440": "Ranked Flex"}
+
 RANK_ICON_BASE = "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-emblems-latest/emblem-{tier}.png"
 
 
@@ -659,8 +665,8 @@ def render_friend_card(f, rank_position, now):
         {f'<div class="muted small">{solo_fresh_badge}{solo_peak_badge}{flex_peak_badge}</div>' if (solo_fresh_badge or solo_peak_badge or flex_peak_badge) else ""}
       </div>
 
-      <div class="section-label">Form (last {len(matches)} games, {wins}W {losses}L)</div>
-      <div class="dots">{dots}</div>
+      <div class="section-label" data-form-label>Form (last {len(matches)} games, {wins}W {losses}L)</div>
+      <div class="dots" data-dots>{dots}</div>
       {nemesis_note}
 
       <div class="season-stats">
@@ -686,10 +692,10 @@ def render_friend_card(f, rank_position, now):
       <div class="chips">{mastery_html}</div>
 
       <details class="matches-details">
-        <summary>Recent match detail ({len(matches)} games)</summary>
+        <summary data-match-summary>Recent match detail ({len(matches)} games)</summary>
         <table class="matches-table">
           <thead><tr><th>When</th><th>Result</th><th>Champion</th><th>K/D/A</th><th>KDA</th><th>CS/min</th><th>Queue</th><th>Length</th></tr></thead>
-          <tbody>{match_rows}</tbody>
+          <tbody data-match-rows>{match_rows}</tbody>
         </table>
       </details>
 
@@ -1987,12 +1993,32 @@ def build_html(data):
     # to use, and how to rebuild a tier's colour and emblem. Deliberately no
     # puuids — those stay out of the public page, so the browser resolves each
     # Riot ID itself.
+    # knownMatches lets the browser tell a genuinely new game from one already
+    # in the snapshot, so it only spends a call on match detail it does not
+    # have. The newest 40 is far more than a refresh could add between builds.
     live_refresh_json = json.dumps({
         "platform": data.get("platform", "euw1"),
         "friends": [{"label": f["label"], "riotId": f.get("riotId", "")} for f in friends_sorted],
         "tierVars": {t: tier_var(t) for t in TIER_ORDER},
         "rankIconBase": RANK_ICON_BASE,
         "apexTiers": sorted(APEX_TIERS),
+        "ddragonVersion": data.get("ddragonVersion"),
+        "championIcons": data.get("championIconMap", {}),
+        "rankedQueues": LIVE_RANKED_QUEUES,
+        "queueNames": LIVE_QUEUE_NAMES,
+        "knownMatches": {
+            f["label"]: [m.get("matchId") for m in f.get("seasonMatches", [])[:40] if m.get("matchId")]
+            for f in friends_sorted
+        },
+        # The id diff alone was not enough: knownMatches only holds the newest
+        # 40 games, so an older Flex game outside that window looked new and
+        # was spliced in among today's. Riot can filter by start time server
+        # side, which fixes that and means an inactive friend costs no match
+        # calls at all.
+        "newestMatchMs": {
+            f["label"]: max([m.get("gameStartMs") or 0 for m in f.get("seasonMatches", [])] or [0])
+            for f in friends_sorted
+        },
     }, ensure_ascii=False)
 
     # ---- Share metadata -------------------------------------------------
@@ -2432,6 +2458,10 @@ def build_html(data):
   .dot:hover {{ transform: scale(1.25); }}
   .dot.win {{ background: var(--good); box-shadow: 0 1px 4px color-mix(in srgb, var(--good) 40%, transparent); }}
   .dot.loss {{ background: var(--critical); box-shadow: 0 1px 4px color-mix(in srgb, var(--critical) 35%, transparent); }}
+  /* Games pulled in by the live refresh, ringed so it is obvious something
+     actually arrived rather than leaving you to guess. */
+  .dot-new {{ box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 3px var(--accent); }}
+  tr.row-new td {{ background: color-mix(in srgb, var(--accent) 9%, transparent); }}
 
   .season-stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(152px, 1fr)); gap: 10px; margin-top: 14px; }}
   .stat-tile {{
@@ -3242,6 +3272,196 @@ def build_html(data):
         return tier + ' ' + (e.rank || '') + ' · ' + (e.leaguePoints || 0) + ' LP';
       }}
 
+      // ---- New games -----------------------------------------------------
+      // Refreshing used to update ranks only, so the leaderboard moved while
+      // the form dots and match list sat on the published snapshot. The
+      // browser can fetch match detail itself; what it cannot do is rebuild
+      // season totals or the LP chart, which need the whole season.
+      // The card shows a 10-game window, so there is nothing to gain from
+      // fetching more than 10 per player. The shared budget is what keeps a
+      // seven-player refresh inside a development key's 100-calls-per-2-minutes:
+      // worst case is 7x(1 account + 1 league + 2 id lists) + 45 = 73.
+      var IDS_PER_QUEUE = 10;      // newest N ranked ids asked for, per queue
+      var MAX_NEW_PER_FRIEND = 10; // one player cannot exceed the window anyway
+      var matchBudget = 40;        // match-detail calls for the whole refresh
+      var budgetSpent = false;
+
+      function escapeHtml(v) {{
+        return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {{
+          return {{ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }}[c];
+        }});
+      }}
+
+      // "Aug 22, 11:09 PM" — the same shape the built page uses, so a live
+      // row and a snapshot row are indistinguishable.
+      var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      function whenText(m) {{
+        if (!m.gameStartMs) return '\u2014';
+        var d = new Date(m.gameStartMs);
+        var h = d.getHours(), h12 = h % 12 || 12;
+        return MONTHS[d.getMonth()] + ' ' + ('0' + d.getDate()).slice(-2) + ', ' +
+               h12 + ':' + ('0' + d.getMinutes()).slice(-2) + ' ' + (h >= 12 ? 'PM' : 'AM');
+      }}
+
+      function championIcon(name) {{
+        // The map is keyed by display name, but match-v5 already returns the
+        // Data Dragon key, so fall through to the raw name.
+        var slug = (CFG.championIcons || {{}})[name] || name;
+        if (!CFG.ddragonVersion || !slug) {{
+          return '<span class="champ-icon champ-icon-ph" style="width:20px;height:20px;"></span>';
+        }}
+        // &#39; rather than an escaped quote: this string passes through an
+        // f-string and then a JS single-quoted literal, and one backslash
+        // too few closes the literal early on 'hidden'. The entity needs none.
+        return '<img src="https://ddragon.leagueoflegends.com/cdn/' + CFG.ddragonVersion +
+               '/img/champion/' + encodeURIComponent(slug) + '.png" alt="" class="champ-icon" ' +
+               'width="20" height="20" loading="lazy" onerror="this.style.visibility=&#39;hidden&#39;">';
+      }}
+
+      // Mirrors summarize_match() in fetch_data.py. Any drift here shows up as
+      // a live row that disagrees with the same game after the next build.
+      function summarizeMatch(match, puuid) {{
+        var info = match && match.info;
+        if (!info || !info.participants) return null;
+        var me = null, i;
+        for (i = 0; i < info.participants.length; i++) {{
+          if (info.participants[i].puuid === puuid) {{ me = info.participants[i]; break; }}
+        }}
+        if (!me) return null;
+        var deaths = me.deaths || 0;
+        var cs = (me.totalMinionsKilled || 0) + (me.neutralMinionsKilled || 0);
+        var mins = Math.max((info.gameDuration || 0) / 60, 1);
+        var start = info.gameStartTimestamp || info.gameCreation || 0;
+        var pos = me.teamPosition || null;
+        var foe = null;
+        if (pos) {{
+          for (i = 0; i < info.participants.length; i++) {{
+            var q = info.participants[i];
+            if (q.teamPosition === pos && q.teamId !== me.teamId) {{ foe = q.championName; break; }}
+          }}
+        }}
+        return {{
+          matchId: match.metadata && match.metadata.matchId,
+          // Riot ends a game early with no stat impact when someone fails to
+          // connect; those must never count as a win, a loss or a game played.
+          remake: !!me.gameEndedInEarlySurrender,
+          champion: me.championName || 'Unknown',
+          win: !!me.win,
+          kills: me.kills || 0,
+          deaths: deaths,
+          assists: me.assists || 0,
+          kda: Math.round(((me.kills || 0) + (me.assists || 0)) / Math.max(deaths, 1) * 100) / 100,
+          csPerMin: Math.round(cs / mins * 10) / 10,
+          queue: (CFG.queueNames || {{}})[String(info.queueId)] || ('Queue ' + info.queueId),
+          gameStartMs: start,
+          durationMin: Math.round(mins * 10) / 10
+        }};
+      }}
+
+      function dotHtml(m) {{
+        var title = whenText(m) + ' \u2014 ' + m.champion + ' \u2014 ' + (m.win ? 'Win' : 'Loss') +
+                    ' \u2014 ' + m.kills + '/' + m.deaths + '/' + m.assists + ' KDA ' + m.kda;
+        return '<span class="dot ' + (m.win ? 'win' : 'loss') + ' dot-new" title="' +
+               escapeHtml(title) + '"></span>';
+      }}
+
+      function rowHtml(m) {{
+        return '<tr class="row-new">' +
+          '<td class="muted small">' + escapeHtml(whenText(m)) + '</td>' +
+          '<td><span class="tag ' + (m.win ? 'win' : 'loss') + '">' +
+            (m.win ? 'WIN' : 'LOSS') + '</span></td>' +
+          '<td class="champ-cell">' + championIcon(m.champion) + escapeHtml(m.champion) + '</td>' +
+          '<td class="num">' + m.kills + '/' + m.deaths + '/' + m.assists + '</td>' +
+          '<td class="num">' + m.kda + '</td>' +
+          '<td class="num">' + m.csPerMin + '</td>' +
+          '<td class="muted">' + escapeHtml(m.queue) + '</td>' +
+          '<td class="num muted">' + m.durationMin + 'm</td></tr>';
+      }}
+
+      function trim(container, selector, limit) {{
+        if (!container) return;
+        var kids = container.querySelectorAll(selector);
+        for (var i = limit; i < kids.length; i++) kids[i].remove();
+      }}
+
+      function applyMatches(label, matches) {{
+        var card = document.getElementById('friend-' + label.toLowerCase());
+        if (!card || !matches.length) return 0;
+        var dots = card.querySelector('[data-dots]');
+        var rows = card.querySelector('[data-match-rows]');
+        // Keep the window the snapshot used, so the card does not quietly grow
+        // a longer form line every time somebody refreshes.
+        var limit = Math.max(dots ? dots.querySelectorAll('.dot').length : 0, matches.length);
+        if (dots && !dots.querySelector('.dot')) dots.innerHTML = '';  // drops "No recent games"
+        // Oldest first at the front, so the newest ends up leftmost.
+        matches.slice().reverse().forEach(function (m) {{
+          if (dots) dots.insertAdjacentHTML('afterbegin', dotHtml(m));
+          if (rows) rows.insertAdjacentHTML('afterbegin', rowHtml(m));
+        }});
+        trim(dots, '.dot', limit);
+        trim(rows, 'tr', limit);
+        // Counted back off the DOM rather than tracked in a variable, so the
+        // label can never disagree with the dots it describes.
+        var total = dots ? dots.querySelectorAll('.dot').length : 0;
+        var wins = dots ? dots.querySelectorAll('.dot.win').length : 0;
+        var lbl = card.querySelector('[data-form-label]');
+        if (lbl) lbl.textContent = 'Form (last ' + total + ' games, ' + wins + 'W ' +
+                                   (total - wins) + 'L)';
+        var sum = card.querySelector('[data-match-summary]');
+        if (sum && rows) sum.textContent = 'Recent match detail (' +
+                                           rows.querySelectorAll('tr').length + ' games)';
+        return matches.length;
+      }}
+
+      function refreshGames(f, puuid, key) {{
+        var known = (CFG.knownMatches || {{}})[f.label] || [];
+        var newestMs = (CFG.newestMatchMs || {{}})[f.label] || 0;
+        // Riot's startTime is in whole seconds; +1 so the newest known game is
+        // itself excluded rather than fetched again every refresh.
+        var after = newestMs ? Math.floor(newestMs / 1000) + 1 : 0;
+        var queues = CFG.rankedQueues || [420, 440];
+        var ids = [];
+
+        function nextQueue(qi) {{
+          if (qi >= queues.length) return Promise.resolve();
+          return riot(routing, '/lol/match/v5/matches/by-puuid/' + puuid + '/ids?queue=' +
+                      queues[qi] + (after ? '&startTime=' + after : '') +
+                      '&start=0&count=' + IDS_PER_QUEUE, key)
+            .then(function (list) {{
+              (list || []).forEach(function (id) {{
+                if (ids.indexOf(id) < 0 && known.indexOf(id) < 0) ids.push(id);
+              }});
+              return nextQueue(qi + 1);
+            }});
+        }}
+
+        return nextQueue(0).then(function () {{
+          if (!ids.length) return 0;
+          // Newest first, so if the budget does run out it is the oldest of
+          // the unseen games that get dropped, not the ones people care about.
+          ids.sort(function (a, b) {{ return a < b ? 1 : (a > b ? -1 : 0); }});
+          var room = Math.min(MAX_NEW_PER_FRIEND, matchBudget);
+          if (ids.length > room) budgetSpent = true;
+          var fresh = ids.slice(0, room);
+          matchBudget -= fresh.length;
+          var out = [];
+          function nextMatch(i) {{
+            if (i >= fresh.length) return Promise.resolve();
+            return riot(routing, '/lol/match/v5/matches/' + fresh[i], key)
+              .then(function (m) {{
+                var row = summarizeMatch(m, puuid);
+                if (row && !row.remake && row.gameStartMs > newestMs) out.push(row);
+                return nextMatch(i + 1);
+              }});
+          }}
+          return nextMatch(0).then(function () {{
+            out.sort(function (a, b) {{ return b.gameStartMs - a.gameStartMs; }});
+            return applyMatches(f.label, out);
+          }});
+        }});
+      }}
+
       function paint(label, entry) {{
         var row = document.querySelector('tr[data-friend-row="' + CSS.escape(label) + '"]');
         if (!row) return;
@@ -3270,13 +3490,21 @@ def build_html(data):
         btn.disabled = true;
         keyBtn.disabled = true;
         var friends = CFG.friends || [];
-        var done = 0, updated = 0;
+        var done = 0, updated = 0, newGames = 0;
 
         function step(i) {{
           if (i >= friends.length) {{
             var when = new Date().toLocaleTimeString([], {{ hour: '2-digit', minute: '2-digit' }});
-            say('Ranks updated for ' + updated + ' of ' + friends.length +
-                ' friends, live as of ' + when + '. Match history and charts still show the ' +
+            // Be explicit about what did and did not move: the season tiles and
+            // the LP chart need the whole season, which the browser cannot
+            // rebuild, so they stay on the published snapshot.
+            say('Ranks updated for ' + updated + ' of ' + friends.length + ' friends' +
+                (newGames ? ', ' + newGames + ' new game' + (newGames === 1 ? '' : 's') +
+                            ' added to their Form and match lists' +
+                            (budgetSpent ? ' (some older ones skipped to stay inside Riot’s ' +
+                                           'rate limit — refresh again for the rest)' : '')
+                          : ', no new games since the last build') +
+                '. Live as of ' + when + '. Season totals and the LP chart still show the ' +
                 'published snapshot.', 'done', 100);
             btn.disabled = false;
             keyBtn.disabled = false;
@@ -3287,11 +3515,13 @@ def build_html(data):
               null, (i / friends.length) * 100);
           var hash = f.riotId.indexOf('#');
           var name = f.riotId.slice(0, hash), tag = f.riotId.slice(hash + 1);
+          var puuid = null;
           riot(routing, '/riot/account/v1/accounts/by-riot-id/' +
                         encodeURIComponent(name) + '/' + encodeURIComponent(tag), key)
             .then(function (acct) {{
               if (!acct || !acct.puuid) return null;
-              return riot(platform, '/lol/league/v4/entries/by-puuid/' + acct.puuid, key);
+              puuid = acct.puuid;
+              return riot(platform, '/lol/league/v4/entries/by-puuid/' + puuid, key);
             }})
             .then(function (entries) {{
               if (entries) {{
@@ -3302,6 +3532,13 @@ def build_html(data):
                 paint(f.label, solo);
                 updated++;
               }}
+              if (!puuid) return 0;
+              say('Checking ' + f.label + '’s recent games… (' + (i + 1) + ' of ' +
+                  friends.length + ')', null, ((i + 0.5) / friends.length) * 100);
+              return refreshGames(f, puuid, key);
+            }})
+            .then(function (added) {{
+              newGames += (added || 0);
               done++;
               step(i + 1);
             }})
