@@ -290,6 +290,7 @@ def set_duo_context(friends_sorted):
             if m.get("remake"):
                 continue
             by_match.setdefault(m["matchId"], []).append((f["label"], var, bool(m["win"])))
+        _DUO_CTX.setdefault("var", {})[f["label"]] = var
     duo = {}
     for mid, entries in by_match.items():
         if len(entries) < 2:
@@ -299,6 +300,17 @@ def set_duo_context(friends_sorted):
             if mates:
                 duo[(mid, label)] = sorted(mates)
     _DUO_CTX["map"] = duo
+
+
+def friend_colour(label):
+    """The colour that belongs to a name, rather than to a position in a list.
+
+    Looked up by label because the two places that need it count from
+    different starting points: the chart drops anyone with no rank history,
+    so its index and the friends list's index are not the same person once
+    somebody is missing.
+    """
+    return (_DUO_CTX.get("var") or {}).get(label, "--accent")
 
 
 def party_size(match_id, label):
@@ -704,7 +716,17 @@ def render_mastery_chip(m):
 def render_match_row(m, friend_label=""):
     cls = "win" if m["win"] else "loss"
     label = "WIN" if m["win"] else "LOSS"
-    return f'''<tr>
+    # Same treatment as the game list on the Rank progress tab: a game shared
+    # with somebody else is tinted with the pairing's own blended colour, so
+    # the same duo looks the same on both pages. No grouping gap here, because
+    # a card lists one player and its consecutive rows are always separate
+    # games rather than the two halves of one.
+    party = party_size(m.get("matchId"), friend_label)
+    band = party_band(m.get("matchId"), friend_label, friend_colour(friend_label))
+    row_attrs = ""
+    if party > 1 and band:
+        row_attrs = f' class="party party-{min(party, 5)}" style="{band}"'
+    return f'''<tr{row_attrs}>
       <td class="muted small">{esc(format_match_when(m))}</td>
       <td><span class="tag {cls}">{label}</span></td>
       <td class="champ-cell"><span class="cc">{render_champion_icon(m["champion"])}{esc(m["champion"])}</span></td>
@@ -1292,7 +1314,7 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       {rates_html}
 
       <details class="matches-details">
-        <summary data-match-summary>Recent match detail ({len(matches)} games)</summary>
+        <summary data-match-summary>Every game, newest first ({len(matches)})</summary>
         <table class="matches-table">
           <thead><tr><th>When</th><th>Result</th><th>Champion</th><th>With</th><th>K/D/A</th><th>KDA</th><th>CS/min</th><th>Queue</th><th>Length</th></tr></thead>
           <tbody data-match-rows>{match_rows}</tbody>
@@ -1300,17 +1322,17 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       </details>
 
       <details class="matches-details">
-        <summary>Champion breakdown this season ({len(champ_rows)} champions)</summary>
+        <summary>Every champion, most played first ({len(champ_rows)})</summary>
         {render_champion_breakdown(champ_rows)}
       </details>
 
       <details class="matches-details">
-        <summary>Lane matchups ({len(matchups)} with {MATCHUP_MIN_GAMES}+ games)</summary>
+        <summary>Every matchup, most played first ({len(matchups)})</summary>
         {render_matchups(matchups, matchup_covered, len(played))}
       </details>
 
       <details class="matches-details">
-        <summary>Role breakdown this season</summary>
+        <summary>Every role, most played first</summary>
         {render_role_breakdown(role_rows)}
       </details>
     </section>'''
@@ -4768,15 +4790,17 @@ def build_html(data):
      whole group. A gap under the last row separates one game from the next,
      which matters most during a long duo queue session where every row would
      otherwise be tinted the same. */
-  .lp-table tr.party td {{
+  .matches-table tr.party td {{
     background: color-mix(in srgb, var(--band) 12%, transparent);
-    border-bottom-color: transparent;
   }}
-  .lp-table tr.party.g-last td {{ border-bottom: 7px solid var(--surface-1); }}
-  .lp-table tr.party td:first-child {{
+  .matches-table tr.party td:first-child {{
     box-shadow: inset 4px 0 0 var(--band);
     padding-left: 14px;
   }}
+  /* Only the game list groups the rows of one game together, so only it drops
+     the rule between them and opens a gap after the last one. */
+  .lp-table tr.party td {{ border-bottom-color: transparent; }}
+  .lp-table tr.party.g-last td {{ border-bottom: 7px solid var(--surface-1); }}
   /* Not display:flex · on a <td> that removes the cell from the table's
      column layout, so it collapses to zero width and the emblem disappears.
      The same mistake is documented on td.rank-cell above. */
@@ -5969,8 +5993,8 @@ def build_html(data):
         if (lbl) lbl.textContent = 'Form (last ' + total + ' games, ' + wins + 'W ' +
                                    (total - wins) + 'L)';
         var sum = card.querySelector('[data-match-summary]');
-        if (sum && rows) sum.textContent = 'Recent match detail (' +
-                                           rows.querySelectorAll('tr').length + ' games)';
+        if (sum && rows) sum.textContent = 'Every game, newest first (' +
+                                           rows.querySelectorAll('tr').length + ')';
         return matches.length;
       }}
 
