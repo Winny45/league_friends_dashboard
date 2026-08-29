@@ -26,6 +26,10 @@
       {
         "type": "fixed",
         "text": "Remade games (the early-surrender kind that count for nothing) were being included in duo records. They are excluded everywhere else and now here too."
+      },
+      {
+        "type": "added",
+        "text": "The duo grid now says how far back each player's match history reaches. A pairing can only be spotted in a game that is inside both players' histories, and those start on different dates — so two people can have played together without it showing up here."
       }
     ]
   },

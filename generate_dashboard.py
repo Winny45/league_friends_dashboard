@@ -1729,6 +1729,30 @@ def render_duo_synergy_panel(friends):
     if not [r for r in rows if r["total"]["games"] >= 2]:
         return ""
 
+    # A pair can only be spotted in a game both players' histories cover, and
+    # Riot's incremental scraping leaves those histories starting on different
+    # dates. Saying so is the difference between "they never duo'd" and "we
+    # cannot see that far back for one of them".
+    starts = {}
+    for f in friends:
+        sm = f.get("seasonMatches") or []
+        if sm:
+            starts[f["label"]] = min(m["dateKey"] for m in sm if m.get("dateKey"))
+    coverage_note = ""
+    if len(set(starts.values())) > 1:
+        # Shallowest first: those are the histories actually constraining what
+        # can be seen, and a pair is limited by the later of its two dates.
+        listed = " &middot; ".join(
+            f'{esc(k)} <b>{esc(v)}</b>'
+            for k, v in sorted(starts.items(), key=lambda kv: kv[1], reverse=True))
+        coverage_note = (
+            '<p class="muted small" style="margin-top:10px;">A pairing only shows up in games '
+            "that are inside <em>both</em> players' match history, and those histories start on "
+            f'different dates: {listed}. Anything two players did together before the later of '
+            'their dates cannot be seen from here &mdash; '
+            '<code>python fetch_data.py --resync</code> re-lists everyone from the season start.</p>'
+        )
+
     by_pair = {tuple(sorted([r["a"], r["b"]])): r for r in rows}
     idx = {label: i for i, label in enumerate(players)}
 
@@ -1812,6 +1836,7 @@ def render_duo_synergy_panel(friends):
         </table>
       </div>
       <div class="duo-highlights" data-duo-highlights></div>
+      {coverage_note}
       <div class="duo-detail" data-duo-detail hidden></div>
       <details class="matches-details" style="margin-top:12px;">
         <summary>View as table</summary>
