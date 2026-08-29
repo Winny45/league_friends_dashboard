@@ -87,11 +87,15 @@ def snapshot_change_label(prev, curr):
         return f"{'+' if delta >= 0 else ''}{delta} LP"
     prev_score = tier_score(prev)
     curr_score = tier_score(curr)
-    if curr_score > prev_score:
-        return f"promoted to {rank_label(curr)}".replace("&middot;", "·")
-    if curr_score < prev_score:
-        return f"demoted to {rank_label(curr)}".replace("&middot;", "·")
-    return None
+    if curr_score == prev_score:
+        return None
+    # Ladder position is linear at 100 LP per division, so the distance across
+    # a promotion is a real LP count even though leaguePoints itself resets.
+    # Saying only "promoted to Emerald IV, 35 LP" left out how far they moved.
+    moved = ladder_lp(curr) - ladder_lp(prev)
+    word = "promoted" if curr_score > prev_score else "demoted"
+    # The rank itself is in the next column, so this says only how far.
+    return f"{'+' if moved >= 0 else '−'}{abs(moved)} LP, {word}"
 
 
 def net_change_label(first, last, window="30d"):
@@ -113,13 +117,18 @@ def net_change_label(first, last, window="30d"):
                 "direction": direction, "lp": delta, "moved": False}
     first_short = rank_label(first).split(" &middot;")[0]
     last_short = rank_label(last).split(" &middot;")[0]
+    moved_lp = ladder_lp(last) - ladder_lp(first)
     # A promotion resets leaguePoints, so the raw difference is meaningless
     # across one — but ladder position is linear (100 LP per division), so the
     # distance travelled is a real LP count even over a tier change. Callers
     # that want to show it read `lp`; `text` stays plain so the places that
     # escape it are unaffected.
-    return {"text": f"{first_short} → {last_short}", "direction": direction,
-            "lp": ladder_lp(last) - ladder_lp(first), "moved": True}
+    # `text` is the rank change alone and `lp` is the distance. Callers that
+    # want both put them together; baking the figure into the text made the
+    # week panel print it twice, once from the text and once from its own
+    # highlighted span.
+    return {"text": f"{first_short} → {last_short}",
+            "direction": direction, "lp": moved_lp, "moved": True}
 
 
 def tier_score(ranked_entry):
@@ -276,6 +285,11 @@ def set_duo_context(friends_sorted):
     _DUO_CTX["map"] = duo
 
 
+def party_size(match_id, label):
+    """How many tracked players were on this team, including this one."""
+    return 1 + len(_DUO_CTX["map"].get((match_id, label)) or [])
+
+
 def render_duo_mates(match_id, label):
     """The other tracked players in this game, or a dash."""
     mates = _DUO_CTX["map"].get((match_id, label))
@@ -290,7 +304,22 @@ def render_duo_mates(match_id, label):
 
 
 def signature_champion(friend):
-    """The champion someone is most known for: their highest mastery."""
+    """The champion someone is most known for *this season*.
+
+    Mastery is a lifetime score, so it kept showing a champion somebody has
+    not touched all split. Most games played this season is what people
+    actually recognise each other by.
+    """
+    counts = {}
+    for m in friend.get("seasonMatches", []):
+        if m.get("remake"):
+            continue
+        c = m.get("champion")
+        if c:
+            counts[c] = counts.get(c, 0) + 1
+    if counts:
+        # Ties break on the name so a rebuild cannot silently reshuffle faces.
+        return max(sorted(counts), key=lambda c: counts[c])
     mastery = friend.get("mastery") or []
     return mastery[0].get("championName") if mastery else None
 
@@ -758,7 +787,7 @@ def render_friend_card(f, rank_position, now):
     # image 404s, so a renamed or brand-new champion just means a plain card.
     # Cards other than the visible one are display:none, so the browser never
     # fetches six splashes nobody is looking at.
-    signature = (f.get("mastery") or [{}])[0].get("championName")
+    signature = signature_champion(f)
     splash = champion_splash_url(signature)
     card_art = (
         f'<div class="card-art" aria-hidden="true"><img src="{esc(splash)}" alt="" '
@@ -823,7 +852,7 @@ def render_friend_card(f, rank_position, now):
         </div>
       </div>
 
-      <div class="section-label">Top champions</div>
+      <div class="section-label">Highest mastery champions</div>
       <div class="chips">{mastery_html}</div>
 
       <details class="matches-details">
@@ -902,7 +931,7 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
     when every series really does end together.
     """
     label_groups = []
-    MIN_LABEL_GAP = 17   # one line of text plus breathing room
+    MIN_LABEL_GAP = 25   # name plus its movement line
     ICON_SIZE = 14
     label_entries.sort(key=lambda e: e["ly"])
     for idx, e in enumerate(label_entries):
@@ -910,14 +939,10 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
     for e in label_entries:
         var, lx, ly, draw_y = e["var"], e["lx"], e["ly"], e["draw_y"]
         anchor_x = gutter_x if gutter_x is not None else lx
+        # No leader line back to the point. Seven dashed diagonals crossing
+        # the plot were more clutter than the labels they were tying down, and
+        # the label already carries the line's colour and its rank emblem.
         parts = []
-        # Leader from the real end point across to the gutter. Drawn whenever
-        # the label isn't sitting essentially on top of its point.
-        if abs(draw_y - ly) > 3 or (gutter_x is not None and anchor_x - lx > 10):
-            parts.append(
-                f'<path d="M{lx + 4:.1f},{ly:.1f} L{anchor_x - 4:.1f},{draw_y:.1f}" fill="none" '
-                f'stroke="var({var})" stroke-width="1" stroke-dasharray="2,3" opacity="0.45" />'
-            )
         icon_url = rank_icon_url(e.get("tier"))
         text_x = anchor_x
         if icon_url:
@@ -930,9 +955,9 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
             f'<text x="{text_x:.1f}" y="{draw_y + 3:.1f}" font-size="11" font-weight="700" fill="var({var})">{esc(e["label"])}</text>'
         )
         if e["net"]:
-            net_color = "var(--good)" if e["net"]["direction"] > 0 else ("var(--critical)" if e["net"]["direction"] < 0 else "var(--muted)")
             parts.append(
-                f'<text x="{text_x:.1f}" y="{draw_y + 15:.1f}" font-size="10" fill="{net_color}">{esc(e["net"]["text"])}</text>'
+                f'<text x="{text_x:.1f}" y="{draw_y + 14:.1f}" font-size="9.5" '
+                f'fill="var(--muted)">{esc(e["net"]["text"])}</text>'
             )
         label_groups.append(f'<g id="{prefix}-label-{e["idx"]}">{"".join(parts)}</g>')
     return label_groups
@@ -1249,8 +1274,18 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                 # red the palette uses for two of the friends, so the colour
                 # stopped identifying anyone. The movement lives in the
                 # standings chip above the chart instead.
+                if tail and len(tl) > 1:
+                    d = tl[-1]["score"] - tl[0]["score"]
+                    net = {"text": f"{'+' if d >= 0 else '−'}{abs(d):.0f} LP over {len(tl) - 1}"}
+                else:
+                    n0 = net_labels[i]
+                    txt = n0["text"] if n0 else ""
+                    if n0 and n0.get("moved") and n0.get("lp") is not None:
+                        lp0 = n0["lp"]
+                        txt = f"{'+' if lp0 >= 0 else '−'}{abs(lp0)} LP, {txt}"
+                    net = {"text": txt} if txt else None
                 label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly,
-                                      "net": None, "tier": tiers[i]})
+                                      "net": net, "tier": tiers[i]})
 
         # Labels sit in the reserved right gutter, not at each line's own end:
         # lines finish at different x (someone with 12 games ends a third of
@@ -1301,7 +1336,8 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         # pushed "Emerald II → Emerald III · 24W 31L" past the right edge and
         # it rendered clipped. The record lives in the standings chip instead,
         # where there's room for it.
-        net_labels.append({"text": move_text, "direction": direction})
+        net_labels.append({"text": move_text, "direction": direction,
+                           "moved": False, "lp": None})
         tiers.append(hist[-1].get("tier"))
         standings.append({"var": friend_var(i), "label": f["label"], "tier": hist[-1].get("tier"),
                           "rankLabel": rank_label(hist[-1]), "games": games,
@@ -1404,8 +1440,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         p, m = e["point"], e["match"]
         move = lp_step_label(e["prevScore"], p["score"], p["delta"], p["exact"])
         cls = "up" if (p["delta"] or 0) >= 0 else "down"
+        party = party_size(m.get("matchId"), e["label"])
         return (
-            f'<tr>'
+            f'<tr class="{"party party-" + str(min(party, 5)) if party > 1 else ""}">'
             f'<td class="muted small nowrap">{esc(format_match_when(m))}</td>'
             f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b>'
             f'<span class="muted small"> &middot; game {esc(e["idx"])}</span></td>'
@@ -1439,6 +1476,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       {omitted_note}
       <details class="matches-details" style="margin-top:10px;">
         <summary>Every game, newest first</summary>
+        <p class="muted small" style="margin:8px 0 4px;">Games two or more of them played
+        together are banded down the left: blue for a pair, teal for a trio, gold for four
+        or five.</p>
         <table class="matches-table lp-table">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
@@ -1856,6 +1896,122 @@ def render_award(a):
 DUO_THIN_GAMES = 10
 
 
+def match_kda(m):
+    """A single game's KDA, counting a deathless game as if it were one death
+    so it stays a finite number that can be averaged."""
+    return ((m.get("kills") or 0) + (m.get("assists") or 0)) / max(m.get("deaths") or 0, 1)
+
+
+def _mean(xs):
+    return sum(xs) / len(xs) if xs else None
+
+
+def compute_kda_boost(friends):
+    """Whose game improves most in a pair.
+
+    For each player: their average KDA in the games they played on this pair's
+    team, against their average in every other game. Somebody carried by a
+    partner shows a large positive difference; the partner usually shows a
+    smaller one. Returns {(a, b): {"label", "delta", "with", "alone"}} for the
+    member who gains most.
+    """
+    own_all = {}
+    by_match = {}
+    for f in friends:
+        played = [m for m in f.get("seasonMatches", []) if not m.get("remake")]
+        own_all[f["label"]] = played
+        for m in played:
+            by_match.setdefault(m["matchId"], []).append((f["label"], m))
+
+    together = {}
+    for entries in by_match.values():
+        if len(entries) < 2:
+            continue
+        for i in range(len(entries)):
+            for j in range(i + 1, len(entries)):
+                (la, ma), (lb, mb) = entries[i], entries[j]
+                if bool(ma["win"]) != bool(mb["win"]):
+                    continue
+                key = tuple(sorted([la, lb]))
+                slot = together.setdefault(key, {})
+                slot.setdefault(la, []).append(ma)
+                slot.setdefault(lb, []).append(mb)
+
+    out = {}
+    for key, per in together.items():
+        best = None
+        for label, games in per.items():
+            if len(games) < DUO_THIN_GAMES:
+                continue
+            ids = {m["matchId"] for m in games}
+            apart = [m for m in own_all.get(label, []) if m["matchId"] not in ids]
+            if len(apart) < DUO_THIN_GAMES:
+                continue
+            with_kda = _mean([match_kda(m) for m in games])
+            alone_kda = _mean([match_kda(m) for m in apart])
+            delta = with_kda - alone_kda
+            if best is None or delta > best["delta"]:
+                best = {"label": label, "delta": round(delta, 2),
+                        "with": round(with_kda, 2), "alone": round(alone_kda, 2)}
+        if best:
+            out[key] = best
+    return out
+
+
+def compute_party_synergy(friends, min_size=3):
+    """Lineups of three or more who were on the same team.
+
+    Exact lineups, not every subset: a five stack is one row, not ten pairs
+    and ten trios. Solo/Duo cannot hold more than two premades, so in practice
+    everything here is Flex.
+    """
+    order = {f["label"]: i for i, f in enumerate(friends)}
+    own = {}
+    for f in friends:
+        played = [m for m in f.get("seasonMatches", []) if not m.get("remake")]
+        if played:
+            own[f["label"]] = 100 * sum(1 for m in played if m["win"]) / len(played)
+
+    by_match = {}
+    for f in friends:
+        for m in f.get("seasonMatches", []):
+            if m.get("remake"):
+                continue
+            by_match.setdefault(m["matchId"], []).append((f["label"], m))
+
+    groups = {}
+    for entries in by_match.values():
+        if len(entries) < min_size:
+            continue
+        for won in (True, False):
+            side = sorted((l for l, m in entries if bool(m["win"]) is won), key=lambda l: order[l])
+            if len(side) < min_size:
+                continue
+            m0 = next(m for l, m in entries if l == side[0])
+            g = groups.setdefault(tuple(side), {"games": 0, "wins": 0, "solo": 0, "flex": 0})
+            g["games"] += 1
+            if won:
+                g["wins"] += 1
+            g["solo" if m0.get("queue") == "Ranked Solo/Duo" else "flex"] += 1
+
+    rows = []
+    for members, g in groups.items():
+        winrate = round(100 * g["wins"] / g["games"], 1)
+        base = [own[x] for x in members if x in own]
+        baseline = round(sum(base) / len(base), 1) if base else None
+        rows.append({
+            "members": list(members),
+            "vars": [friend_var(min(order[x], len(FRIEND_PALETTE) - 1)) for x in members],
+            "size": len(members),
+            "games": g["games"], "wins": g["wins"], "losses": g["games"] - g["wins"],
+            "winrate": winrate, "solo": g["solo"], "flex": g["flex"],
+            "baseline": baseline,
+            "lift": round(winrate - baseline, 1) if baseline is not None else None,
+        })
+    rows.sort(key=lambda r: (-r["games"], -r["winrate"]))
+    return rows
+
+
 def render_duo_synergy_panel(friends):
     """A matrix, not a list of cards.
 
@@ -1940,17 +2096,13 @@ def render_duo_synergy_panel(friends):
         body.append(f'<tr><th scope="row"><span style="color:var({colour});">{esc(a)}</span></th>'
                     f'{"".join(cells)}</tr>')
 
-    # Ranked by synergy rather than by volume, but pairs too thin to mean
-    # anything sink to the bottom instead of topping the table on a lucky
-    # five games — otherwise "best pairing" is decided by the smallest sample.
+    # Sorting is the reader's job, so both tables ship every number as a data
+    # attribute and let the headers reorder them. The pair table opens
+    # alphabetically, which is the only order that does not assert something.
     SYN_FULL_SCALE = 15.0   # points of lift that fill half the bar
 
-    def table_order(r):
-        t = r["total"]
-        lift = t["lift"] if t["lift"] is not None else -999
-        return (0 if t["games"] >= DUO_THIN_GAMES else 1, -lift)
-
-    listed = sorted((r for r in rows if r["total"]["games"] >= 2), key=table_order)
+    boost = compute_kda_boost(friends)
+    parties = compute_party_synergy(friends)
 
     def syn_cell(t):
         if t["lift"] is None:
@@ -1964,9 +2116,28 @@ def render_duo_synergy_panel(friends):
                 f'<span class="syn-val">{sign}{abs(lift):.1f}</span>'
                 f'<span class="syn-bar"><i style="width:{width:.1f}%;"></i></span></td>')
 
+    def boost_cell(r):
+        b = boost.get(tuple(sorted([r["a"], r["b"]])))
+        if not b:
+            return '<td class="num muted">&ndash;</td>'
+        return (f'<td class="num boost" title="{esc(b["label"])} averages {b["with"]} KDA with '
+                f'this partner against {b["alone"]} otherwise">'
+                f'<b>{esc(b["label"])}</b> <span class="boost-val">+{b["delta"]:.2f}</span></td>')
+
+    def boost_value(r):
+        b = boost.get(tuple(sorted([r["a"], r["b"]])))
+        return b["delta"] if b else -999
+
+    listed = sorted((r for r in rows if r["total"]["games"] >= 2),
+                    key=lambda r: (r["a"].lower(), r["b"].lower()))
+
     table_rows = "".join(
-        f'<tr>'
-        f'<td class="num muted small">{i}</td>'
+        f'<tr data-pair="{esc(r["a"] + " & " + r["b"])}" '
+        f'data-syn="{r["total"]["lift"] if r["total"]["lift"] is not None else -999}" '
+        f'data-wr="{r["total"]["winrate"]}" data-games="{r["total"]["games"]}" '
+        f'data-solo="{r["solo"]["games"]}" data-flex="{r["flex"]["games"]}" '
+        f'data-boost="{boost_value(r)}">'
+        f'<td class="num muted small seq"></td>'
         f'<td class="duo-pair">'
         f'<span style="color:var({r["aVar"]});">{esc(r["a"])}</span>'
         f'<span class="duo-amp">&amp;</span>'
@@ -1978,9 +2149,57 @@ def render_duo_synergy_panel(friends):
         f'{" <span class=\'duo-thin\'>!</span>" if r["total"]["games"] < DUO_THIN_GAMES else ""}</td>'
         f'<td class="num muted">{r["solo"]["games"] or "&ndash;"}</td>'
         f'<td class="num muted">{r["flex"]["games"] or "&ndash;"}</td>'
+        f'{boost_cell(r)}'
         f'</tr>'
-        for i, r in enumerate(listed, 1)
+        for r in listed
     )
+
+    party_rows = "".join(
+        f'<tr data-lineup="{esc(" + ".join(r["members"]))}" '
+        f'data-size="{r["size"]}" '
+        f'data-syn="{r["lift"] if r["lift"] is not None else -999}" '
+        f'data-wr="{r["winrate"]}" data-games="{r["games"]}" '
+        f'data-solo="{r["solo"]}" data-flex="{r["flex"]}">'
+        f'<td class="num muted small seq"></td>'
+        f'<td class="duo-pair">'
+        + "".join(
+            f'<span style="color:var({v});">{esc(m)}</span>'
+            + ('<span class="duo-amp">+</span>' if k < r["size"] - 1 else '')
+            for k, (m, v) in enumerate(zip(r["members"], r["vars"]))
+        )
+        + f'</td>'
+        f'<td class="num muted">{r["size"]}</td>'
+        f'{syn_cell(r)}'
+        f'<td class="num"><b>{r["winrate"]}%</b></td>'
+        f'<td class="num muted">{r["wins"]}W {r["losses"]}L</td>'
+        f'<td class="num">{r["games"]}'
+        f'{" <span class=\'duo-thin\'>!</span>" if r["games"] < DUO_THIN_GAMES else ""}</td>'
+        f'<td class="num muted">{r["solo"] or "&ndash;"}</td>'
+        f'<td class="num muted">{r["flex"] or "&ndash;"}</td>'
+        f'</tr>'
+        for r in parties
+    )
+
+    party_table = ""
+    if parties:
+        party_table = f'''
+      <details class="matches-details duo-table-details" style="margin-top:12px;">
+        <summary>Trios and full stacks</summary>
+        <p class="muted small" style="margin:8px 0 4px;">Lineups of three or more on the same team,
+        counted as whole lineups rather than as every pair inside them. Solo/Duo only allows two
+        premades, so these are Flex. Click a heading to sort.</p>
+        <table class="matches-table duo-table" data-sortable>
+          <thead><tr><th class="num">#</th><th class="sortable" data-key="lineup">Lineup</th>
+          <th class="num sortable" data-key="size" data-numeric>Size</th>
+          <th class="num sortable" data-key="syn" data-numeric>Synergy</th>
+          <th class="num sortable" data-key="wr" data-numeric>Winrate</th>
+          <th class="num">Record</th>
+          <th class="num sortable sorted" data-key="games" data-numeric data-dir="desc">Games</th>
+          <th class="num sortable" data-key="solo" data-numeric>Solo</th>
+          <th class="num sortable" data-key="flex" data-numeric>Flex</th></tr></thead>
+          <tbody>{party_rows}</tbody>
+        </table>
+      </details>'''
 
     return f'''
     <div class="panel">
@@ -2012,18 +2231,26 @@ def render_duo_synergy_panel(friends):
       {coverage_note}
       <div class="duo-detail" data-duo-detail hidden></div>
       <details class="matches-details duo-table-details" style="margin-top:12px;">
-        <summary>Every pair, ranked by synergy</summary>
-        <p class="muted small" style="margin:8px 0 4px;">Synergy is how far a pair's winrate together
-        beats how often those two win apart. Pairs with fewer than {DUO_THIN_GAMES} games are marked
-        and sorted to the bottom, since a handful of games can produce any number.</p>
-        <table class="matches-table duo-table">
-          <thead><tr><th class="num">#</th><th>Pair</th><th class="num">Synergy</th>
-          <th class="num">Winrate</th><th class="num">Record</th><th class="num">Games</th>
-          <th class="num">Solo</th><th class="num">Flex</th></tr></thead>
+        <summary>Every pair</summary>
+        <p class="muted small" style="margin:8px 0 4px;">Every pair who played together, listed
+        alphabetically. Click a heading to sort by it: synergy is how far their winrate together
+        beats how often those two win apart, and boost is whose own KDA improves most alongside the
+        other. Pairs with fewer than {DUO_THIN_GAMES} games are marked, since a handful of games can
+        produce any number.</p>
+        <table class="matches-table duo-table" data-sortable>
+          <thead><tr><th class="num">#</th>
+          <th class="sortable sorted" data-key="pair" data-dir="asc">Pair</th>
+          <th class="num sortable" data-key="syn" data-numeric>Synergy</th>
+          <th class="num sortable" data-key="wr" data-numeric>Winrate</th>
+          <th class="num">Record</th>
+          <th class="num sortable" data-key="games" data-numeric>Games</th>
+          <th class="num sortable" data-key="solo" data-numeric>Solo</th>
+          <th class="num sortable" data-key="flex" data-numeric>Flex</th>
+          <th class="num sortable" data-key="boost" data-numeric>Boost</th></tr></thead>
           <tbody>{table_rows}</tbody>
         </table>
       </details>
-    </div>'''
+      {party_table}</div>'''
 
 
 def render_week_glance_panel(friends_sorted, awards, rank_history, now):
@@ -2054,6 +2281,32 @@ def render_week_glance_panel(friends_sorted, awards, rank_history, now):
     if best_week:
         f, mins, games = best_week
         tiles.append(("⏱️", "Most active", f"{esc(f['label'])} played {format_minutes(mins)} across {games} games this week."))
+
+    # Who is on the best run right now, and how much of the week was spent
+    # queuing together rather than alone.
+    week_cut = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    best_form = None
+    together = 0
+    seen_shared = set()
+    for f in friends_sorted:
+        wk = [m for m in f.get("seasonMatches", [])
+              if not m.get("remake") and (m.get("dateKey") or "") >= week_cut]
+        for m in wk:
+            if party_size(m.get("matchId"), f["label"]) > 1:
+                seen_shared.add(m.get("matchId"))
+        if len(wk) >= 5:
+            wins = sum(1 for m in wk if m["win"])
+            rate = 100 * wins / len(wk)
+            if best_form is None or rate > best_form[1]:
+                best_form = (f["label"], rate, wins, len(wk) - wins)
+    if best_form:
+        tiles.append(("\U0001f525", "Hottest streak",
+                      f"{esc(best_form[0])} is winning <strong>{best_form[1]:.0f}%</strong> "
+                      f"this week, {best_form[2]}W {best_form[3]}L."))
+    if seen_shared:
+        tiles.append(("\U0001f465", "Played together",
+                      f"<strong>{len(seen_shared)}</strong> of this week's games had two or more "
+                      f"of them on the same team."))
 
     climber = weekly_rank_leader(rank_history, now)
     if climber and climber.get("text"):
@@ -2488,7 +2741,7 @@ window.LpChart = (function () {
   // end point: lines finish at different x, so anchoring each label to its own
   // line put them on top of the plot and each other.
   function endLabelGroups(entries, prefix, gutterX) {
-    var MIN_LABEL_GAP = 17, ICON_SIZE = 14, out = [];
+    var MIN_LABEL_GAP = 25, ICON_SIZE = 14, out = [];
     entries.sort(function (a, b) { return a.ly - b.ly; });
     entries.forEach(function (e, i) {
       e.drawY = i === 0 ? e.ly : Math.max(e.ly, entries[i - 1].drawY + MIN_LABEL_GAP);
@@ -2496,11 +2749,7 @@ window.LpChart = (function () {
     entries.forEach(function (e) {
       var anchorX = gutterX === null ? e.lx : gutterX;
       var parts = [];
-      if (Math.abs(e.drawY - e.ly) > 3 || (gutterX !== null && anchorX - e.lx > 10)) {
-        parts.push('<path d="M' + fixed(e.lx + 4, 1) + ',' + fixed(e.ly, 1) + ' L' +
-          fixed(anchorX - 4, 1) + ',' + fixed(e.drawY, 1) + '" fill="none" stroke="var(' +
-          e.varName + ')" stroke-width="1" stroke-dasharray="2,3" opacity="0.45" />');
-      }
+      // No leader line; see the note in end_label_groups().
       var textX = anchorX;
       if (e.tier) {
         var url = D.rankIconBase.replace('{tier}', e.tier.toLowerCase());
@@ -2512,10 +2761,8 @@ window.LpChart = (function () {
       parts.push('<text x="' + fixed(textX, 1) + '" y="' + fixed(e.drawY + 3, 1) +
         '" font-size="11" font-weight="700" fill="var(' + e.varName + ')">' + esc(e.label) + '</text>');
       if (e.net) {
-        var c = e.net.direction > 0 ? 'var(--good)'
-              : (e.net.direction < 0 ? 'var(--critical)' : 'var(--muted)');
-        parts.push('<text x="' + fixed(textX, 1) + '" y="' + fixed(e.drawY + 15, 1) +
-          '" font-size="10" fill="' + c + '">' + esc(e.net.text) + '</text>');
+        parts.push('<text x="' + fixed(textX, 1) + '" y="' + fixed(e.drawY + 14, 1) +
+          '" font-size="9.5" fill="var(--muted)">' + esc(e.net.text) + '</text>');
       }
       out.push('<g id="' + prefix + '-label-' + e.idx + '">' + parts.join('') + '</g>');
     });
@@ -2638,9 +2885,16 @@ window.LpChart = (function () {
 
       if (!compact) {
         var last = coords[coords.length - 1];
-        // Name only; see the note in render_lp_chart().
+        var net;
+        if (tail && tl.length > 1) {
+          var dd = tl[tl.length - 1].score - tl[0].score;
+          net = { text: (dd >= 0 ? '+' : '\u2212') + fixed(Math.abs(dd), 0) +
+                        ' LP over ' + (tl.length - 1) };
+        } else {
+          net = state.netLabels[fi];
+        }
         labelEntries.push({ idx: fi, varName: varName, label: f.label,
-                            lx: last[0], ly: last[1], net: null, tier: state.tiers[fi] });
+                            lx: last[0], ly: last[1], net: net, tier: state.tiers[fi] });
       }
     });
 
@@ -2682,7 +2936,9 @@ window.LpChart = (function () {
         var lp = (last.leaguePoints || 0) - (first.leaguePoints || 0);
         moveText = (lp >= 0 ? '+' : '\u2212') + Math.abs(lp) + ' LP';
       } else {
-        moveText = rankName(first) + ' \u2192 ' + rankName(last);
+        var mv = ladderLp(last) - ladderLp(first);
+        moveText = (mv >= 0 ? '+' : '\u2212') + Math.abs(mv) + ' LP, ' +
+                   rankName(first) + ' \u2192 ' + rankName(last);
       }
       netLabels.push({ text: moveText, direction: netLp > 0 ? 1 : (netLp < 0 ? -1 : 0) });
       tiers.push(last.tier);
@@ -3036,8 +3292,7 @@ def build_html(data):
 <meta name="description" content="{esc(share_desc)}">
 <link rel="icon" href="{favicon_data_uri()}">
 <link rel="apple-touch-icon" href="icon-180.png">
-<meta name="theme-color" content="#eceff5" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#090a0e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#090a0e">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="League Friends Dashboard">
 <meta property="og:title" content="League Friends Dashboard">
@@ -3046,63 +3301,10 @@ def build_html(data):
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* One theme. The light one existed because the browser asked for it, not
+     because anyone wanted it here; keeping both meant every colour had two
+     values and every new rule two chances to be wrong. */
   :root {{
-    color-scheme: light;
-    --surface-1: #ffffff;
-    --surface-2: #f3f5f9;
-    --page: #eceff5;
-    --text-primary: #0d1117;
-    --text-secondary: #4c5566;
-    --muted: #8a93a4;
-    --gridline: #e3e7ee;
-    --border: rgba(13,17,23,0.10);
-    --accent: #2f6feb;
-    --accent-2: #00b3a4;
-    --gold: #c9971f;
-    --silver: #7f8b9e;
-    --bronze: #b0713f;
-    --series-1: #2a78d6;
-    --series-2: #eb6834;
-    --good: #10a152;
-    --critical: #d03b3b;
-    --shadow-sm: 0 1px 2px rgba(13,17,23,0.05), 0 1px 3px rgba(13,17,23,0.04);
-    --shadow-md: 0 4px 14px rgba(13,17,23,0.07);
-    --shadow-lg: 0 14px 36px rgba(13,17,23,0.11);
-    --radius: 14px;
-    --radius-sm: 10px;
-    --halo: rgba(47,111,235,0.10);
-    {tier_vars_light}
-    {friend_vars_light}
-  }}
-  @media (prefers-color-scheme: dark) {{
-    :root:not([data-theme="light"]) {{
-      color-scheme: dark;
-      --surface-1: #14161d;
-      --surface-2: #1b1f28;
-      --page: #090a0e;
-      --text-primary: #f1f3f7;
-      --text-secondary: #b4bbc9;
-      --muted: #7c8698;
-      --gridline: #262b35;
-      --border: rgba(255,255,255,0.09);
-      --accent: #4c8dff;
-      --accent-2: #17d3c1;
-      --gold: #e6c15c;
-      --silver: #a7b1c1;
-      --bronze: #cc8a5b;
-      --series-1: #4c8dff;
-      --series-2: #ff7a45;
-      --good: #2ecc71;
-      --critical: #ff5f5f;
-      --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
-      --shadow-md: 0 6px 18px rgba(0,0,0,0.45);
-      --shadow-lg: 0 18px 44px rgba(0,0,0,0.55);
-      --halo: rgba(76,141,255,0.16);
-      {tier_vars_dark}
-      {friend_vars_dark}
-    }}
-  }}
-  :root[data-theme="dark"] {{
     color-scheme: dark;
     --surface-1: #14161d;
     --surface-2: #1b1f28;
@@ -3124,10 +3326,13 @@ def build_html(data):
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
     --shadow-md: 0 6px 18px rgba(0,0,0,0.45);
     --shadow-lg: 0 18px 44px rgba(0,0,0,0.55);
+    --radius: 14px;
+    --radius-sm: 10px;
     --halo: rgba(76,141,255,0.16);
     {tier_vars_dark}
     {friend_vars_dark}
   }}
+
   * {{ box-sizing: border-box; }}
   html {{ scroll-behavior: smooth; }}
   ::selection {{ background: color-mix(in srgb, var(--accent) 28%, transparent); }}
@@ -3192,7 +3397,6 @@ def build_html(data):
      where four buttons no longer fit across 375px. */
   .btn-short {{ display: none; }}
   .hbtn:disabled {{ opacity: .55; cursor: not-allowed; transform: none; }}
-  #theme-toggle {{ width: 40px; font-size: 17px; padding: 0; }}
   .hbtn:hover:not(:disabled) {{ transform: translateY(-1px); box-shadow: var(--shadow-md); background: var(--surface-2); }}
   .hbtn:active:not(:disabled) {{ transform: translateY(0); }}
   /* The header is one real action plus utilities, so only the action is
@@ -3541,6 +3745,13 @@ def build_html(data):
   .duo-table .duo-pair {{ font-weight: 700; white-space: nowrap; }}
   .duo-table .duo-pair .duo-amp {{ margin: 0 5px; }}
   .duo-table tbody tr:hover {{ background: var(--surface-2); }}
+  th.sortable {{ cursor: pointer; user-select: none; white-space: nowrap; }}
+  th.sortable:hover {{ color: var(--text-primary); }}
+  th.sortable::after {{ content: "95"; opacity: .3; margin-left: 4px; font-size: 10px; }}
+  th.sortable.sorted {{ color: var(--accent); }}
+  th.sortable.sorted::after {{ content: "BE"; opacity: 1; }}
+  th.sortable.sorted[data-dir="asc"]::after {{ content: "B4"; }}
+  .boost-val {{ color: var(--good); font-weight: 700; }}
   .syn {{ min-width: 96px; }}
   .syn-val {{ display: block; font-weight: 700; font-variant-numeric: tabular-nums; }}
   .syn.up .syn-val {{ color: var(--good); }}
@@ -3579,6 +3790,19 @@ def build_html(data):
   .lp-table .lp-move.up {{ color: var(--good); font-weight: 700; }}
   .lp-table .lp-move.down {{ color: var(--critical); font-weight: 700; }}
   .lp-table tbody tr:hover, .daily-table tbody tr:hover {{ background: var(--surface-2); }}
+  /* Games two or more of them were in together. The rows are already next to
+     each other because the table is ordered by time; the band ties them into
+     one game rather than leaving them as rows sharing a timestamp. */
+  .lp-table tr.party td {{ background: color-mix(in srgb, var(--accent) 7%, transparent); }}
+  .lp-table tr.party td:first-child {{ box-shadow: inset 3px 0 0 var(--accent); }}
+  .lp-table tr.party-3 td {{ background: color-mix(in srgb, var(--accent-2) 9%, transparent); }}
+  .lp-table tr.party-3 td:first-child {{ box-shadow: inset 3px 0 0 var(--accent-2); }}
+  .lp-table tr.party-4 td, .lp-table tr.party-5 td {{
+    background: color-mix(in srgb, var(--gold) 11%, transparent);
+  }}
+  .lp-table tr.party-4 td:first-child, .lp-table tr.party-5 td:first-child {{
+    box-shadow: inset 3px 0 0 var(--gold);
+  }}
   /* Not display:flex · on a <td> that removes the cell from the table's
      column layout, so it collapses to zero width and the emblem disappears.
      The same mistake is documented on td.rank-cell above. */
@@ -3988,7 +4212,7 @@ def build_html(data):
     .range-btn {{ padding: 11px 18px; min-height: 40px; font-size: 13px; }}
     .pill {{ padding: 10px 16px; min-height: 40px; }}
     .hbtn {{ height: 42px; padding: 0 11px; font-size: 12.5px; }}
-    #theme-toggle, #patch-notes {{ padding: 0; }}
+    #patch-notes {{ padding: 0; }}
     .btn-long {{ display: none; }}
     .btn-short {{ display: inline; }}
     /* "Forget saved key" beside two half-width buttons overflowed the row,
@@ -4063,7 +4287,6 @@ def build_html(data):
         <button id="set-key" class="hbtn hosted-only" type="button" hidden title="Update the Riot API key stored on the server, used by Refresh data">🔑 Server key</button>
         <button id="export-csv" class="hbtn" type="button" title="Download this season's match data as a CSV">⬇ <span class="btn-long">Export CSV</span><span class="btn-short">CSV</span></button>
         {'<button id="patch-notes" class="hbtn" type="button" title="What&#39;s new on this dashboard" aria-label="What&#39;s new on this dashboard">✨<span class="note-dot" id="note-dot" hidden></span></button>' if notes_html else ""}
-        <button id="theme-toggle" class="hbtn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
       </div>
     </header>
 
@@ -4210,25 +4433,6 @@ def build_html(data):
 
   <script>
     (function () {{
-      var root = document.documentElement;
-      var btn = document.getElementById('theme-toggle');
-      function isDarkNow() {{
-        var explicit = root.getAttribute('data-theme');
-        if (explicit === 'dark') return true;
-        if (explicit === 'light') return false;
-        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      }}
-      function sync() {{ btn.textContent = isDarkNow() ? '☀️' : '🌙'; }}
-      btn.addEventListener('click', function () {{
-        root.setAttribute('data-theme', isDarkNow() ? 'light' : 'dark');
-        sync();
-      }});
-      sync();
-    }})();
-  </script>
-
-  <script>
-    (function () {{
       var btn = document.getElementById('export-csv');
       if (!btn) return;
       btn.addEventListener('click', function () {{
@@ -4254,6 +4458,59 @@ def build_html(data):
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
+      }});
+    }})();
+  </script>
+
+  <script>
+    // Click a heading to sort. Applies to any table marked data-sortable whose
+    // rows carry the values as data attributes, so the numbers a column sorts
+    // on are the ones the build produced rather than parsed back out of text.
+    (function () {{
+      function renumber(t) {{
+        var n = 1;
+        [].slice.call(t.tBodies[0].rows).forEach(function (r) {{
+          var seq = r.querySelector('.seq');
+          if (seq) seq.textContent = n++;
+        }});
+      }}
+      document.querySelectorAll('table[data-sortable]').forEach(function (t) {{
+        renumber(t);
+        t.querySelectorAll('th[data-key]').forEach(function (th) {{
+          th.setAttribute('tabindex', '0');
+          function run() {{
+            var key = th.getAttribute('data-key');
+            var numeric = th.hasAttribute('data-numeric');
+            // First click on a column: numbers open biggest first, names A to Z.
+            var dir = th.getAttribute('data-dir');
+            var desc = dir ? dir !== 'desc' : numeric;
+            t.querySelectorAll('th[data-key]').forEach(function (o) {{
+              o.removeAttribute('data-dir');
+              o.classList.remove('sorted');
+            }});
+            th.setAttribute('data-dir', desc ? 'desc' : 'asc');
+            th.classList.add('sorted');
+            var body = t.tBodies[0];
+            var rows = [].slice.call(body.rows);
+            rows.sort(function (a, b) {{
+              var x = a.getAttribute('data-' + key), y = b.getAttribute('data-' + key);
+              if (numeric) {{
+                x = parseFloat(x); y = parseFloat(y);
+                if (isNaN(x)) x = -Infinity;
+                if (isNaN(y)) y = -Infinity;
+                return desc ? y - x : x - y;
+              }}
+              return desc ? String(y).localeCompare(String(x))
+                          : String(x).localeCompare(String(y));
+            }});
+            rows.forEach(function (r) {{ body.appendChild(r); }});
+            renumber(t);
+          }}
+          th.addEventListener('click', run);
+          th.addEventListener('keydown', function (e) {{
+            if (e.key === 'Enter' || e.key === ' ') {{ e.preventDefault(); run(); }}
+          }});
+        }});
       }});
     }})();
   </script>
