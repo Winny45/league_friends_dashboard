@@ -4569,6 +4569,15 @@ def build_html(data):
         try {{ return localStorage.getItem(KEY_STORE) || ''; }} catch (e) {{ return ''; }}
       }}
       function currentKey() {{ return sessionKey || storedKey(); }}
+
+      // Another tab saving a key must not leave this one using the old one.
+      // sessionKey is preferred over storage (so "don't remember" works for
+      // the visit), which means a tab opened earlier would otherwise keep
+      // its stale copy forever and keep reporting the key as rejected even
+      // though a fresh one had just been entered next door.
+      window.addEventListener('storage', function (e) {{
+        if (e.key === KEY_STORE) sessionKey = e.newValue || '';
+      }});
       function saveKey(key, remember) {{
         sessionKey = key;
         try {{
