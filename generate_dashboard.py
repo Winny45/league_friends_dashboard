@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_dashboard.py — reads data.json (produced by fetch_data.py, or the
+generate_dashboard.py · reads data.json (produced by fetch_data.py, or the
 bundled demo data) and renders a single self-contained dashboard.html you
 can open in any browser.
 
@@ -48,14 +48,18 @@ DEFAULT_TIER_COLOR = {"light": "#898781", "dark": "#898781"}
 # regardless of what rank that friend happens to be. Fixed order, validated
 # categorical hues — never reassign/cycle these per-render.
 FRIEND_PALETTE = [
+    # Deliberately no green and no red. Those two mean "won" and "lost"
+    # everywhere else on the page, so a player whose identity colour was green
+    # sat in a table row beside a green "+22 LP" and the colour stopped saying
+    # which of the two it meant.
     {"light": "#2a78d6", "dark": "#3987e5"},  # blue
-    {"light": "#eb6834", "dark": "#d95926"},  # orange
-    {"light": "#1baf7a", "dark": "#199e70"},  # aqua
-    {"light": "#eda100", "dark": "#c98500"},  # yellow
-    {"light": "#e87ba4", "dark": "#d55181"},  # magenta
-    {"light": "#008300", "dark": "#008300"},  # green
-    {"light": "#4a3aa7", "dark": "#9085e9"},  # violet
-    {"light": "#e34948", "dark": "#e66767"},  # red
+    {"light": "#a8730a", "dark": "#e0a030"},  # amber
+    {"light": "#0e8ea6", "dark": "#2ec4de"},  # cyan
+    {"light": "#b83a68", "dark": "#e0699a"},  # pink
+    {"light": "#5a49b8", "dark": "#9085e9"},  # violet
+    {"light": "#96522a", "dark": "#c4753c"},  # copper
+    {"light": "#4f7a95", "dark": "#8bb0c9"},  # steel
+    {"light": "#8a4fb0", "dark": "#b884d8"},  # orchid
 ]
 
 
@@ -70,7 +74,7 @@ def _rank_snapshot_key(h):
 
 def snapshot_change_label(prev, curr):
     """What changed between two consecutive rank snapshots. Raw League
-    Points only mean the same thing when tier and division haven't moved —
+    Points only mean the same thing when tier and division haven't moved –
     a promotion resets LP, so a naive point-to-point subtraction across a
     promotion would misreport a huge LP swing that didn't really happen.
     So: same tier+division -> real LP delta; otherwise -> promoted/demoted."""
@@ -96,7 +100,7 @@ def net_change_label(first, last, window="30d"):
     net LP number; otherwise a compact 'was -> now' since raw LP isn't
     comparable across a promotion/demotion.
 
-    `window` only names the period in the text — callers measuring a
+    `window` only names the period in the text · callers measuring a
     different span must say so, or the label contradicts its own column
     header (the leaderboard's 7-day trend used to read "(30d)")."""
     first_score, last_score = tier_score(first), tier_score(last)
@@ -209,7 +213,7 @@ def set_platform(platform):
 
 def external_profile_links(riot_id):
     """[(site name, url)] for one "Name#TAG" Riot ID, or [] if it cannot be
-    built — an ID with no tag, or a region none of the sites are mapped for."""
+    built · an ID with no tag, or a region none of the sites are mapped for."""
     if not riot_id or "#" not in riot_id:
         return []
     name, tag = riot_id.split("#", 1)
@@ -285,6 +289,29 @@ def render_duo_mates(match_id, label):
             f'<span class="duo-with-icon" aria-hidden="true">\u21c4</span>{names}</span>')
 
 
+def signature_champion(friend):
+    """The champion someone is most known for: their highest mastery."""
+    mastery = friend.get("mastery") or []
+    return mastery[0].get("championName") if mastery else None
+
+
+def render_avatar(friend, size=34):
+    """A friend's face on the page: their most mastered champion.
+
+    Falls back to their initial when there is no mastery data or Data Dragon
+    has no icon, so the slot is never empty and never a broken image.
+    """
+    champ = signature_champion(friend)
+    url = champion_icon_url(champ) if champ else None
+    initial = esc((friend.get("label") or "?")[:1].upper())
+    if not url:
+        return (f'<span class="avatar avatar-fallback" style="width:{size}px;height:{size}px;"'
+                f' aria-hidden="true">{initial}</span>')
+    return (f'<img class="avatar" src="{esc(url)}" alt="" width="{size}" height="{size}" '
+            f'loading="lazy" title="{esc(champ)}" '
+            f'onerror="this.classList.add(&#39;broken&#39;)">')
+
+
 def champion_splash_url(champion_name):
     """Data Dragon splash art for a champion, used as the wash behind a
     friend's card. Unlike the square icons this path carries no patch
@@ -298,7 +325,7 @@ def champion_splash_url(champion_name):
 def render_champion_icon(champion_name, size=20):
     """An <img> for a champion icon that quietly goes invisible (rather
     than showing a broken-image glyph) if the URL 404s or the browser has
-    no internet — the champion name text next to it already carries the
+    no internet · the champion name text next to it already carries the
     meaning on its own. Uses visibility:hidden rather than display:none so
     the icon's box keeps its space; a table of champion rows where only
     some icons load stays aligned instead of each failed row's text
@@ -359,7 +386,7 @@ def parse_match_dt(m):
 def format_match_when(m):
     dt = parse_match_dt(m)
     if not dt:
-        return "—"
+        return "–"
     hour12 = dt.strftime("%I").lstrip("0") or "12"
     return f'{dt.strftime("%b %d")}, {hour12}{dt.strftime(":%M %p")}'
 
@@ -378,7 +405,7 @@ def format_day_label(date_key):
     try:
         dt = datetime.strptime(date_key, "%Y-%m-%d")
     except (ValueError, TypeError):
-        return date_key or "—"
+        return date_key or "–"
     return dt.strftime("%a, %b %d")
 
 
@@ -429,7 +456,7 @@ def champion_breakdown(season_matches):
 def nemesis_champion(season_matches):
     """The enemy champion (same role, opposing team) a friend has lost to
     most often this season. Needs at least 2 losses to the same champion to
-    surface — otherwise it's just noise from a single bad game."""
+    surface · otherwise it's just noise from a single bad game."""
     losses_vs = {}
     for m in season_matches:
         opp = m.get("opponentChampion")
@@ -468,12 +495,12 @@ def compute_duo_synergy(friends):
     """For every pair of friends who were teammates in the same ranked
     game at least twice this season, their combined winrate playing
     together. Detected purely from overlap across friends' own season match
-    lists — no extra API calls needed.
+    lists · no extra API calls needed.
 
     Teammates are identified by matchId plus a matching result, not by
     teamId. League has no draws and a match has exactly two teams, so two
     players in the same game share a team if and only if they share an
-    outcome — the two tests are equivalent. teamId is only present on records
+    outcome · the two tests are equivalent. teamId is only present on records
     summarised after it was added to fetch_data.py, which is about 9% of the
     cache, and requiring it silently hid most of this panel: Brett and Winny
     showed 6 games together out of 130, and ten pairs did not appear at all.
@@ -494,7 +521,7 @@ def compute_duo_synergy(friends):
                 fa, ma = entries[i]
                 fb, mb = entries[j]
                 if ma["win"] != mb["win"]:
-                    continue  # same lobby, opposite teams — not a duo
+                    continue  # same lobby, opposite teams · not a duo
                 key = tuple(sorted([fa["label"], fb["label"]]))
                 stats = pair_stats.setdefault(key, {q: {"games": 0, "wins": 0}
                                                      for q in ("total", "solo", "flex")})
@@ -550,7 +577,7 @@ def compute_duo_synergy(friends):
 
 
 def weekly_trend_for(rank_history, label, now):
-    """Same net-change logic as weekly_rank_leader, scoped to one friend —
+    """Same net-change logic as weekly_rank_leader, scoped to one friend –
     powers the ▲/▼ trend arrow on each leaderboard row."""
     cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
     pts = sorted(
@@ -603,7 +630,7 @@ def winrate_bar(pct, color):
 def render_match_dot(m):
     cls = "win" if m["win"] else "loss"
     when = format_match_when(m)
-    title = f"{when} — {m['champion']} — {'Win' if m['win'] else 'Loss'} — {m['kills']}/{m['deaths']}/{m['assists']} KDA {m['kda']}"
+    title = f"{when} · {m['champion']} · {'Win' if m['win'] else 'Loss'} · {m['kills']}/{m['deaths']}/{m['assists']} KDA {m['kda']}"
     return f'<span class="dot {cls}" title="{esc(title)}"></span>'
 
 
@@ -636,7 +663,7 @@ def render_match_row(m, friend_label=""):
 
 def render_peak_badge(current, peak):
     """Small 'Peak: X' note next to a rank row when the season peak is
-    strictly better than the current rank — omitted otherwise (current
+    strictly better than the current rank · omitted otherwise (current
     rank already tells the whole story if it's the season high)."""
     if not peak or not peak.get("tier"):
         return ""
@@ -646,7 +673,7 @@ def render_peak_badge(current, peak):
 
 
 def render_fresh_badge(entry):
-    """Flags a friend sitting at low LP in their current division — likely
+    """Flags a friend sitting at low LP in their current division · likely
     just landed there (promoted/demoted recently or on a fresh climb),
     worth a quick visual note. Not the same as the old 'promo series'
     concept, which modern ranked no longer has below Master."""
@@ -655,7 +682,7 @@ def render_fresh_badge(entry):
     if entry["tier"] in APEX_TIERS:
         return ""
     if entry["leaguePoints"] <= 20:
-        return '<span class="badge-fresh" title="Low LP in this division — recently promoted, demoted, or just starting the climb">Fresh</span>'
+        return '<span class="badge-fresh" title="Low LP in this division · recently promoted, demoted, or just starting the climb">Fresh</span>'
     return ""
 
 
@@ -706,7 +733,7 @@ def render_friend_card(f, rank_position, now):
 
     weekly_min, weekly_games = weekly_playtime(season_matches, now)
     busiest_date, busiest_count = busiest_day(season_matches)
-    busiest_label = format_day_label(busiest_date) if busiest_date else "—"
+    busiest_label = format_day_label(busiest_date) if busiest_date else "–"
     season_games = len(season_matches)
     season_hours = format_minutes(sum(m.get("durationMin", 0) for m in season_matches))
 
@@ -745,7 +772,8 @@ def render_friend_card(f, rank_position, now):
       {card_art}
       <header class="card-head">
         <div class="rank-crest">
-          {render_rank_icon((solo or {}).get("tier"), size=44)}
+          {render_avatar(f, size=44)}
+          {render_rank_icon((solo or {}).get("tier"), size=26)}
           <span class="rank-badge">#{rank_position}</span>
         </div>
         <div>
@@ -761,13 +789,13 @@ def render_friend_card(f, rank_position, now):
           <span class="rank-label rank-cell" style="color:var({solo_var})">{render_rank_icon((solo or {}).get("tier"), size=22)}{rank_label(solo)}</span>
           <span class="muted small">Solo/Duo</span>
           {winrate_bar(solo_wr, "var(--series-1)")}
-          <span class="wr-text">{esc(solo_wr) + '%' if solo_wr is not None else '—'} ({esc((solo or {}).get('wins', 0))}W {esc((solo or {}).get('losses', 0))}L)</span>
+          <span class="wr-text">{esc(solo_wr) + '%' if solo_wr is not None else '–'} ({esc((solo or {}).get('wins', 0))}W {esc((solo or {}).get('losses', 0))}L)</span>
         </div>
         <div class="rank-row">
           <span class="rank-label rank-cell" style="color:var({flex_var})">{render_rank_icon((flex or {}).get("tier"), size=22)}{rank_label(flex)}</span>
           <span class="muted small">Flex</span>
           {winrate_bar(flex_wr, "var(--series-2)")}
-          <span class="wr-text">{esc(flex_wr) + '%' if flex_wr is not None else '—'} ({esc((flex or {}).get('wins', 0))}W {esc((flex or {}).get('losses', 0))}L)</span>
+          <span class="wr-text">{esc(flex_wr) + '%' if flex_wr is not None else '–'} ({esc((flex or {}).get('wins', 0))}W {esc((flex or {}).get('losses', 0))}L)</span>
         </div>
         {f'<div class="muted small">{solo_fresh_badge}{solo_peak_badge}{flex_peak_badge}</div>' if (solo_fresh_badge or solo_peak_badge or flex_peak_badge) else ""}
       </div>
@@ -782,8 +810,8 @@ def render_friend_card(f, rank_position, now):
           <div class="stat-label">Played this week ({weekly_games} games)</div>
         </div>
         <div class="stat-tile">
-          <div class="stat-value">{busiest_count if busiest_date else "—"}</div>
-          <div class="stat-label">Busiest day{f" — {busiest_label}" if busiest_date else ""}</div>
+          <div class="stat-value">{busiest_count if busiest_date else "–"}</div>
+          <div class="stat-label">Busiest day{f" · {busiest_label}" if busiest_date else ""}</div>
         </div>
         <div class="stat-tile">
           <div class="stat-value">{season_games}</div>
@@ -819,16 +847,16 @@ def render_friend_card(f, rank_position, now):
 
 
 def render_trend_arrow(trend):
-    """▲/▼/— since 7 days ago, for the leaderboard. `trend` is a
+    """▲/▼/– since 7 days ago, for the leaderboard. `trend` is a
     net_change_label()-style dict (direction + text) or None if there's
     not enough history yet to compare."""
     if not trend:
-        return '<span class="muted small">—</span>'
+        return '<span class="muted small">–</span>'
     if trend["direction"] > 0:
         return f'<span class="small" style="color:var(--good);">▲ {esc(trend["text"])}</span>'
     if trend["direction"] < 0:
         return f'<span class="small" style="color:var(--critical);">▼ {esc(trend["text"])}</span>'
-    return '<span class="muted small">—</span>'
+    return '<span class="muted small">–</span>'
 
 
 def render_leaderboard_row(f, i, trend=None):
@@ -841,9 +869,9 @@ def render_leaderboard_row(f, i, trend=None):
     # cells in place without re-rendering the page.
     return f'''<tr data-friend-row="{esc(f["label"])}">
       <td class="num"><span class="{pos_cls}">{i}</span></td>
-      <td><a href="#friends/{f["label"].lower()}" data-friend-link="{f["label"].lower()}">{esc(f["label"])}</a></td>
+      <td class="lb-name">{render_avatar(f, size=24)}<a href="#friends/{f["label"].lower()}" data-friend-link="{f["label"].lower()}">{esc(f["label"])}</a></td>
       <td class="rank-cell" data-cell="rank" style="color:var({var});font-weight:600;">{render_rank_icon((solo or {}).get("tier"))}{rank_label(solo)}</td>
-      <td class="num" data-cell="winrate">{esc(wr) + '%' if wr is not None else '—'}</td>
+      <td class="num" data-cell="winrate">{esc(wr) + '%' if wr is not None else '–'}</td>
       <td class="num muted" data-cell="record">{esc((solo or {}).get('wins', 0))}W / {esc((solo or {}).get('losses', 0))}L</td>
       <td class="num">{render_trend_arrow(trend)}</td>
     </tr>'''
@@ -864,8 +892,8 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
     """Name labels for each line, stacked in a reserved right-hand gutter.
 
     Anchoring a label to its own line's end point looks tidy only when every
-    line ends at the same x. Here they don't — someone with 12 games ends a
-    third of the way across — so labels landed in the middle of the plot,
+    line ends at the same x. Here they don't · someone with 12 games ends a
+    third of the way across · so labels landed in the middle of the plot,
     on top of the lines and each other. Placing them all at a common
     `gutter_x` means the vertical declutter below is sufficient on its own,
     and a leader line keeps each label tied to the point it describes.
@@ -874,7 +902,7 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
     when every series really does end together.
     """
     label_groups = []
-    MIN_LABEL_GAP = 26   # two lines of text (name + net change) plus breathing room
+    MIN_LABEL_GAP = 17   # one line of text plus breathing room
     ICON_SIZE = 14
     label_entries.sort(key=lambda e: e["ly"])
     for idx, e in enumerate(label_entries):
@@ -1005,7 +1033,7 @@ def segment_deltas(wins, net):
 def build_lp_timeline(solo_pts, solo_matches):
     """Per-game LP path for one friend, anchored on their real daily snapshots.
 
-    Games played *before* the first snapshot are skipped — there's no known LP
+    Games played *before* the first snapshot are skipped · there's no known LP
     to place them against. Returns [{idx, score, delta, match, exact}] where
     idx 0 is the first snapshot itself."""
     if len(solo_pts) < 2:
@@ -1088,7 +1116,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         """One render of the chart.
 
         `tail` limits each friend to their most recent N games, re-indexed
-        from zero — a zoom on the busy right-hand end. It's per friend rather
+        from zero · a zoom on the busy right-hand end. It's per friend rather
         than a shared cut of the x-axis because the axis is already each
         person's own game count: slicing by absolute index would simply drop
         anyone who has played fewer games than the cut.
@@ -1187,26 +1215,26 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                 m = p["match"]
                 if m:
                     move = lp_step_label(p["prevScore"], p["score"], p["delta"], p["exact"])
-                    title = (f"{f['label']} — game {p.get('origIdx', p['idx'])} — {'Win' if m['win'] else 'Loss'} on {m['champion']} — "
+                    title = (f"{f['label']} · game {p.get('origIdx', p['idx'])} · {'Win' if m['win'] else 'Loss'} on {m['champion']} · "
                              f"{move} → {score_to_rank_label(p['score'])}").replace("&middot;", "·")
                 else:
-                    title = (f"{f['label']} — tracking started — "
+                    title = (f"{f['label']} · tracking started · "
                              f"{score_to_rank_label(p['score'])}").replace("&middot;", "·")
-                # Every game keeps a point so it can still be hovered, but only
-                # the measured snapshots are drawn as markers. Four hundred
-                # estimated points in win/loss red and green buried the seven
-                # lines they belonged to, and fought the per-friend colours for
-                # no gain: a step upward already says the game was won, and the
-                # panel says outright that only the snapshots are measured.
+                # Only where each line ends. Marking every game, or even every
+                # measured snapshot, scattered dots across seven lines and made
+                # the chart harder to read than the lines alone. The rest stay
+                # as invisible hit targets so any game can still be hovered for
+                # its tooltip, and the hover rule brings the point out.
                 fill = f"var({var})"
-                if p["exact"]:
+                last = n == len(tl) - 1
+                if last:
                     r = 3.5 if compact else 4
                     extra = ' stroke="var(--surface-1)" stroke-width="1.5"'
-                    cls = "pt"
+                    cls = "pt end"
                 else:
-                    r = 1.4 if compact else 1.6
+                    r = 3
                     extra = ""
-                    cls = "pt est"
+                    cls = "pt"
                 parts.append(
                     f'<circle class="{cls}" cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}"'
                     f'{extra}><title>{esc(title)}</title></circle>'
@@ -1215,16 +1243,14 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
 
             if not compact:
                 lx, ly = coords[-1]
-                if tail and len(tl) > 1:
-                    # Ladder LP is linear (100 per division), so a delta across
-                    # the visible slice is a true LP count even over a promotion.
-                    d = tl[-1]["score"] - tl[0]["score"]
-                    net = {"text": f"{'+' if d >= 0 else '−'}{abs(d):.0f} LP · last {len(tl) - 1}",
-                           "direction": 1 if d > 0 else (-1 if d < 0 else 0)}
-                else:
-                    net = net_labels[i]
+                # Just the name. The movement underneath it was a second line
+                # per friend, fourteen lines of text down the side of the
+                # chart, and it was coloured green or red — the same green and
+                # red the palette uses for two of the friends, so the colour
+                # stopped identifying anyone. The movement lives in the
+                # standings chip above the chart instead.
                 label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly,
-                                      "net": net, "tier": tiers[i]})
+                                      "net": None, "tier": tiers[i]})
 
         # Labels sit in the reserved right gutter, not at each line's own end:
         # lines finish at different x (someone with 12 games ends a third of
@@ -1436,7 +1462,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
         return f'''
     <div class="panel">
       <h2 style="margin-bottom:8px;">Rank progress</h2>
-      <div class="muted small">No rank history yet — Riot's API doesn't expose past ranks, so this
+      <div class="muted small">No rank history yet · Riot's API doesn't expose past ranks, so this
       builds up from snapshots taken each time you run <code>fetch_data.py</code>. Run it again
       tomorrow (and keep running it, ideally daily) to start seeing a trend line here.</div>
     </div>'''
@@ -1528,7 +1554,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
             )
         for idx, ((x, y), h) in enumerate(zip(coords, pts)):
             change = snapshot_change_label(pts[idx - 1] if idx > 0 else None, h)
-            title = f"{f['label']} — {h['date']} — {rank_label(h)}".replace("&middot;", "·")
+            title = f"{f['label']} · {h['date']} · {rank_label(h)}".replace("&middot;", "·")
             if change:
                 title += f" ({change})"
             series_parts.append(
@@ -1587,7 +1613,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
     sparse_note = ""
     if len(distinct_dates) < 2:
         sparse_note = (f'<div class="banner" style="margin-top:12px;">Rank tracking only started '
-                        f'{esc(tracking_since)}, so there\'s just one snapshot so far — the trend line '
+                        f'{esc(tracking_since)}, so there\'s just one snapshot so far · the trend line '
                         f'will build in as you keep running <code>fetch_data.py</code> (ideally daily).</div>')
 
     standings_html = "".join(
@@ -1666,7 +1692,7 @@ def compute_awards(friends, now):
     if kda_score(m) >= 3:
         awards.append({
             "icon": "🏆", "title": "MVP performance",
-            "text": f"{esc(f['label'])} popped off on {esc(m['champion'])} — "
+            "text": f"{esc(f['label'])} popped off on {esc(m['champion'])} · "
                     f"{m['kills']}/{m['deaths']}/{m['assists']} (KDA {kda_score(m):.1f}).",
         })
 
@@ -1676,7 +1702,7 @@ def compute_awards(friends, now):
         f, m = max(flawless, key=lambda p: p[1]["kills"] + p[1]["assists"])
         awards.append({
             "icon": "🛡️", "title": "Untouchable",
-            "text": f"{esc(f['label'])} didn't die once on {esc(m['champion'])} — {m['kills']}/{m['deaths']}/{m['assists']}.",
+            "text": f"{esc(f['label'])} didn't die once on {esc(m['champion'])} · {m['kills']}/{m['deaths']}/{m['assists']}.",
         })
 
     # Int alert — a rough loss with a lot of deaths.
@@ -1756,7 +1782,7 @@ def compute_awards(friends, now):
         f, date_key, count = best_day
         awards.append({
             "icon": "📅", "title": "Marathon day",
-            "text": f"{esc(f['label'])} played {count} games on {format_day_label(date_key)} — the busiest single day this season.",
+            "text": f"{esc(f['label'])} played {count} games on {format_day_label(date_key)} · the busiest single day this season.",
         })
 
     # Damage dealer — highest single-game damage to champions.
@@ -1800,7 +1826,7 @@ def compute_awards(friends, now):
         f, count = most_games
         awards.append({
             "icon": "🎮", "title": "Season grinder",
-            "text": f"{esc(f['label'])} has racked up {count} ranked games this season — more than anyone else in the group.",
+            "text": f"{esc(f['label'])} has racked up {count} ranked games this season · more than anyone else in the group.",
         })
 
     # Comeback kid — a win despite the roughest KDA of anyone's winning games.
@@ -1835,7 +1861,7 @@ def render_duo_synergy_panel(friends):
 
     Seventeen near-identical cards in a three-column grid make it impossible
     to see who plays with whom, and a bar running from 0% wastes its whole
-    length on a range nobody occupies — the signal in a winrate sits within
+    length on a range nobody occupies · the signal in a winrate sits within
     about ten points of even. A grid of everyone against everyone fits in less
     space than three cards and shows the shape of the group at once.
     """
@@ -2039,7 +2065,7 @@ def render_week_glance_panel(friends_sorted, awards, rank_history, now):
             lp = climber["lp"]
             gain = (f' <span class="lp-gain">{"+" if lp >= 0 else "\u2212"}{abs(lp)} LP</span>')
         tiles.append(("📈", "Biggest climber",
-                      f"{esc(climber['label'])} — {esc(climber['text'])}{gain} this week."))
+                      f"{esc(climber['label'])} · {esc(climber['text'])}{gain} this week."))
 
     if not tiles:
         return ""
@@ -2462,7 +2488,7 @@ window.LpChart = (function () {
   // end point: lines finish at different x, so anchoring each label to its own
   // line put them on top of the plot and each other.
   function endLabelGroups(entries, prefix, gutterX) {
-    var MIN_LABEL_GAP = 26, ICON_SIZE = 14, out = [];
+    var MIN_LABEL_GAP = 17, ICON_SIZE = 14, out = [];
     entries.sort(function (a, b) { return a.ly - b.ly; });
     entries.forEach(function (e, i) {
       e.drawY = i === 0 ? e.ly : Math.max(e.ly, entries[i - 1].drawY + MIN_LABEL_GAP);
@@ -2585,24 +2611,24 @@ window.LpChart = (function () {
         var m = p.match, title;
         if (m) {
           var move = lpStepLabel(p.prevScore, p.score, p.delta, p.exact);
-          title = (f.label + ' \u2014 game ' + (p.origIdx === undefined ? p.idx : p.origIdx) +
-                   ' \u2014 ' + (m.win ? 'Win' : 'Loss') + ' on ' + m.champion + ' \u2014 ' +
+          title = (f.label + ' \u00b7 game ' + (p.origIdx === undefined ? p.idx : p.origIdx) +
+                   ' \u00b7 ' + (m.win ? 'Win' : 'Loss') + ' on ' + m.champion + ' \u00b7 ' +
                    move + ' \u2192 ' + scoreToRankLabel(p.score)).replace('&middot;', '\u00b7');
         } else {
-          title = (f.label + ' \u2014 tracking started \u2014 ' +
+          title = (f.label + ' \u00b7 tracking started \u00b7 ' +
                    scoreToRankLabel(p.score)).replace('&middot;', '\u00b7');
         }
-        // Markers only where a value was measured; see the note in
-        // render_lp_chart(). Every game keeps a point so it stays hoverable.
+        // Only where the line ends; see the note in render_lp_chart(). The
+        // rest stay as invisible hit targets so every game is still hoverable.
         var fill = 'var(' + varName + ')', r, extra, cls;
-        if (p.exact) {
+        if (n === tl.length - 1) {
           r = compact ? 3.5 : 4;
           extra = ' stroke="var(--surface-1)" stroke-width="1.5"';
-          cls = 'pt';
+          cls = 'pt end';
         } else {
-          r = compact ? 1.4 : 1.6;
+          r = 3;
           extra = '';
-          cls = 'pt est';
+          cls = 'pt';
         }
         parts.push('<circle class="' + cls + '" cx="' + fixed(coords[n][0], 1) + '" cy="' +
           fixed(coords[n][1], 1) + '" r="' + r + '" fill="' + fill + '"' + extra + '>' +
@@ -2612,17 +2638,9 @@ window.LpChart = (function () {
 
       if (!compact) {
         var last = coords[coords.length - 1];
-        var net;
-        if (tail && tl.length > 1) {
-          var dd = tl[tl.length - 1].score - tl[0].score;
-          net = { text: (dd >= 0 ? '+' : '\u2212') + fixed(Math.abs(dd), 0) +
-                        ' LP \u00b7 last ' + (tl.length - 1),
-                  direction: dd > 0 ? 1 : (dd < 0 ? -1 : 0) };
-        } else {
-          net = state.netLabels[fi];
-        }
+        // Name only; see the note in render_lp_chart().
         labelEntries.push({ idx: fi, varName: varName, label: f.label,
-                            lx: last[0], ly: last[1], net: net, tier: state.tiers[fi] });
+                            lx: last[0], ly: last[1], net: null, tier: state.tiers[fi] });
       }
     });
 
@@ -2657,7 +2675,7 @@ window.LpChart = (function () {
       var hist = f.history, first = hist[0], last = hist[hist.length - 1];
       var record = wins + 'W ' + (games - wins) + 'L';
       var moveText;
-      // Raw LP only means the same thing while tier and division hold still —
+      // Raw LP only means the same thing while tier and division hold still –
       // a promotion resets LP, so across one the ladder distance is not an LP
       // number worth printing.
       if (first.tier === last.tier && first.rank === last.rank) {
@@ -2784,7 +2802,7 @@ window.LpChart = (function () {
       });
       if (!added.length) return copy;
       // The live reading becomes today's snapshot, so the new games are an
-      // ordinary segment between two measured points — the same shape every
+      // ordinary segment between two measured points · the same shape every
       // other part of this chart is built from.
       var lastHist = copy.history[copy.history.length - 1];
       var snap = { date: dateKey, tier: l.tier, rank: l.rank, leaguePoints: l.leaguePoints };
@@ -2852,10 +2870,17 @@ def build_html(data):
     # them rather than hiding the other six. That makes them toggles, not tabs
     # — a tablist implies only one panel exists at a time, which is no longer
     # true, so they are plain buttons with aria-pressed.
-    friend_pills = "".join(
+    # An explicit All, then one button per person. Picking someone shows
+    # only them; All brings everyone back. Each button carries that player's
+    # face, which is their most mastered champion.
+    friend_pills = (
+        '<button class="pill pill-all active" type="button" data-friend=""'
+        ' aria-pressed="true">All friends</button>'
+    ) + "".join(
         f'<button class="pill" type="button" id="pill-{f["label"].lower()}"'
         f' aria-pressed="false" data-friend="{f["label"].lower()}">'
-        f'{render_rank_icon((f["ranked"].get("solo") or {{}}).get("tier"), size=16)}'
+        f'{render_avatar(f, size=20)}'
+        f'{render_rank_icon((f["ranked"].get("solo") or {{}}).get("tier"), size=15)}'
         f'{esc(f["label"])}</button>'
         for f in friends_sorted
     )
@@ -3106,7 +3131,7 @@ def build_html(data):
   * {{ box-sizing: border-box; }}
   html {{ scroll-behavior: smooth; }}
   ::selection {{ background: color-mix(in srgb, var(--accent) 28%, transparent); }}
-  /* Themed scrollbars — the default light-grey ones cut straight through the
+  /* Themed scrollbars · the default light-grey ones cut straight through the
      dark theme. .tabs and .friend-pills override this back to none. */
   * {{ scrollbar-width: thin; scrollbar-color: var(--gridline) transparent; }}
   ::-webkit-scrollbar {{ width: 11px; height: 11px; }}
@@ -3260,8 +3285,8 @@ def build_html(data):
      place rather than spill past the panel's rounded edge. */
   .table-scroll {{ overflow-x: auto; }}
   .leaderboard {{ table-layout: fixed; min-width: 100%; }}
-  /* Rank needs the most room of the text columns — "Platinum III · 91 LP"
-     plus an emblem — and previously got 17%, leaving ~3px of slack, so a
+  /* Rank needs the most room of the text columns · "Platinum III · 91 LP"
+     plus an emblem · and previously got 17%, leaving ~3px of slack, so a
      slightly wider glyph combination wrapped one row onto two lines. The
      name column was the one carrying surplus, so the space comes from there. */
   .leaderboard th:nth-child(1), .leaderboard td:nth-child(1) {{ width: 6%; text-align: center; }}
@@ -3283,7 +3308,7 @@ def build_html(data):
   .leaderboard td:nth-child(2) a:hover {{ color: var(--accent); text-decoration: none; }}
   .leaderboard tbody tr:hover td:nth-child(2) a {{ color: var(--accent); }}
   /* The whole row opens that player, not just the few characters of their
-     name — the row is what people aim at. */
+     name · the row is what people aim at. */
   .leaderboard tbody tr {{ cursor: pointer; }}
   @media (max-width: 720px) {{
     .leaderboard {{ table-layout: auto; }}
@@ -3343,7 +3368,7 @@ def build_html(data):
   }}
   /* The player's signature champion, behind the top-right of the card.
      Positioned children paint above static ones, so the art would otherwise
-     cover the header — everything except the art is lifted above it.
+     cover the header · everything except the art is lifted above it.
      The fade is three veils painted in the card's own surface colour rather
      than a mask, so it needs no mask-image support and degrades to a plain
      card if any of it is unsupported. */
@@ -3356,7 +3381,7 @@ def build_html(data):
     width: 100%; height: 100%; display: block;
     object-fit: cover; object-position: 56% 26%;
     /* Held well back. The veils below only reach ~55% opacity where the rank
-       rows sit, so the art itself has to be faint for text to stay crisp —
+       rows sit, so the art itself has to be faint for text to stay crisp –
        especially in the light theme, where the veil is white over dark art. */
     opacity: .4;
   }}
@@ -3439,9 +3464,11 @@ def build_html(data):
   .chart-grid {{ stroke: var(--gridline); stroke-width: 1; }}
   .chart-tick {{ fill: var(--muted); font-size: 11px; font-family: "Inter", system-ui, sans-serif; }}
   .rank-chart circle {{ transition: r .12s ease, opacity .12s ease; }}
-  /* Estimated points sit back as line texture; hovering brings one forward
-     with its tooltip. */
-  .rank-chart circle.est {{ opacity: .45; }}
+  /* Invisible but hoverable: the dot appears under the cursor with its
+     tooltip, so every game is still reachable without any of them being
+     drawn across the lines. */
+  .rank-chart circle.pt {{ opacity: 0; }}
+  .rank-chart circle.pt.end {{ opacity: 1; }}
   .rank-chart circle:hover {{ r: 6; opacity: 1; }}
   .chart-grid.faint {{ opacity: .38; }}
   .chart-tick.faint {{ opacity: .55; }}
@@ -3552,7 +3579,7 @@ def build_html(data):
   .lp-table .lp-move.up {{ color: var(--good); font-weight: 700; }}
   .lp-table .lp-move.down {{ color: var(--critical); font-weight: 700; }}
   .lp-table tbody tr:hover, .daily-table tbody tr:hover {{ background: var(--surface-2); }}
-  /* Not display:flex — on a <td> that removes the cell from the table's
+  /* Not display:flex · on a <td> that removes the cell from the table's
      column layout, so it collapses to zero width and the emblem disappears.
      The same mistake is documented on td.rank-cell above. */
   .daily-table td:nth-child(3) .rank-icon,
@@ -3665,7 +3692,7 @@ def build_html(data):
   details.matches-details {{
     margin-top: 12px; border: 1px solid var(--border); border-radius: 11px;
     padding: 2px 14px; background: var(--surface-2);
-    /* The match/champion tables are wider than a phone viewport — scroll
+    /* The match/champion tables are wider than a phone viewport · scroll
        them inside their own box so they never push the page sideways. */
     overflow-x: auto;
   }}
@@ -3729,17 +3756,36 @@ def build_html(data):
 
   .friend-pills {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }}
   .pill {{ display: inline-flex; align-items: center; gap: 7px; }}
-  .pill .rank-icon, .pill .rank-icon-ph {{ flex-shrink: 0; }}
-  /* The picked friend, scrolled to and ringed. Everyone stays on screen —
+  .pill .rank-icon, .pill .rank-icon-ph, .pill .avatar {{ flex-shrink: 0; }}
+  .pill-all {{ font-weight: 700; }}
+
+  /* Each player's face: their most mastered champion. */
+  .avatar {{
+    border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;
+    background: var(--surface-2); border: 1px solid var(--border);
+  }}
+  .avatar.broken {{ visibility: hidden; }}
+  .avatar-fallback {{
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: "Outfit", sans-serif; font-weight: 700; font-size: 12px;
+    color: var(--text-secondary);
+  }}
+  .lb-name {{ white-space: nowrap; }}
+  .lb-name .avatar {{ margin-right: 9px; }}
+  /* The picked friend, scrolled to and ringed. Everyone stays on screen –
      the button is a way of finding someone, not of hiding the rest. */
   .card.card-focus {{
     border-color: color-mix(in srgb, var(--card-tier, var(--accent)) 60%, var(--border));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--card-tier, var(--accent)) 30%, transparent),
                 var(--shadow-md);
   }}
-  /* The tier emblem, at a size worth looking at, with the standing on it. */
+  /* The player's face, with their tier emblem and standing pinned to it. */
   .rank-crest {{ position: relative; width: 44px; height: 44px; flex-shrink: 0; }}
-  .rank-crest .rank-icon, .rank-crest .rank-icon-ph {{ display: block; width: 44px; height: 44px; }}
+  .rank-crest .avatar {{ display: block; width: 44px; height: 44px; }}
+  .rank-crest .rank-icon, .rank-crest .rank-icon-ph {{
+    position: absolute; left: -8px; top: -6px; width: 26px; height: 26px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
+  }}
   .rank-crest .rank-badge {{
     position: absolute; right: -4px; bottom: -3px;
     min-width: 22px; height: 18px; padding: 0 5px; border-radius: 999px;
@@ -3818,7 +3864,7 @@ def build_html(data):
     background: var(--surface-2); color: var(--text-primary);
     transition: border-color .14s ease, box-shadow .14s ease;
   }}
-  /* An API key is a token, not prose — monospace makes a mistyped character
+  /* An API key is a token, not prose · monospace makes a mistyped character
      findable instead of hiding it in proportional text. */
   #modal-key {{ font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }}
   .modal input:focus {{
@@ -3853,7 +3899,7 @@ def build_html(data):
     background: color-mix(in srgb, var(--critical) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--critical) 26%, transparent);
   }}
-  /* No permanent blank gap when there is nothing to say — collapsed rather
+  /* No permanent blank gap when there is nothing to say · collapsed rather
      than display:none, which would drop the live region out of the
      accessibility tree and stop screen readers announcing errors. */
   .modal-msg:empty {{ margin: 0; padding: 0; border: none; background: none; }}
@@ -3898,7 +3944,6 @@ def build_html(data):
   /* Two renders of the same chart: a wide one, and a phone-sized one whose
      labels stay legible instead of being scaled down to ~4px. */
   .chart-compact {{ display: none; }}
-  .chip-net {{ display: none; }}
 
   /* ---- Responsive ----------------------------------------------------- */
   @media (max-width: 720px) {{
@@ -3907,7 +3952,7 @@ def build_html(data):
     header.top h1 {{ font-size: 19px; margin-bottom: 3px; }}
     .brand {{ gap: 10px; }}
     .brand-mark {{ width: 38px; height: 38px; border-radius: 11px; font-size: 18px; }}
-    /* Meta chips collapse to one line of plain text — three pill rows pushed
+    /* Meta chips collapse to one line of plain text · three pill rows pushed
        the actual content most of a screen down. */
     .meta-row {{ gap: 4px; }}
     .meta-chip {{ border: none; background: none; padding: 0; font-size: 11px; }}
@@ -3964,7 +4009,6 @@ def build_html(data):
 
     .chart-wide {{ display: none; }}
     .chart-compact {{ display: block; }}
-    .chip-net {{ display: inline; }}
     .wide-screen-only {{ display: none; }}
 
     .rank-row {{ grid-template-columns: 1fr auto; gap: 6px 10px; }}
@@ -4154,12 +4198,12 @@ def build_html(data):
       problem: function (k) {{
         if (!k) return 'Paste your Riot API key first.';
         if (this.RE.test(k)) return null;
-        if (k.indexOf('RGAPI-') !== 0) return 'A Riot key starts with RGAPI- — that one does not.';
+        if (k.indexOf('RGAPI-') !== 0) return 'A Riot key starts with RGAPI- · that one does not.';
         if (k.length > this.LEN) return 'That looks like two keys run together (' + k.length +
           ' characters, expected ' + this.LEN + '). Clear the box, then paste just the new key.';
-        if (k.length < this.LEN) return 'That key is incomplete — ' + k.length +
+        if (k.length < this.LEN) return 'That key is incomplete · ' + k.length +
           ' characters, expected ' + this.LEN + '. Copy the whole key from developer.riotgames.com.';
-        return 'That is not a valid Riot key — expected RGAPI- followed by 36 characters.';
+        return 'That is not a valid Riot key · expected RGAPI- followed by 36 characters.';
       }}
     }};
   </script>
@@ -4364,7 +4408,7 @@ def build_html(data):
       }});
 
       // Hover a legend name to bring that line forward and fade the rest.
-      // Pure presentation — it changes no state, so it can't get out of sync
+      // Pure presentation · it changes no state, so it can't get out of sync
       // with the click-to-hide toggle below.
       document.querySelectorAll('.legend-item[data-idx]').forEach(function (el) {{
         var charts = (el.getAttribute('data-chart') || 'daily').split(' ');
@@ -4407,7 +4451,7 @@ def build_html(data):
     // ---- Live ranks -------------------------------------------------------
     // Updates everyone's rank/LP/record straight from Riot, in the viewer's
     // own browser, using a key they supply themselves. Riot's API permits
-    // cross-origin calls, so this needs no server at all — which means it
+    // cross-origin calls, so this needs no server at all · which means it
     // works on the plain static build with no storage and no functions.
     //
     // The key never leaves this browser except to Riot: it is not sent to
@@ -4480,7 +4524,7 @@ def build_html(data):
           headers: {{ 'X-Riot-Token': key }}
         }}).then(function (r) {{
           if (r.status === 401 || r.status === 403) {{
-            var e = new Error('Riot rejected the key (' + r.status + ') — development keys expire ' +
+            var e = new Error('Riot rejected the key (' + r.status + ') · development keys expire ' +
                               'after 24 hours. Use the 🔑 API key button to paste a fresh one.');
             e.fatal = true; e.rejected = true; throw e;
           }}
@@ -4488,7 +4532,7 @@ def build_html(data):
             var e2 = new Error('Riot rate limit reached. Wait a minute and try again.');
             e2.fatal = true; throw e2;
           }}
-          if (r.status === 0) throw new Error('Could not reach Riot — check your connection.');
+          if (r.status === 0) throw new Error('Could not reach Riot · check your connection.');
           if (r.status === 404) return null;
           if (!r.ok) throw new Error('Riot returned HTTP ' + r.status);
           return r.json();
@@ -4522,7 +4566,7 @@ def build_html(data):
         }});
       }}
 
-      // "Aug 22, 11:09 PM" — the same shape the built page uses, so a live
+      // "Aug 22, 11:09 PM" · the same shape the built page uses, so a live
       // row and a snapshot row are indistinguishable.
       var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -4708,7 +4752,7 @@ def build_html(data):
 
       // The table is ordered at build time, so after a refresh moves people
       // the rows still sit in their old positions with their new LP beside
-      // them — #1 on 80 LP above #2 on 26 LP. Re-sort and renumber.
+      // them · #1 on 80 LP above #2 on 26 LP. Re-sort and renumber.
       function resortLeaderboard(live) {{
         var rows = [].slice.call(document.querySelectorAll('tr[data-friend-row]'));
         if (rows.length < 2) return;
@@ -4753,7 +4797,7 @@ def build_html(data):
         }}
         var wins = (entry && entry.wins) || 0, losses = (entry && entry.losses) || 0;
         var total = wins + losses;
-        if (wrCell) wrCell.textContent = total ? (Math.round(wins / total * 1000) / 10) + '%' : '—';
+        if (wrCell) wrCell.textContent = total ? (Math.round(wins / total * 1000) / 10) + '%' : '–';
         if (recCell) recCell.textContent = wins + 'W / ' + losses + 'L';
         row.classList.add('row-live');
       }}
@@ -4784,7 +4828,7 @@ def build_html(data):
                 (newGames ? ', ' + newGames + ' new game' + (newGames === 1 ? '' : 's') +
                             ' added to their Form and match lists' +
                             (budgetSpent ? ' (some older ones skipped to stay inside Riot’s ' +
-                                           'rate limit — refresh again for the rest)' : '')
+                                           'rate limit · refresh again for the rest)' : '')
                           : ', no new games since the last build') +
                 '. Live as of ' + when + '.' +
                 (charted ? ' The LP chart has been redrawn with them.' : '') +
@@ -4879,7 +4923,7 @@ def build_html(data):
         try {{
           if (remember) localStorage.setItem(KEY_STORE, key);
           else localStorage.removeItem(KEY_STORE);
-        }} catch (e) {{ /* private mode — carry on without persisting */ }}
+        }} catch (e) {{ /* private mode · carry on without persisting */ }}
       }}
       function forgetKey() {{
         sessionKey = '';
@@ -4955,7 +4999,7 @@ def build_html(data):
           icon: '🔑',
           title: 'Riot API key',
           blurb: storedKey()
-            ? 'A key is saved in this browser. Paste a new one to replace it — Riot development ' +
+            ? 'A key is saved in this browser. Paste a new one to replace it · Riot development ' +
               'keys expire after 24 hours.'
             : 'Paste your own Riot API key. It stays in this browser, is never sent to this site, ' +
               'and expires after 24 hours.',
@@ -4978,7 +5022,7 @@ def build_html(data):
                 .catch(function (err) {{
                   if (err && err.rejected && attempt < 3) {{
                     modalMsg.className = 'modal-msg';
-                    modalMsg.textContent = 'Riot has not activated this key yet — ' +
+                    modalMsg.textContent = 'Riot has not activated this key yet · ' +
                       'retrying in 5s (' + attempt + ' of 3)…';
                     return new Promise(function (go) {{ setTimeout(go, 5000); }})
                       .then(function () {{ return verify(attempt + 1); }});
@@ -5002,7 +5046,7 @@ def build_html(data):
               modalMsg.className = 'modal-msg';
               modalMsg.textContent = err.rejected
                 ? 'Riot is still rejecting that key. A newly generated key can take a minute ' +
-                  'to start working — wait a moment and press Save key again. If it was ' +
+                  'to start working · wait a moment and press Save key again. If it was ' +
                   'generated more than 24 hours ago it has expired instead.'
                 : ('Could not check the key: ' + err.message);
             }});
@@ -5052,10 +5096,10 @@ def build_html(data):
         state = s;
         refreshBtn.hidden = false;
         keyBtn.hidden = false;
-        if (!s.hasKey) setStatus('No Riot API key stored yet — use the 🔑 API key button before refreshing.', 'error', 0);
+        if (!s.hasKey) setStatus('No Riot API key stored yet · use the 🔑 API key button before refreshing.', 'error', 0);
         else if (s.keyAgeHours !== null && s.keyAgeHours >= 24)
-          setStatus('The stored Riot API key is ' + Math.floor(s.keyAgeHours) + 'h old — dev keys expire after 24h, so it probably needs replacing.', 'error', 0);
-      }}).catch(function () {{ /* not hosted — leave the buttons hidden */ }});
+          setStatus('The stored Riot API key is ' + Math.floor(s.keyAgeHours) + 'h old · dev keys expire after 24h, so it probably needs replacing.', 'error', 0);
+      }}).catch(function () {{ /* not hosted · leave the buttons hidden */ }});
 
       var onConfirm = null;
       function openModal(opts) {{
@@ -5168,11 +5212,11 @@ def build_html(data):
         // One friend per request: each Riot fetch is well within a serverless
         // timeout on its own, but all of them together would not be. A very
         // active player can also have more new games than fit in a single
-        // call — the server reports needsMore in that case, and the same
+        // call · the server reports needsMore in that case, and the same
         // friend is retried (continuing:true, so the once-per-cycle cooldown
         // doesn't re-trigger) rather than moving on incomplete. Progress is
         // saved after every single call (server-side), so nothing is lost if
-        // this session stops partway — clicking Refresh again later just
+        // this session stops partway · clicking Refresh again later just
         // continues from wherever it left off, even a first-time sync of a
         // very high-volume account that needs more than one sitting.
         var SESSION_BUDGET_MS = 8 * 60 * 1000;
@@ -5183,20 +5227,20 @@ def build_html(data):
           if (i >= names.length) {{
             setStatus('Rebuilding the dashboard…', null, (total - 0.5) / total * 100);
             return post('finalize', {{}}).then(function (res) {{
-              setStatus('Done — refreshed ' + res.friends + ' friends, ' + newGames +
+              setStatus('Done · refreshed ' + res.friends + ' friends, ' + newGames +
                         ' new game' + (newGames === 1 ? '' : 's') + '. Reloading…', 'done', 100);
               setTimeout(function () {{ location.reload(); }}, 1400);
             }});
           }}
           var label = 'Fetching ' + names[i] + '… (' + (i + 1) + ' of ' + names.length + ')'
-            + (attempt > 1 ? ' — lots of recent games, pass ' + attempt : '');
+            + (attempt > 1 ? ' · lots of recent games, pass ' + attempt : '');
           setStatus(label, null, (i / total) * 100);
           return post('refresh', {{ index: i, continuing: attempt > 1 }}).then(function (res) {{
             newGames += (res && res.newMatches) || 0;
             if (res && res.needsMore) {{
               if (Date.now() - sessionStart > SESSION_BUDGET_MS) {{
                 throw new Error(names[i] + ' has an unusually large backlog of new games (a first-time sync ' +
-                  'of a very active player can take a while). Progress is saved — click Refresh again to continue.');
+                  'of a very active player can take a while). Progress is saved · click Refresh again to continue.');
               }}
               return step(i, attempt + 1);
             }}
@@ -5264,7 +5308,9 @@ def build_html(data):
       var pills     = slice(document.querySelectorAll('.pill[data-friend]'));
       var cards     = slice(document.querySelectorAll('.card[id^="friend-"]'));
       var tabNames    = tabBtns.map(function (b) {{ return b.getAttribute('data-tab'); }});
-      var friendNames = pills.map(function (p) {{ return p.getAttribute('data-friend'); }});
+      // Includes the All button as an empty string, so this stays index-aligned
+      // with pills[].
+      var friendNames = pills.map(function (p) {{ return p.getAttribute('data-friend') || ''; }});
       var syncing = false;
 
       function setSelected(btn, on) {{
@@ -5282,32 +5328,31 @@ def build_html(data):
         return true;
       }}
 
-      // Every card stays on screen; picking someone rings their card and
-      // scrolls to it. Hiding six people to look at one made comparing them
-      // impossible and made the pills feel like a filter nobody asked for.
+      // An empty label means All: every card shown, the All button lit.
+      // Otherwise only that person's card is shown.
       function showFriend(label, scroll) {{
-        if (friendNames.indexOf(label) < 0) return false;
+        var all = !label;
+        if (!all && friendNames.indexOf(label) <= 0) return false;
         cards.forEach(function (c) {{
-          c.classList.toggle('card-focus', c.id === 'friend-' + label);
+          c.hidden = !all && c.id !== 'friend-' + label;
         }});
         pills.forEach(function (p) {{
-          var on = p.getAttribute('data-friend') === label;
+          var on = (p.getAttribute('data-friend') || '') === (label || '');
           p.classList.toggle('active', on);
           p.setAttribute('aria-pressed', on ? 'true' : 'false');
         }});
-        if (scroll) {{
-          var card = document.getElementById('friend-' + label);
-          if (card && card.scrollIntoView) {{
-            try {{ card.scrollIntoView({{ behavior: 'smooth', block: 'start' }}); }}
-            catch (e) {{ card.scrollIntoView(); }}
-          }}
+        if (scroll && !all) {{
+          // The card is now the first thing in the panel, so go to the top of
+          // the list rather than scrolling to something already at the top.
+          window.scrollTo(0, 0);
         }}
         return true;
       }}
 
       function activeOf(list, names) {{
         for (var i = 0; i < list.length; i++) {{
-          if (list[i].classList.contains('active')) return names[i];
+          // names[] has no entry for the All button, which carries no label.
+          if (list[i].classList.contains('active')) return names[i] || null;
         }}
         return null;
       }}
@@ -5370,15 +5415,10 @@ def build_html(data):
 
       pills.forEach(function (pl) {{
         pl.addEventListener('click', function () {{
-          var label = pl.getAttribute('data-friend');
-          // Pressing the active one again clears the highlight.
-          if (pl.classList.contains('active')) {{
-            cards.forEach(function (c) {{ c.classList.remove('card-focus'); }});
-            pl.classList.remove('active');
-            pl.setAttribute('aria-pressed', 'false');
-            writeRoute(true);
-            return;
-          }}
+          // Pressing the person you are already on goes back to All, so the
+          // same button both filters and clears.
+          var label = pl.getAttribute('data-friend') || '';
+          if (label && pl.classList.contains('active')) label = '';
           showFriend(label, true);
           writeRoute(true);
         }});
@@ -5415,8 +5455,7 @@ def build_html(data):
         }});
       }});
 
-      // Nothing is highlighted by default — every card is visible, so there
-      // is nothing to fall back to. A link like #friends/rory still picks one.
+      // Opens on All. A link like #friends/rory still picks that person.
       applyRoute();
       window.addEventListener('hashchange', applyRoute);
       window.addEventListener('popstate', applyRoute);
