@@ -105,10 +105,17 @@ def net_change_label(first, last, window="30d"):
         delta = (last.get("leaguePoints") or 0) - (first.get("leaguePoints") or 0)
         if delta == 0:
             return None
-        return {"text": f"{'+' if delta >= 0 else ''}{delta} LP ({window})", "direction": direction}
+        return {"text": f"{'+' if delta >= 0 else ''}{delta} LP ({window})",
+                "direction": direction, "lp": delta, "moved": False}
     first_short = rank_label(first).split(" &middot;")[0]
     last_short = rank_label(last).split(" &middot;")[0]
-    return {"text": f"{first_short} → {last_short}", "direction": direction}
+    # A promotion resets leaguePoints, so the raw difference is meaningless
+    # across one — but ladder position is linear (100 LP per division), so the
+    # distance travelled is a real LP count even over a tier change. Callers
+    # that want to show it read `lp`; `text` stays plain so the places that
+    # escape it are unaffected.
+    return {"text": f"{first_short} → {last_short}", "direction": direction,
+            "lp": ladder_lp(last) - ladder_lp(first), "moved": True}
 
 
 def tier_score(ranked_entry):
@@ -578,7 +585,10 @@ def weekly_rank_leader(rank_history, now):
             continue
         if best is None or delta > best["delta"]:
             net = net_change_label(window[0], window[-1], window="7d")
-            best = {"label": label, "delta": delta, "text": net["text"] if net else None}
+            best = {"label": label, "delta": delta,
+                    "text": net["text"] if net else None,
+                    "lp": net.get("lp") if net else None,
+                    "moved": bool(net and net.get("moved"))}
     return best
 
 
@@ -1992,6 +2002,19 @@ def render_duo_synergy_panel(friends):
 
 def render_week_glance_panel(friends_sorted, awards, rank_history, now):
     tiles = []
+
+    # The group's own week, which belongs here rather than among the season
+    # totals: everything else in this panel is about the last seven days.
+    week_min = week_games = 0
+    for f in friends_sorted:
+        mins, games = weekly_playtime(f.get("seasonMatches", []), now)
+        week_min += mins
+        week_games += games
+    if week_games:
+        tiles.append(("\U0001f3ae", "Games this week",
+                      f"Everyone played <strong>{week_games}</strong> ranked games together "
+                      f"this week, {format_minutes(week_min)} of League."))
+
     if awards:
         top = awards[0]
         tiles.append((top["icon"], top["title"], top["text"]))
@@ -2008,7 +2031,15 @@ def render_week_glance_panel(friends_sorted, awards, rank_history, now):
 
     climber = weekly_rank_leader(rank_history, now)
     if climber and climber.get("text"):
-        tiles.append(("📈", "Biggest climber", f"{esc(climber['label'])} — {esc(climber['text'])} this week."))
+        # Across a promotion the text reads "Platinum I → Emerald IV", which
+        # says how far but not how much. The LP is only added there — in the
+        # same-division case the text already is an LP number.
+        gain = ""
+        if climber.get("moved") and climber.get("lp"):
+            lp = climber["lp"]
+            gain = (f' <span class="lp-gain">{"+" if lp >= 0 else "\u2212"}{abs(lp)} LP</span>')
+        tiles.append(("📈", "Biggest climber",
+                      f"{esc(climber['label'])} — {esc(climber['text'])}{gain} this week."))
 
     if not tiles:
         return ""
@@ -2844,14 +2875,10 @@ def build_html(data):
 
     notes_html, notes_latest = render_patch_notes(load_patch_notes())
 
-    # A few numbers for the group as a whole. The leaderboard answers "who is
-    # ahead"; this answers "how much has this lot actually played".
+    # Season totals for the group as a whole. The leaderboard answers "who is
+    # ahead"; this answers "how much has this lot actually played". The
+    # week's numbers live in the week panel with the rest of the week.
     all_season = [m for f in friends_sorted for m in f.get("seasonMatches", [])]
-    week_min = week_games = 0
-    for f in friends_sorted:
-        mins, games = weekly_playtime(f.get("seasonMatches", []), now)
-        week_min += mins
-        week_games += games
     solo_w = sum((f["ranked"].get("solo") or {}).get("wins", 0) for f in friends_sorted)
     solo_l = sum((f["ranked"].get("solo") or {}).get("losses", 0) for f in friends_sorted)
     solo_total = solo_w + solo_l
@@ -2861,10 +2888,6 @@ def build_html(data):
         <div class="stat-tile">
           <div class="stat-value">{len(all_season)}</div>
           <div class="stat-label">Ranked games this season ({format_minutes(sum(m.get("durationMin", 0) for m in all_season))})</div>
-        </div>
-        <div class="stat-tile">
-          <div class="stat-value">{week_games}</div>
-          <div class="stat-label">Games this week ({format_minutes(week_min)})</div>
         </div>
         <div class="stat-tile">
           <div class="stat-value">{round(100 * solo_w / solo_total, 1) if solo_total else "&ndash;"}%</div>
@@ -3297,6 +3320,14 @@ def build_html(data):
   }}
   .award-title {{ font-weight: 700; font-size: 13px; margin-bottom: 3px; letter-spacing: -0.01em; }}
   .award-text {{ font-size: 12px; color: var(--text-secondary); line-height: 1.45; }}
+  .award-text strong {{ color: var(--text-primary); font-weight: 700; }}
+  /* The LP behind a promotion: "Platinum I → Emerald IV" says how far, this
+     says how much. */
+  .lp-gain {{
+    display: inline-block; font-weight: 700; color: var(--good);
+    background: color-mix(in srgb, var(--good) 12%, transparent);
+    border-radius: 999px; padding: 0 7px; margin: 0 1px;
+  }}
 
   /* ---- Friend cards -------------------------------------------------- */
   .card {{

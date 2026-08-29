@@ -5,6 +5,14 @@
     "items": [
       {
         "type": "improved",
+        "text": "Biggest climber now shows the LP behind a promotion. \"Platinum I → Emerald IV\" tells you how far someone went but not how much — it now reads \"Platinum I → Emerald IV +97 LP\", counted across the tier change rather than from the league points that reset at a promotion."
+      },
+      {
+        "type": "improved",
+        "text": "Games this week moved out of the season totals and into This week at a glance, with the rest of the week."
+      },
+      {
+        "type": "improved",
         "text": "The LP chart no longer puts a green or red dot on every game. Four hundred of them buried the seven lines and fought the per-player colours for nothing — a step upward already tells you the game was won. Only the measured daily snapshots are drawn as markers now; the games between them are faint points in the player's own colour, and hovering any of them still gives the full game."
       },
       {
