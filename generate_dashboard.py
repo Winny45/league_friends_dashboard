@@ -167,12 +167,14 @@ def esc(s):
 # Set once per render by build_html() so every render_* helper below can
 # look up an icon without threading version/map through every function
 # signature. A little global state, but scoped to a single render pass.
-_ICON_CTX = {"version": None, "map": {}}
+_ICON_CTX = {"version": None, "map": {}, "slugs": set(), "fold": {}}
 
 
 def set_icon_context(version, icon_map):
     _ICON_CTX["version"] = version
     _ICON_CTX["map"] = icon_map or {}
+    _ICON_CTX["slugs"] = set((icon_map or {}).values())
+    _ICON_CTX["fold"] = {v.lower(): v for v in (icon_map or {}).values()}
 
 
 def champion_icon_url(champion_name):
@@ -185,7 +187,16 @@ def champion_icon_url(champion_name):
         return None
     slug = _ICON_CTX["map"].get(champion_name)
     if not slug:
-        return None
+        # The map is keyed by display name ("K'Sante"), but match data reports
+        # the Data Dragon key ("KSante"), so any champion whose name carries an
+        # apostrophe or a space missed and rendered no icon at all. Accept a
+        # name that is already a valid key.
+        # Riot is not even consistent with its own keys: match data says
+        # "FiddleSticks" where Data Dragon has "Fiddlesticks".
+        slug = (champion_name if champion_name in _ICON_CTX["slugs"]
+                else _ICON_CTX["fold"].get(champion_name.lower()))
+        if not slug:
+            return None
     return f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{slug}.png"
 
 
@@ -288,6 +299,25 @@ def set_duo_context(friends_sorted):
 def party_size(match_id, label):
     """How many tracked players were on this team, including this one."""
     return 1 + len(_DUO_CTX["map"].get((match_id, label)) or [])
+
+
+def party_band(match_id, label, own_var):
+    """A stripe made of the colours of everyone on that team.
+
+    A single accent-coloured band said a game was shared but not with whom,
+    which is the thing worth knowing when the two rows are next to each other.
+    Hard stops rather than a blend, so each colour stays itself.
+    """
+    mates = _DUO_CTX["map"].get((match_id, label)) or []
+    if not mates:
+        return ""
+    colours = [own_var] + [v for _l, v in mates]
+    step = 100 / len(colours)
+    stops = ", ".join(
+        f"var({c}) {i * step:.0f}%, var({c}) {(i + 1) * step:.0f}%"
+        for i, c in enumerate(colours)
+    )
+    return f"--band: linear-gradient(180deg, {stops});"
 
 
 def render_duo_mates(match_id, label):
@@ -881,10 +911,17 @@ def render_trend_arrow(trend):
     not enough history yet to compare."""
     if not trend:
         return '<span class="muted small">–</span>'
+    # A rank change alone says a division moved but not how far, so the LP
+    # travelled goes in front of it. Within a division the text already is an
+    # LP figure.
+    text = trend["text"]
+    if trend.get("moved") and trend.get("lp") is not None:
+        lp = trend["lp"]
+        text = f"{'+' if lp >= 0 else '−'}{abs(lp)} LP, {text}"
     if trend["direction"] > 0:
-        return f'<span class="small" style="color:var(--good);">▲ {esc(trend["text"])}</span>'
+        return f'<span class="small" style="color:var(--good);">▲ {esc(text)}</span>'
     if trend["direction"] < 0:
-        return f'<span class="small" style="color:var(--critical);">▼ {esc(trend["text"])}</span>'
+        return f'<span class="small" style="color:var(--critical);">▼ {esc(text)}</span>'
     return '<span class="muted small">–</span>'
 
 
@@ -1023,12 +1060,17 @@ def score_to_rank_label(value):
 
 
 def lp_step_label(prev_value, value, delta, exact):
-    """How to describe one game's move. Within a division the step really is
-    an LP change; across one it includes the promotion/demotion reset, so
-    printing it as an LP number would overstate it."""
+    """How to describe one game's move.
+
+    `delta` is measured in ladder position, which is linear at 100 LP per
+    division, so it stays a real LP count across a promotion even though
+    League Points themselves reset. Saying only "promoted" left out the one
+    number the column exists to show.
+    """
+    amount = f"{'+' if delta >= 0 else '−'}{abs(delta):.0f} LP{'' if exact else ' (est.)'}"
     if ladder_decompose(prev_value)[:2] != ladder_decompose(value)[:2]:
-        return "promoted" if delta >= 0 else "demoted"
-    return f"{'+' if delta >= 0 else '−'}{abs(delta):.0f} LP{'' if exact else ' (est.)'}"
+        return f"{'Promoted' if delta >= 0 else 'Demoted'} {amount}"
+    return amount
 
 
 def segment_deltas(wins, net):
@@ -1179,7 +1221,11 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         else:
             W = 900
             H = max(300, min(660, 34 * len(chart_friends) + 140))
-            PAD_L, PAD_R, PAD_T, PAD_B = 64, 175, 16, 34
+            # No right-hand gutter any more: the names live in the legend
+            # under the chart, which was already there, so stacking them beside
+            # the lines as well was the same key printed twice. The 175 units
+            # it used to reserve go back to the plot.
+            PAD_L, PAD_R, PAD_T, PAD_B = 64, 24, 16, 34
         plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
 
         def xy(game_idx, score):
@@ -1266,7 +1312,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                 )
             series_groups.append(f'<g id="{prefix}-series-{i}">{"".join(parts)}</g>')
 
-            if not compact:
+            if False:  # gutter labels removed; the legend is the key
                 lx, ly = coords[-1]
                 # Just the name. The movement underneath it was a second line
                 # per friend, fourteen lines of text down the side of the
@@ -1290,8 +1336,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         # Labels sit in the reserved right gutter, not at each line's own end:
         # lines finish at different x (someone with 12 games ends a third of
         # the way across), which put labels on top of the plot and each other.
-        label_groups = [] if compact else end_label_groups(
-            label_entries, prefix, gutter_x=W - PAD_R + 10)
+        label_groups = []
 
         # Tier boundaries carry weight; the divisions between them are
         # reference, not structure. Drawing all of them at the same strength
@@ -1339,15 +1384,25 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         net_labels.append({"text": move_text, "direction": direction,
                            "moved": False, "lp": None})
         tiers.append(hist[-1].get("tier"))
+        # Rank and game count only. The movement and the record were the same
+        # facts the legend and the leaderboard already carry, and three of them
+        # made a chip too long to scan.
         standings.append({"var": friend_var(i), "label": f["label"], "tier": hist[-1].get("tier"),
                           "rankLabel": rank_label(hist[-1]), "games": games,
-                          "net": f"{move_text} · {record}"})
+                          "net": record})
+        # The legend is the chart's only key now, so it carries the movement
+        # that used to sit beside each line.
+        moved = f"{'+' if net_lp >= 0 else '−'}{abs(net_lp):.0f} LP"
+        if _rank_snapshot_key(first_h) != _rank_snapshot_key(last_h):
+            moved += f", {rank_label(first_h).split(' &middot;')[0]} → {rank_label(last_h).split(' &middot;')[0]}"
         legend_items.append(
             # Names every render this legend drives: wide/compact for both the
             # full and zoomed views. Absent ids are skipped harmlessly, so this
             # stays correct whether or not the zoom variant was built.
             f'<span class="legend-item" data-chart="lp lpm lpt lpmt" data-idx="{i}">'
-            f'<span class="sw" style="background:var({friend_var(i)})"></span>{esc(f["label"])}</span>'
+            f'<span class="sw" style="background:var({friend_var(i)})"></span>'
+            f'<span class="legend-name" style="color:var({friend_var(i)});">{esc(f["label"])}</span>'
+            f'<span class="legend-net">{esc(moved)}</span></span>'
         )
 
     # Two zoom levels, both rendered up front and toggled with CSS — no
@@ -1414,8 +1469,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         f'{render_rank_icon(s["tier"], size=22)}'
         f'<span class="name" style="color:var({s["var"]});">{esc(s["label"])}</span>'
         f'<span class="rank">{s["rankLabel"]}</span>'
-        f'<span class="rank muted">· {s["games"]}g</span>'
-        f'<span class="rank muted chip-net">· {esc(s["net"])}</span></div>'
+        f'<span class="rank muted">· {s["games"]}g · {esc(s["net"])}</span></div>'
         for s in standings
     )
 
@@ -1441,8 +1495,10 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         move = lp_step_label(e["prevScore"], p["score"], p["delta"], p["exact"])
         cls = "up" if (p["delta"] or 0) >= 0 else "down"
         party = party_size(m.get("matchId"), e["label"])
+        band = party_band(m.get("matchId"), e["label"], e["var"])
         return (
-            f'<tr class="{"party party-" + str(min(party, 5)) if party > 1 else ""}">'
+            f'<tr class="{"party party-" + str(min(party, 5)) if party > 1 else ""}"'
+            f'{f" style=\"{band}\"" if band else ""}>'
             f'<td class="muted small nowrap">{esc(format_match_when(m))}</td>'
             f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b>'
             f'<span class="muted small"> &middot; game {esc(e["idx"])}</span></td>'
@@ -1477,8 +1533,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       <details class="matches-details" style="margin-top:10px;">
         <summary>Every game, newest first</summary>
         <p class="muted small" style="margin:8px 0 4px;">Games two or more of them played
-        together are banded down the left: blue for a pair, teal for a trio, gold for four
-        or five.</p>
+        together are striped down the left in the colours of whoever was on that team.</p>
         <table class="matches-table lp-table">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
@@ -1547,7 +1602,8 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
     # doesn't produce an absurdly tall panel.
     W = 900
     H = max(280, min(640, 34 * len(chart_friends) + 120))
-    PAD_L, PAD_R, PAD_T, PAD_B = 64, 170, 16, 30
+    # Same as the LP chart: the key is the legend underneath.
+    PAD_L, PAD_R, PAD_T, PAD_B = 64, 24, 16, 30
     plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
 
     def xy(date_key, score):
@@ -1611,7 +1667,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
             f'<span class="legend-item" data-chart="daily" data-idx="{i}"><span class="sw" style="background:var({var})"></span>{esc(f["label"])}</span>'
         )
 
-    label_groups = end_label_groups(label_entries, "daily")
+    label_groups = []
 
     grid_svg = "".join(
         f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
@@ -1907,20 +1963,20 @@ def _mean(xs):
 
 
 def compute_kda_boost(friends):
-    """Whose game improves most in a pair.
+    """Who is carrying whom, judged inside the games the pair played together.
 
-    For each player: their average KDA in the games they played on this pair's
-    team, against their average in every other game. Somebody carried by a
-    partner shows a large positive difference; the partner usually shows a
-    smaller one. Returns {(a, b): {"label", "delta", "with", "alone"}} for the
-    member who gains most.
+    Comparing each player's KDA in the pair's games against their average
+    everywhere else measured the wrong thing: it told you whether a player has
+    good games when this partner is around, which moves with the whole team.
+    Comparing the two players *against each other in the same games* is the
+    question actually being asked, because they shared every one of those
+    games, so the map, the opponents and the result are held constant.
     """
-    own_all = {}
     by_match = {}
     for f in friends:
-        played = [m for m in f.get("seasonMatches", []) if not m.get("remake")]
-        own_all[f["label"]] = played
-        for m in played:
+        for m in f.get("seasonMatches", []):
+            if m.get("remake"):
+                continue
             by_match.setdefault(m["matchId"], []).append((f["label"], m))
 
     together = {}
@@ -1939,22 +1995,21 @@ def compute_kda_boost(friends):
 
     out = {}
     for key, per in together.items():
-        best = None
-        for label, games in per.items():
-            if len(games) < DUO_THIN_GAMES:
-                continue
-            ids = {m["matchId"] for m in games}
-            apart = [m for m in own_all.get(label, []) if m["matchId"] not in ids]
-            if len(apart) < DUO_THIN_GAMES:
-                continue
-            with_kda = _mean([match_kda(m) for m in games])
-            alone_kda = _mean([match_kda(m) for m in apart])
-            delta = with_kda - alone_kda
-            if best is None or delta > best["delta"]:
-                best = {"label": label, "delta": round(delta, 2),
-                        "with": round(with_kda, 2), "alone": round(alone_kda, 2)}
-        if best:
-            out[key] = best
+        if len(per) != 2:
+            continue
+        (l1, g1), (l2, g2) = per.items()
+        if min(len(g1), len(g2)) < DUO_THIN_GAMES:
+            continue
+        k1, k2 = _mean([match_kda(m) for m in g1]), _mean([match_kda(m) for m in g2])
+        if k1 is None or k2 is None:
+            continue
+        if k1 >= k2:
+            booster, boosted, hi, lo = l1, l2, k1, k2
+        else:
+            booster, boosted, hi, lo = l2, l1, k2, k1
+        out[key] = {"booster": booster, "boosted": boosted,
+                    "boosterKda": round(hi, 2), "boostedKda": round(lo, 2),
+                    "gap": round(hi - lo, 2), "games": len(g1)}
     return out
 
 
@@ -2120,13 +2175,15 @@ def render_duo_synergy_panel(friends):
         b = boost.get(tuple(sorted([r["a"], r["b"]])))
         if not b:
             return '<td class="num muted">&ndash;</td>'
-        return (f'<td class="num boost" title="{esc(b["label"])} averages {b["with"]} KDA with '
-                f'this partner against {b["alone"]} otherwise">'
-                f'<b>{esc(b["label"])}</b> <span class="boost-val">+{b["delta"]:.2f}</span></td>')
+        return (f'<td class="num boost" title="Across their {b["games"]} games together, '
+                f'{esc(b["booster"])} averages {b["boosterKda"]} KDA and '
+                f'{esc(b["boosted"])} {b["boostedKda"]}">'
+                f'<b>{esc(b["booster"])}</b> '
+                f'<span class="boost-val">+{b["gap"]:.2f}</span></td>')
 
     def boost_value(r):
         b = boost.get(tuple(sorted([r["a"], r["b"]])))
-        return b["delta"] if b else -999
+        return b["gap"] if b else -999
 
     listed = sorted((r for r in rows if r["total"]["games"] >= 2),
                     key=lambda r: (r["a"].lower(), r["b"].lower()))
@@ -2179,6 +2236,11 @@ def render_duo_synergy_panel(friends):
         f'</tr>'
         for r in parties
     )
+
+    # Queue 42 was removed from the game in 2016, so a Ranked 5s column would
+    # be a column of dashes. It appears on its own if the queue ever returns.
+    has_fives = any(m.get("queue") == "Ranked 5s"
+                    for f in friends for m in f.get("seasonMatches", []))
 
     party_table = ""
     if parties:
@@ -2234,8 +2296,8 @@ def render_duo_synergy_panel(friends):
         <summary>Every pair</summary>
         <p class="muted small" style="margin:8px 0 4px;">Every pair who played together, listed
         alphabetically. Click a heading to sort by it: synergy is how far their winrate together
-        beats how often those two win apart, and boost is whose own KDA improves most alongside the
-        other. Pairs with fewer than {DUO_THIN_GAMES} games are marked, since a handful of games can
+        beats how often those two win apart, and boost is which of the two has the higher KDA
+        across the games they played together, compared inside those same games so the map, the opponents and the result are identical for both. Pairs with fewer than {DUO_THIN_GAMES} games are marked, since a handful of games can
         produce any number.</p>
         <table class="matches-table duo-table" data-sortable>
           <thead><tr><th class="num">#</th>
@@ -2674,10 +2736,15 @@ window.LpChart = (function () {
   }
 
   function lpStepLabel(prevValue, value, delta, exact) {
+    // delta is ladder position, linear at 100 LP per division, so it is a
+    // real LP count across a promotion. See lp_step_label().
+    var amount = (delta >= 0 ? '+' : '\u2212') + fixed(Math.abs(delta), 0) + ' LP' +
+                 (exact ? '' : ' (est.)');
     var a = ladderDecompose(prevValue), b = ladderDecompose(value);
-    if (a[0] !== b[0] || a[1] !== b[1]) return delta >= 0 ? 'promoted' : 'demoted';
-    return (delta >= 0 ? '+' : '\u2212') + fixed(Math.abs(delta), 0) + ' LP' +
-           (exact ? '' : ' (est.)');
+    if (a[0] !== b[0] || a[1] !== b[1]) {
+      return (delta >= 0 ? 'Promoted ' : 'Demoted ') + amount;
+    }
+    return amount;
   }
 
   // Split a known net LP change across the games that produced it: the win and
@@ -2805,7 +2872,8 @@ window.LpChart = (function () {
       PAD_L = 38; PAD_R = 10; PAD_T = 12; PAD_B = 28;
     } else {
       W = 900; H = Math.max(300, Math.min(660, 34 * friends.length + 140));
-      PAD_L = 64; PAD_R = 175; PAD_T = 16; PAD_B = 34;
+      // No right-hand gutter; see render_lp_chart().
+      PAD_L = 64; PAD_R = 24; PAD_T = 16; PAD_B = 34;
     }
     var plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
     function xy(gi, score) {
@@ -2883,22 +2951,10 @@ window.LpChart = (function () {
       });
       seriesGroups.push('<g id="' + prefix + '-series-' + fi + '">' + parts.join('') + '</g>');
 
-      if (!compact) {
-        var last = coords[coords.length - 1];
-        var net;
-        if (tail && tl.length > 1) {
-          var dd = tl[tl.length - 1].score - tl[0].score;
-          net = { text: (dd >= 0 ? '+' : '\u2212') + fixed(Math.abs(dd), 0) +
-                        ' LP over ' + (tl.length - 1) };
-        } else {
-          net = state.netLabels[fi];
-        }
-        labelEntries.push({ idx: fi, varName: varName, label: f.label,
-                            lx: last[0], ly: last[1], net: net, tier: state.tiers[fi] });
-      }
+      // Gutter labels removed; the legend under the chart is the key.
     });
 
-    var labelGroups = compact ? [] : endLabelGroups(labelEntries, prefix, W - PAD_R + 10);
+    var labelGroups = [];
 
     var gridSvg = yTicks.map(function (t) {
       var faint = t[2] ? '' : ' faint';
@@ -3797,15 +3853,15 @@ def build_html(data):
   /* Games two or more of them were in together. The rows are already next to
      each other because the table is ordered by time; the band ties them into
      one game rather than leaving them as rows sharing a timestamp. */
-  .lp-table tr.party td {{ background: color-mix(in srgb, var(--accent) 7%, transparent); }}
-  .lp-table tr.party td:first-child {{ box-shadow: inset 3px 0 0 var(--accent); }}
-  .lp-table tr.party-3 td {{ background: color-mix(in srgb, var(--accent-2) 9%, transparent); }}
-  .lp-table tr.party-3 td:first-child {{ box-shadow: inset 3px 0 0 var(--accent-2); }}
-  .lp-table tr.party-4 td, .lp-table tr.party-5 td {{
-    background: color-mix(in srgb, var(--gold) 11%, transparent);
-  }}
-  .lp-table tr.party-4 td:first-child, .lp-table tr.party-5 td:first-child {{
-    box-shadow: inset 3px 0 0 var(--gold);
+  .lp-table tr.party td {{ background: rgba(255,255,255,0.03); }}
+  /* The stripe is made of the players' own colours, so it says who the game
+     was shared with and not merely that it was. */
+  .lp-table tr.party td:first-child {{
+    background-image: var(--band);
+    background-size: 4px 100%;
+    background-repeat: no-repeat;
+    background-position: left center;
+    padding-left: 12px;
   }}
   /* Not display:flex · on a <td> that removes the cell from the table's
      column layout, so it collapses to zero width and the emblem disappears.
@@ -4842,7 +4898,18 @@ def build_html(data):
       function championIcon(name) {{
         // The map is keyed by display name, but match-v5 already returns the
         // Data Dragon key, so fall through to the raw name.
-        var slug = (CFG.championIcons || {{}})[name] || name;
+        // Same fallback as champion_icon_url(): the map is keyed by display
+        // name, match data reports the Data Dragon key, and Riot's own casing
+        // differs between the two for at least one champion.
+        var icons = CFG.championIcons || {{}};
+        var slug = icons[name];
+        if (!slug) {{
+          var want = String(name || '').toLowerCase();
+          for (var kk in icons) {{
+            if (icons[kk].toLowerCase() === want) {{ slug = icons[kk]; break; }}
+          }}
+        }}
+        if (!slug) slug = name;
         if (!CFG.ddragonVersion || !slug) {{
           return '<span class="champ-icon champ-icon-ph" style="width:20px;height:20px;"></span>';
         }}
