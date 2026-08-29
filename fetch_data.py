@@ -265,7 +265,7 @@ def extract_match_entry(m, puuid, match_id):
 
 def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: int,
                       season_start_epoch: float, season_start_key: str, max_season_matches: int,
-                      match_cache: dict, scrape_log: dict):
+                      match_cache: dict, scrape_log: dict, force_resync: bool = False):
     if "#" not in riot_id:
         raise ValueError(f"Riot ID for '{label}' must look like Name#Tag, got {riot_id!r}")
     game_name, tag_line = riot_id.split("#", 1)
@@ -291,9 +291,18 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
     # moved earlier than what the log covers (so there may be older games
     # we've never listed). Otherwise this is an incremental "what's new"
     # pass that typically costs at most one short page per ranked queue.
-    full_resync = not known_ids or logged_season_start is None or season_start_key < logged_season_start
+    # An incremental pass stops at the first id it already knows, so a player
+    # whose first scrape only reached part way back stays that way forever: it
+    # can add newer games but never older ones. That is why one friend's
+    # history can start in January and another's in May, and why games the two
+    # played together before the later date are invisible to duo synergy.
+    # --resync forces the full re-list that fixes it.
+    full_resync = (force_resync or not known_ids or logged_season_start is None
+                   or season_start_key < logged_season_start)
     if full_resync:
-        print(f"  full match list scrape (first time seeing this account, or season_start moved earlier)")
+        why = ("--resync requested" if force_resync
+               else "first time seeing this account, or season_start moved earlier")
+        print(f"  full match list scrape ({why})")
 
     known_set = set(known_ids)
     new_ids = []
@@ -536,8 +545,27 @@ def save_rank_history(history):
     RANK_HISTORY_PATH.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def parse_args(argv):
+    """fetch_data.py [config.json] [--resync [Label ...]]
+
+    Returns (config_path, resync) where resync is None for a normal
+    incremental run, an empty set to re-list everybody, or a set of labels.
+    """
+    config_path, resync, in_flag = None, None, False
+    for a in argv:
+        if a == "--resync":
+            resync, in_flag = set(), True
+            continue
+        if in_flag and not a.startswith("-"):
+            resync.add(a)
+            continue
+        if config_path is None:
+            config_path = a
+    return Path(config_path or "config.json"), resync
+
+
 def main():
-    config_path = Path(sys.argv[1] if len(sys.argv) > 1 else "config.json")
+    config_path, resync = parse_args(sys.argv[1:])
     if not config_path.exists():
         print(f"Config file not found: {config_path}\n"
               f"Copy config.example.json to config.json and fill in your API key + friends.")
@@ -572,12 +600,18 @@ def main():
     scrape_log = load_scrape_log()
 
     results = []
+    if resync is not None:
+        who = ", ".join(sorted(resync)) if resync else "everyone"
+        print(f"Re-listing full match history for {who}. This costs many more API calls "
+              f"than a normal run.\n")
     for friend in config["friends"]:
         try:
             summary = summarize_friend(
                 client, friend["label"], friend["riot_id"], match_count,
                 season_start_epoch, season_start_key, max_season_matches,
                 match_cache, scrape_log,
+                force_resync=(resync is not None and
+                              (not resync or friend["label"] in resync)),
             )
             if summary:
                 results.append(summary)
