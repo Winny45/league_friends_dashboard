@@ -1,6 +1,48 @@
 [
   {
     "date": "2026-08-29",
+    "title": "Dark only, sortable duo tables, and stacks",
+    "items": [
+      {
+        "type": "improved",
+        "text": "Light mode is gone. One theme means one value per colour instead of two."
+      },
+      {
+        "type": "added",
+        "text": "A Trios and full stacks table: lineups of three or more on the same team, counted as whole lineups rather than every pair inside them. Your best is Kirish, Winny, Shas and Brett at 75% over 12 games."
+      },
+      {
+        "type": "added",
+        "text": "A Boost column on the pair table: whose own KDA improves most when playing alongside the other. Shas2nd averages 3.99 KDA with Winny against 2.44 otherwise."
+      },
+      {
+        "type": "improved",
+        "text": "Both duo tables sort by any column now. Pairs open alphabetically rather than in an order that asserts something, and stacks open by games played."
+      },
+      {
+        "type": "added",
+        "text": "Two more numbers in This week at a glance: who is on the hottest streak, and how many of the week's games had two or more of them on the same team."
+      },
+      {
+        "type": "improved",
+        "text": "The chart keys drop the dashed leader lines, and each name carries both the LP moved and the rank change instead of only one of the two."
+      },
+      {
+        "type": "added",
+        "text": "Games played together are banded down the left of the game by game table, so a shared game reads as one game rather than two rows with the same timestamp."
+      },
+      {
+        "type": "improved",
+        "text": "Days a rank moved says how much LP the move was worth, not just that a promotion happened."
+      },
+      {
+        "type": "improved",
+        "text": "Player faces and card art come from the champion most played this season rather than lifetime mastery, which kept showing champions nobody had touched all split. The mastery list is now labelled Highest mastery champions."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "A cleaner chart, and faces for everyone",
     "items": [
       {
