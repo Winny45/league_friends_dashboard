@@ -1799,14 +1799,46 @@ def render_duo_synergy_panel(friends):
         body.append(f'<tr><th scope="row"><span style="color:var({colour});">{esc(a)}</span></th>'
                     f'{"".join(cells)}</tr>')
 
+    # Ranked by synergy rather than by volume, but pairs too thin to mean
+    # anything sink to the bottom instead of topping the table on a lucky
+    # five games — otherwise "best pairing" is decided by the smallest sample.
+    SYN_FULL_SCALE = 15.0   # points of lift that fill half the bar
+
+    def table_order(r):
+        t = r["total"]
+        lift = t["lift"] if t["lift"] is not None else -999
+        return (0 if t["games"] >= DUO_THIN_GAMES else 1, -lift)
+
+    listed = sorted((r for r in rows if r["total"]["games"] >= 2), key=table_order)
+
+    def syn_cell(t):
+        if t["lift"] is None:
+            return '<td class="num syn"><span class="syn-val muted">&ndash;</span></td>'
+        lift = t["lift"]
+        cls = "up" if lift > 0 else ("down" if lift < 0 else "flat")
+        thin = " thin" if t["games"] < DUO_THIN_GAMES else ""
+        sign = "+" if lift > 0 else ("\u2212" if lift < 0 else "\u00b1")
+        width = min(abs(lift) / SYN_FULL_SCALE, 1.0) * 50
+        return (f'<td class="num syn {cls}{thin}">'
+                f'<span class="syn-val">{sign}{abs(lift):.1f}</span>'
+                f'<span class="syn-bar"><i style="width:{width:.1f}%;"></i></span></td>')
+
     table_rows = "".join(
-        f'<tr><td>{esc(r["a"])} &amp; {esc(r["b"])}</td>'
-        f'<td class="num">{r["total"]["games"]}</td>'
-        f'<td class="num">{r["solo"]["games"]}</td>'
-        f'<td class="num">{r["flex"]["games"]}</td>'
-        f'<td class="num">{r["total"]["wins"]}W {r["total"]["losses"]}L</td>'
-        f'<td class="num">{r["total"]["winrate"]}%</td></tr>'
-        for r in rows if r["total"]["games"] >= 2
+        f'<tr>'
+        f'<td class="num muted small">{i}</td>'
+        f'<td class="duo-pair">'
+        f'<span style="color:var({r["aVar"]});">{esc(r["a"])}</span>'
+        f'<span class="duo-amp">&amp;</span>'
+        f'<span style="color:var({r["bVar"]});">{esc(r["b"])}</span></td>'
+        f'{syn_cell(r["total"])}'
+        f'<td class="num"><b>{r["total"]["winrate"]}%</b></td>'
+        f'<td class="num muted">{r["total"]["wins"]}W {r["total"]["losses"]}L</td>'
+        f'<td class="num">{r["total"]["games"]}'
+        f'{" <span class=\'duo-thin\'>!</span>" if r["total"]["games"] < DUO_THIN_GAMES else ""}</td>'
+        f'<td class="num muted">{r["solo"]["games"] or "&ndash;"}</td>'
+        f'<td class="num muted">{r["flex"]["games"] or "&ndash;"}</td>'
+        f'</tr>'
+        for i, r in enumerate(listed, 1)
     )
 
     return f'''
@@ -1838,10 +1870,15 @@ def render_duo_synergy_panel(friends):
       <div class="duo-highlights" data-duo-highlights></div>
       {coverage_note}
       <div class="duo-detail" data-duo-detail hidden></div>
-      <details class="matches-details" style="margin-top:12px;">
-        <summary>View as table</summary>
-        <table class="matches-table">
-          <thead><tr><th>Pair</th><th class="num">Games</th><th class="num">Solo/Duo</th><th class="num">Flex</th><th class="num">Record</th><th class="num">Winrate</th></tr></thead>
+      <details class="matches-details duo-table-details" style="margin-top:12px;">
+        <summary>Every pair, ranked by synergy</summary>
+        <p class="muted small" style="margin:8px 0 4px;">Synergy is how far a pair's winrate together
+        beats how often those two win apart. Pairs with fewer than {DUO_THIN_GAMES} games are marked
+        and sorted to the bottom, since a handful of games can produce any number.</p>
+        <table class="matches-table duo-table">
+          <thead><tr><th class="num">#</th><th>Pair</th><th class="num">Synergy</th>
+          <th class="num">Winrate</th><th class="num">Record</th><th class="num">Games</th>
+          <th class="num">Solo</th><th class="num">Flex</th></tr></thead>
           <tbody>{table_rows}</tbody>
         </table>
       </details>
@@ -3287,6 +3324,33 @@ def build_html(data):
   .lift-down-1  {{ background: color-mix(in srgb, var(--critical) 22%, var(--surface-2)); }}
   .lift-down-2  {{ background: color-mix(in srgb, var(--critical) 45%, var(--surface-2)); }}
 
+  /* ---- Duo table ------------------------------------------------------ */
+  .duo-table td, .duo-table th {{ vertical-align: middle; }}
+  .duo-table .duo-pair {{ font-weight: 700; white-space: nowrap; }}
+  .duo-table .duo-pair .duo-amp {{ margin: 0 5px; }}
+  .duo-table tbody tr:hover {{ background: var(--surface-2); }}
+  .syn {{ min-width: 96px; }}
+  .syn-val {{ display: block; font-weight: 700; font-variant-numeric: tabular-nums; }}
+  .syn.up .syn-val {{ color: var(--good); }}
+  .syn.down .syn-val {{ color: var(--critical); }}
+  .syn.flat .syn-val {{ color: var(--muted); }}
+  .syn.thin .syn-val {{ opacity: .5; }}
+  /* A bar that grows out from the centre: left of the line is worse together,
+     right is better. A plain 0-100 bar would put every pair in the same place,
+     since the differences that matter here are a few points wide. */
+  .syn-bar {{
+    position: relative; display: block; height: 5px; margin: 4px 0 0 auto; width: 88px;
+    border-radius: 999px; background: var(--gridline); overflow: hidden;
+  }}
+  .syn-bar::before {{
+    content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+    background: var(--border);
+  }}
+  .syn-bar i {{ position: absolute; top: 0; bottom: 0; border-radius: 999px; }}
+  .syn.up .syn-bar i {{ left: 50%; background: var(--good); }}
+  .syn.down .syn-bar i {{ right: 50%; background: var(--critical); }}
+  .syn.thin .syn-bar i {{ opacity: .45; }}
+
   .duo-highlights {{ font-size: 12.5px; color: var(--text-secondary); margin-top: 12px; line-height: 1.6; }}
   .duo-highlights b {{ font-weight: 700; }}
   .duo-detail {{
@@ -3636,6 +3700,9 @@ def build_html(data):
     .duo-cell {{ min-width: 52px; padding: 6px 2px; }}
     .cell-wr {{ font-size: 12px; }}
     .duo-matrix th {{ font-size: 10.5px; padding: 3px 4px; }}
+    /* The bar is the first thing to go when there is no width for it. */
+    .syn-bar {{ display: none; }}
+    .syn {{ min-width: 0; }}
     .card-art {{ width: 100%; height: 148px; }}
     .card-art img {{ object-position: 56% 22%; }}
     h2 {{ font-size: 16px; }}

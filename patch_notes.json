@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-08-29",
+    "title": "The duo table ranks by synergy",
+    "items": [
+      {
+        "type": "improved",
+        "text": "The full pair table is ordered by synergy rather than by games played, and now has a synergy column to order by — it was sorted by volume with no synergy figure shown at all. Each pair gets a bar growing out from the centre: right of the line means the two do better together than apart, left means worse."
+      },
+      {
+        "type": "improved",
+        "text": "Player names carry their chart colours, the pairs are numbered, and the solo and flex splits sit alongside the totals."
+      },
+      {
+        "type": "fixed",
+        "text": "Pairs with fewer than ten games are marked and sorted to the bottom, so a lucky five-game run can no longer sit at the top as the best pairing."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "Newly generated API keys are no longer rejected",
     "items": [
       {
