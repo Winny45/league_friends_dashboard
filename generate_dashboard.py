@@ -3747,10 +3747,14 @@ def build_html(data):
   .duo-table tbody tr:hover {{ background: var(--surface-2); }}
   th.sortable {{ cursor: pointer; user-select: none; white-space: nowrap; }}
   th.sortable:hover {{ color: var(--text-primary); }}
-  th.sortable::after {{ content: "95"; opacity: .3; margin-left: 4px; font-size: 10px; }}
+  /* Literal arrows rather than CSS hex escapes: this stylesheet passes
+     through a Python f-string, where a backslash followed by digits is an
+     octal escape, so the escape arrived as a control character plus the
+     leftover text. */
+  th.sortable::after {{ content: "↕"; opacity: .3; margin-left: 4px; font-size: 10px; }}
   th.sortable.sorted {{ color: var(--accent); }}
-  th.sortable.sorted::after {{ content: "BE"; opacity: 1; }}
-  th.sortable.sorted[data-dir="asc"]::after {{ content: "B4"; }}
+  th.sortable.sorted::after {{ content: "▾"; opacity: 1; }}
+  th.sortable.sorted[data-dir="asc"]::after {{ content: "▴"; }}
   .boost-val {{ color: var(--good); font-weight: 700; }}
   .syn {{ min-width: 96px; }}
   .syn-val {{ display: block; font-weight: 700; font-variant-numeric: tabular-nums; }}
