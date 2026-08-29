@@ -1,11 +1,41 @@
 [
   {
     "date": "2026-08-29",
+    "title": "A cleaner chart, and faces for everyone",
+    "items": [
+      {
+        "type": "improved",
+        "text": "The LP chart no longer scatters dots along the lines. Only the end of each line is marked; every game is still there as an invisible point, so hovering anywhere on a line brings up that game."
+      },
+      {
+        "type": "improved",
+        "text": "The names beside the chart are one line each instead of two, and the movement that used to sit under them has gone to the standings chips above. That also takes the last green and red text out of the chart, so a name's colour only ever means who it is."
+      },
+      {
+        "type": "fixed",
+        "text": "Player colours no longer include green or red. Those mean won and lost everywhere else, so a player whose colour was green sat in a table row next to a green \"+22 LP\" and the colour stopped saying which of the two it meant."
+      },
+      {
+        "type": "added",
+        "text": "Everyone has a face now: their most mastered champion, on their card, on their button, and in the leaderboard."
+      },
+      {
+        "type": "improved",
+        "text": "The Friends buttons filter again, with an All friends button to bring everyone back. Pressing the person you are already on also returns to All."
+      },
+      {
+        "type": "improved",
+        "text": "Long dashes are gone from the writing across the site."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "A readable LP chart, and duo games marked",
     "items": [
       {
         "type": "improved",
-        "text": "Biggest climber now shows the LP behind a promotion. \"Platinum I → Emerald IV\" tells you how far someone went but not how much — it now reads \"Platinum I → Emerald IV +97 LP\", counted across the tier change rather than from the league points that reset at a promotion."
+        "text": "Biggest climber now shows the LP behind a promotion. \"Platinum I → Emerald IV\" tells you how far someone went but not how much, it now reads \"Platinum I → Emerald IV +97 LP\", counted across the tier change rather than from the league points that reset at a promotion."
       },
       {
         "type": "improved",
@@ -13,7 +43,7 @@
       },
       {
         "type": "improved",
-        "text": "The LP chart no longer puts a green or red dot on every game. Four hundred of them buried the seven lines and fought the per-player colours for nothing — a step upward already tells you the game was won. Only the measured daily snapshots are drawn as markers now; the games between them are faint points in the player's own colour, and hovering any of them still gives the full game."
+        "text": "The LP chart no longer puts a green or red dot on every game. Four hundred of them buried the seven lines and fought the per-player colours for nothing, a step upward already tells you the game was won. Only the measured daily snapshots are drawn as markers now; the games between them are faint points in the player's own colour, and hovering any of them still gives the full game."
       },
       {
         "type": "improved",
@@ -39,7 +69,7 @@
       },
       {
         "type": "added",
-        "text": "Rank emblems now sit on each player — on their card, on their button, and beside every rank in the tables."
+        "text": "Rank emblems now sit on each player, on their card, on their button, and beside every rank in the tables."
       },
       {
         "type": "fixed",
@@ -55,7 +85,7 @@
       },
       {
         "type": "fixed",
-        "text": "The rank progress table listed every daily snapshot for every player, so hundreds of rows read \"—\" in the Change column. It now shows only the days a rank actually moved — twenty rows instead of several hundred."
+        "text": "The rank progress table listed every daily snapshot for every player, so hundreds of rows read \"–\" in the Change column. It now shows only the days a rank actually moved, twenty rows instead of several hundred."
       }
     ]
   },
@@ -65,7 +95,7 @@
     "items": [
       {
         "type": "improved",
-        "text": "The full pair table is ordered by synergy rather than by games played, and now has a synergy column to order by — it was sorted by volume with no synergy figure shown at all. Each pair gets a bar growing out from the centre: right of the line means the two do better together than apart, left means worse."
+        "text": "The full pair table is ordered by synergy rather than by games played, and now has a synergy column to order by, it was sorted by volume with no synergy figure shown at all. Each pair gets a bar growing out from the centre: right of the line means the two do better together than apart, left means worse."
       },
       {
         "type": "improved",
@@ -83,7 +113,7 @@
     "items": [
       {
         "type": "fixed",
-        "text": "Riot refuses a development key for up to a minute after issuing it. The key box treated that as \"expired, generate a fresh one\" — advice that produces another key which behaves the same way, so every key you made looked rejected. It now retries before believing the rejection, and says to wait rather than to generate another."
+        "text": "Riot refuses a development key for up to a minute after issuing it. The key box treated that as \"expired, generate a fresh one\", advice that produces another key which behaves the same way, so every key you made looked rejected. It now retries before believing the rejection, and says to wait rather than to generate another."
       },
       {
         "type": "fixed",
@@ -97,7 +127,7 @@
     "items": [
       {
         "type": "fixed",
-        "text": "Duo synergy was missing most of its games. It only counted a pair when both players' records carried a team id, and only about one match in ten does — so Brett and Winny showed 6 games together instead of 130, and ten pairs including Neel and Winny did not appear at all. It now works out who was on the same team from the result, which every record has."
+        "text": "Duo synergy was missing most of its games. It only counted a pair when both players' records carried a team id, and only about one match in ten does, so Brett and Winny showed 6 games together instead of 130, and ten pairs including Neel and Winny did not appear at all. It now works out who was on the same team from the result, which every record has."
       },
       {
         "type": "improved",
@@ -109,7 +139,7 @@
       },
       {
         "type": "added",
-        "text": "Split by queue: all queues, Solo/Duo only, or Flex only. Everything follows the choice, including the comparison against each player's usual winrate, which is worked out separately per queue. Several pairs only exist in one — Neel and Winny's 20 games together are all Flex."
+        "text": "Split by queue: all queues, Solo/Duo only, or Flex only. Everything follows the choice, including the comparison against each player's usual winrate, which is worked out separately per queue. Several pairs only exist in one, Neel and Winny's 20 games together are all Flex."
       },
       {
         "type": "improved",
@@ -121,7 +151,7 @@
       },
       {
         "type": "added",
-        "text": "The duo grid now says how far back each player's match history reaches. A pairing can only be spotted in a game that is inside both players' histories, and those start on different dates — so two people can have played together without it showing up here."
+        "text": "The duo grid now says how far back each player's match history reaches. A pairing can only be spotted in a game that is inside both players' histories, and those start on different dates, so two people can have played together without it showing up here."
       }
     ]
   },
@@ -139,11 +169,11 @@
       },
       {
         "type": "fixed",
-        "text": "The leaderboard is ordered when the page is built, so a refresh used to update everyone's LP without moving them — leaving #1 on 80 LP sitting above #2 on 26 LP. Rows now re-sort and renumber, medals included, and each player's card badge follows."
+        "text": "The leaderboard is ordered when the page is built, so a refresh used to update everyone's LP without moving them, leaving #1 on 80 LP sitting above #2 on 26 LP. Rows now re-sort and renumber, medals included, and each player's card badge follows."
       },
       {
         "type": "improved",
-        "text": "Season totals and the champion breakdown still come from the published snapshot — those need a player's whole season, which a browser cannot rebuild. The status line says what did and did not move."
+        "text": "Season totals and the champion breakdown still come from the published snapshot, those need a player's whole season, which a browser cannot rebuild. The status line says what did and did not move."
       }
     ]
   },
