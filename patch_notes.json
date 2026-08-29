@@ -1,6 +1,36 @@
 [
   {
     "date": "2026-08-29",
+    "title": "Friends, Overview and the rank tables",
+    "items": [
+      {
+        "type": "improved",
+        "text": "The Friends tab shows everyone at once. The buttons across the top now jump to a player and ring their card instead of hiding the other six, so you can still compare people. Press the same button again to clear it."
+      },
+      {
+        "type": "added",
+        "text": "Rank emblems now sit on each player — on their card, on their button, and beside every rank in the tables."
+      },
+      {
+        "type": "fixed",
+        "text": "Platinum and Emerald were two shades of the same green, which made the two most common ranks in this group hard to tell apart anywhere on the site. Platinum is now the turquoise it has in game."
+      },
+      {
+        "type": "improved",
+        "text": "Overview leads with the leaderboard, then this week, then highlights, and carries a row of group totals: games and hours this season and this week, the combined winrate, and how many different champions have been played."
+      },
+      {
+        "type": "improved",
+        "text": "The game-by-game table under the LP chart is one list for everyone, newest game first, instead of being grouped by player with today's games buried at the bottom of a block."
+      },
+      {
+        "type": "fixed",
+        "text": "The rank progress table listed every daily snapshot for every player, so hundreds of rows read \"—\" in the Change column. It now shows only the days a rank actually moved — twenty rows instead of several hundred."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "The duo table ranks by synergy",
     "items": [
       {
