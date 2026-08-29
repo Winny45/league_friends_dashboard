@@ -1,6 +1,44 @@
 [
   {
     "date": "2026-08-29",
+    "title": "One key per chart, and who carries whom",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Champions whose name has an apostrophe or a space had no icon anywhere, because the icon list is keyed by display name while match data reports Riot's internal key. K'Sante, Kai'Sa, Cho'Gath, Wukong and the rest now resolve, which is why Neel had no face. All 111 champions in your season now have one."
+      },
+      {
+        "type": "improved",
+        "text": "Both charts drop the stack of names beside the lines. The legend underneath was already the key, so that was the same key drawn twice, and it now carries the LP moved and the rank change. The chart gets the freed width."
+      },
+      {
+        "type": "improved",
+        "text": "Promotions in the game by game table say how much LP the game was worth, and read Promoted rather than promoted."
+      },
+      {
+        "type": "improved",
+        "text": "The stripe on a shared game is made from the colours of the players who were in it, so it says who you were with rather than only that you were with someone."
+      },
+      {
+        "type": "improved",
+        "text": "The 7 day trend column shows the LP travelled alongside a rank change."
+      },
+      {
+        "type": "improved",
+        "text": "Boost now compares the two players inside the games they played together, rather than each of them against their own average elsewhere. Same games, same map, same opponents, same result, so the comparison is like for like."
+      },
+      {
+        "type": "fixed",
+        "text": "The stacks table no longer calls four players a four stack. Flex cannot be queued as four, so four of you on a team is a five man whose fifth player is not in this group; those rows are marked +1."
+      },
+      {
+        "type": "improved",
+        "text": "Standings chips above the chart are back to rank and games, with the movement in the legend where it is not repeated three times."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "Dark only, sortable duo tables, and stacks",
     "items": [
       {
