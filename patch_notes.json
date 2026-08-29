@@ -1,6 +1,72 @@
 [
   {
     "date": "2026-08-29",
+    "title": "Duos are Solo/Duo, stacks are Flex, and the game list refreshes",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Rank emblems were missing everywhere. Community Dragon removed the folder the URLs pointed at, so every tier crest on the page had been 404ing. They now come from the supported path, and being SVG they are under 2 KB each instead of 230 KB."
+      },
+      {
+        "type": "fixed",
+        "text": "A second refresh in the same session added the same games to a card again. The list of games already seen was read from a constant baked into the page at build time, so every game the first refresh found looked new to the second one. That list is now kept up to date as games arrive."
+      },
+      {
+        "type": "fixed",
+        "text": "\"Every game, newest first\" never picked up games played since the page was published. The rows are ordered across all seven players at once and each carries an LP step that only exists once the whole timeline is rebuilt, so it could not be patched a row at a time. It is now rebuilt in the browser from the same data the chart is, and the self-check that guards the chart against drift covers the table too."
+      },
+      {
+        "type": "fixed",
+        "text": "Every LP figure in that table had lost its green or red. The class saying which way the LP went was being overwritten by the class marking a shared game."
+      },
+      {
+        "type": "fixed",
+        "text": "The champion column did not line up on tinted rows: the cell was laid out as a flex container, so it sized to its contents rather than to the row and its background sat short of the rest."
+      },
+      {
+        "type": "fixed",
+        "text": "The rank progress table said \"since tracking began\" but tagged rows that stayed inside one division with \"(30d)\" and rows that changed rank with nothing. It now measures exactly the window the chart draws, and the header names it."
+      },
+      {
+        "type": "improved",
+        "text": "Duo synergy is Ranked Solo/Duo only, both the grid and the pair table. A duo is a Solo/Duo idea: two people who chose each other out of a lobby of ten. Two names on the same Flex team usually means a trio or a five man, and counting those as a pair credited a pairing with games three or five people played."
+      },
+      {
+        "type": "improved",
+        "text": "The grid's diagonal now says how many games it rests on and is coloured against an even 50%. It was the one cell with no game count and no colour, and it is the number every other cell in that row is measured against."
+      },
+      {
+        "type": "improved",
+        "text": "Synergy shows a % and says what it is: their winrate together minus the winrate those two average apart. +5% means the pair wins five games in a hundred more often than the two of them usually do."
+      },
+      {
+        "type": "improved",
+        "text": "Trios and five mans is where Flex and Ranked 5s live, and only exact lineups count. A group is only ever credited with games that exact group played: two different five mans sharing four names do not add up to a four man that never queued."
+      },
+      {
+        "type": "fixed",
+        "text": "A counter pick needed a real margin. Three wins in five beats a 50% player, and that is what a coin does five times, but it was being tagged. The matchup now has to beat their overall winrate by more than a run that length could produce on its own."
+      },
+      {
+        "type": "fixed",
+        "text": "LP per win and per loss was printing numbers the snapshots did not support: one player's whole reading came from a single gap recording one loss against 44 LP. It now needs three usable gaps and fifteen games, both figures have to land inside the range a ranked game can be worth, and the fit has to reproduce the gaps it came from to within a few LP a game. Gaps where nothing moved across real games, or that move more per game than a game can be worth, are thrown out rather than averaged in. Most players show a dash, which is the honest answer this early."
+      },
+      {
+        "type": "improved",
+        "text": "fetch_data.py now records the time a rank snapshot was taken, not just the date. A reading taken at midday is not a statement about that evening's games, and the LP fit sharpens on its own as timed snapshots accumulate."
+      },
+      {
+        "type": "added",
+        "text": "Two figures on each card: how many Solo/Duo games were played with one of the group, and how many without, each with a percentage."
+      },
+      {
+        "type": "improved",
+        "text": "Lane matchups moved above role breakdown on each card."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "Charts get a side key and a projected line; cards get matchups and LP rates",
     "items": [
       {

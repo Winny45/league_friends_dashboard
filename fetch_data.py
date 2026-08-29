@@ -528,12 +528,18 @@ def record_rank_snapshots(history, results, today_key):
     """Upsert one snapshot per (friend, queue) per day — re-running multiple
     times in a day overwrites today's snapshot rather than duplicating it."""
     by_key = {(h["label"], h["queue"], h["date"]): h for h in history}
+    now_ms = datetime.now().timestamp() * 1000
     for r in results:
         for queue_key, entry in (("solo", r["ranked"].get("solo")), ("flex", r["ranked"].get("flex"))):
             if not entry or not entry.get("tier"):
                 continue
             snap = {
                 "date": today_key,
+                # When the reading was taken, not just which day. A snapshot
+                # recorded at midday is not a statement about that evening's
+                # games, and without the time the dashboard has to guess that
+                # every game on the date belongs to the gap ending on it.
+                "atMs": int(now_ms),
                 "label": r["label"],
                 "queue": queue_key,
                 "tier": entry["tier"],
