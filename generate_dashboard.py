@@ -4668,9 +4668,29 @@ def build_html(data):
             modalOk.disabled = true;
             modalMsg.className = 'modal-msg';
             modalMsg.textContent = 'Checking the key with Riot…';
+
+            // Riot rejects a development key for a short window after issuing
+            // it. Reporting that as "expired, generate a fresh one" is the
+            // worst possible advice: the replacement behaves identically, so
+            // every new key looks rejected and you end up generating them in
+            // a loop. Retry a few times before believing the rejection.
+            //
             // A status lookup needs no account data, so this validates the key
             // without spending a call on anybody's match history.
-            riot(platform, '/lol/status/v4/platform-data', key).then(function () {{
+            function verify(attempt) {{
+              return riot(platform, '/lol/status/v4/platform-data', key)
+                .catch(function (err) {{
+                  if (err && err.rejected && attempt < 3) {{
+                    modalMsg.className = 'modal-msg';
+                    modalMsg.textContent = 'Riot has not activated this key yet — ' +
+                      'retrying in 5s (' + attempt + ' of 3)…';
+                    return new Promise(function (go) {{ setTimeout(go, 5000); }})
+                      .then(function () {{ return verify(attempt + 1); }});
+                  }}
+                  throw err;
+                }});
+            }}
+            verify(1).then(function () {{
               saveKey(key, remember);
               modalOk.disabled = false;
               modalMsg.className = 'modal-msg ok';
@@ -4685,7 +4705,9 @@ def build_html(data):
               modalOk.disabled = false;
               modalMsg.className = 'modal-msg';
               modalMsg.textContent = err.rejected
-                ? 'Riot rejected that key. Development keys expire after 24 hours — generate a fresh one.'
+                ? 'Riot is still rejecting that key. A newly generated key can take a minute ' +
+                  'to start working — wait a moment and press Save key again. If it was ' +
+                  'generated more than 24 hours ago it has expired instead.'
                 : ('Could not check the key: ' + err.message);
             }});
           }}

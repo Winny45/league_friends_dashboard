@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-08-29",
+    "title": "Newly generated API keys are no longer rejected",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Riot refuses a development key for up to a minute after issuing it. The key box treated that as \"expired, generate a fresh one\" — advice that produces another key which behaves the same way, so every key you made looked rejected. It now retries before believing the rejection, and says to wait rather than to generate another."
+      },
+      {
+        "type": "fixed",
+        "text": "A key entered in one tab is now picked up by other tabs left open, instead of those tabs carrying on with the old one and still reporting it as rejected."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "Duo synergy rebuilt as a grid",
     "items": [
       {
