@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-08-30",
+    "title": "Friend cards read like the game list",
+    "items": [
+      {
+        "type": "improved",
+        "text": "A game on a friend card that was shared with somebody else is now tinted with that pairing's own blended colour, the same treatment the game list on the Rank progress tab already had. The same duo is the same colour on both pages, so a card shows at a glance which games were played alongside one of the group and with whom. No gap between rows here: a card lists one player, so consecutive rows are always separate games rather than the two halves of one."
+      },
+      {
+        "type": "improved",
+        "text": "The four sections on each card say what they contain and in what order: Every game, newest first; Every champion, most played first; Every matchup, most played first; Every role, most played first."
+      }
+    ]
+  },
+  {
     "date": "2026-08-29",
     "title": "Duos are Solo/Duo, stacks are Flex, and the game list refreshes",
     "items": [
