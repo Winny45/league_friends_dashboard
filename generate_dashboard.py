@@ -1052,26 +1052,29 @@ def render_card_rank(entry, peak):
     the eye lands first.
     """
     if not entry or not entry.get("tier"):
-        now_html = ('<div class="cr-now"><span class="rank-icon rank-icon-ph" '
+        now_html = ('<div class="cr-now" data-cr-now><span class="rank-icon rank-icon-ph" '
                     'style="width:34px;height:34px;"></span>'
                     '<div><b class="cr-tier">Unranked</b></div></div>')
     else:
         var = tier_var(entry.get("tier"))
         now_html = (
-            f'<div class="cr-now">{render_rank_icon(entry.get("tier"), size=34)}'
+            f'<div class="cr-now" data-cr-now>{render_rank_icon(entry.get("tier"), size=34)}'
             f'<div><b class="cr-tier" style="color:var({var});">'
             f'{rank_label(entry).split(" &middot;")[0]}</b>'
             f'<span class="cr-lp">{entry.get("leaguePoints", 0)} LP</span></div></div>'
         )
-    peak_html = ""
-    if peak and peak.get("tier"):
-        peak_html = (
-            f'<div class="cr-peak" title="Highest Solo/Duo rank recorded this season">'
-            f'<span class="cr-peak-label">Peak</span>'
-            f'{render_rank_icon(peak.get("tier"), size=16)}'
-            f'<span>{rank_label(peak).split(" &middot;")[0]}</span>'
-            f'<span class="cr-lp">{peak.get("leaguePoints", 0)} LP</span></div>'
-        )
+    # Always rendered, even with no recorded peak, so a refresh that finds a
+    # rank above anything on record has somewhere to put it.
+    has_peak = bool(peak and peak.get("tier"))
+    peak_html = (
+        f'<div class="cr-peak" data-cr-peak data-peak-lp="{ladder_lp(peak) if has_peak else 0}"'
+        f'{"" if has_peak else " hidden"}'
+        f' title="Highest Solo/Duo rank recorded this season">'
+        f'<span class="cr-peak-label">Peak</span>'
+        f'{render_rank_icon((peak or {}).get("tier"), size=16)}'
+        f'<span>{rank_label(peak).split(" &middot;")[0] if has_peak else ""}</span>'
+        f'<span class="cr-lp">{(peak or {}).get("leaguePoints", 0)} LP</span></div>'
+    )
     return f'<div class="card-rank">{now_html}{peak_html}</div>'
 
 
@@ -1252,11 +1255,11 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       </header>
 
       <div class="rank-rows">
-        <div class="rank-row">
-          <span class="rank-label rank-cell" style="color:var({solo_var})">{render_rank_icon((solo or {}).get("tier"), size=22)}{rank_label(solo)}</span>
+        <div class="rank-row" data-rank-row="solo">
+          <span class="rank-label rank-cell" data-cell="rank" style="color:var({solo_var})">{render_rank_icon((solo or {}).get("tier"), size=22)}{rank_label(solo)}</span>
           <span class="muted small">Solo/Duo</span>
           {winrate_bar(solo_wr, "var(--series-1)")}
-          <span class="wr-text">{esc(solo_wr) + '%' if solo_wr is not None else '–'} ({esc((solo or {}).get('wins', 0))}W {esc((solo or {}).get('losses', 0))}L)</span>
+          <span class="wr-text" data-cell="wr-text">{esc(solo_wr) + '%' if solo_wr is not None else '–'} ({esc((solo or {}).get('wins', 0))}W {esc((solo or {}).get('losses', 0))}L)</span>
         </div>
         <div class="rank-row">
           <span class="rank-label rank-cell" style="color:var({flex_var})">{render_rank_icon((flex or {}).get("tier"), size=22)}{rank_label(flex)}</span>
@@ -3981,11 +3984,20 @@ window.LpChart = (function () {
     var dateKey = today.getFullYear() + '-' +
                   ('0' + (today.getMonth() + 1)).slice(-2) + '-' +
                   ('0' + today.getDate()).slice(-2);
-    var touched = 0;
+    var touched = 0, ranked = 0;
     var friends = D.friends.map(function (f) {
       var copy = { label: f.label, history: f.history.slice(), matches: f.matches.slice() };
       var l = live[f.label];
       if (!l || !l.tier) return copy;
+      // The live reading becomes today's snapshot whether or not games came
+      // with it. Without this the "Rank now" column under the chart kept
+      // showing the published rank after a refresh that found no new games,
+      // while the leaderboard three inches above it showed the live one.
+      var lastHist = copy.history[copy.history.length - 1];
+      var snap = { date: dateKey, tier: l.tier, rank: l.rank, leaguePoints: l.leaguePoints };
+      if (lastHist && lastHist.date === dateKey) copy.history[copy.history.length - 1] = snap;
+      else copy.history.push(snap);
+      ranked++;
       var added = (l.matches || []).filter(function (m) {
         return m.queue === 'Ranked Solo/Duo';
       }).map(function (m) {
@@ -3993,13 +4005,8 @@ window.LpChart = (function () {
                  champion: m.champion, matchId: m.matchId };
       });
       if (!added.length) return copy;
-      // The live reading becomes today's snapshot, so the new games are an
-      // ordinary segment between two measured points · the same shape every
-      // other part of this chart is built from.
-      var lastHist = copy.history[copy.history.length - 1];
-      var snap = { date: dateKey, tier: l.tier, rank: l.rank, leaguePoints: l.leaguePoints };
-      if (lastHist && lastHist.date === dateKey) copy.history[copy.history.length - 1] = snap;
-      else copy.history.push(snap);
+      // With games, the new snapshot closes an ordinary segment: the same
+      // shape every other part of this chart is built from.
       copy.matches = copy.matches.concat(added);
       // A game two of them just played has to reach the duo map as well, or
       // the list draws it as two unrelated rows.
@@ -4013,7 +4020,7 @@ window.LpChart = (function () {
       touched += added.length;
       return copy;
     });
-    if (!touched) return 0;
+    if (!touched && !ranked) return 0;
     var state = computeState(friends);
     if (!state) return 0;
     var host = document.querySelector('[data-lp-charts]');
@@ -5839,9 +5846,25 @@ def build_html(data):
 
       function rankText(e) {{
         if (!e || !e.tier) return 'Unranked';
+        return rankShort(e) + ' · ' + (e.leaguePoints || 0) + ' LP';
+      }}
+
+      // Tier and division without the LP, for the card's corner where the LP
+      // sits on its own line underneath.
+      function rankShort(e) {{
+        if (!e || !e.tier) return 'Unranked';
         var tier = e.tier.charAt(0) + e.tier.slice(1).toLowerCase();
-        if (CFG.apexTiers.indexOf(e.tier) !== -1) return tier + ' · ' + (e.leaguePoints || 0) + ' LP';
-        return tier + ' ' + (e.rank || '') + ' · ' + (e.leaguePoints || 0) + ' LP';
+        return CFG.apexTiers.indexOf(e.tier) !== -1 ? tier : tier + ' ' + (e.rank || '');
+      }}
+
+      function rankIconHtml(e, size) {{
+        if (!e || !e.tier) {{
+          return '<span class="rank-icon rank-icon-ph" style="width:' + size +
+                 'px;height:' + size + 'px;"></span>';
+        }}
+        return '<img src="' + CFG.rankIconBase.replace('{{tier}}', e.tier.toLowerCase()) +
+               '" alt="" class="rank-icon" width="' + size + '" height="' + size +
+               '" onerror="this.style.visibility=&#x27;hidden&#x27;">';
       }}
 
       // ---- New games -----------------------------------------------------
@@ -6114,22 +6137,59 @@ def build_html(data):
         var rankCell = row.querySelector('[data-cell="rank"]');
         var wrCell = row.querySelector('[data-cell="winrate"]');
         var recCell = row.querySelector('[data-cell="record"]');
+        var v = CFG.tierVars[entry && entry.tier] || '--tier-unranked';
         if (rankCell) {{
-          var v = CFG.tierVars[entry && entry.tier] || '--tier-unranked';
           rankCell.style.color = 'var(' + v + ')';
-          var icon = '';
-          if (entry && entry.tier) {{
-            var src = CFG.rankIconBase.replace('{{tier}}', entry.tier.toLowerCase());
-            icon = '<img src="' + src + '" alt="" class="rank-icon" width="20" height="20" ' +
-                   'onerror="this.style.visibility=\\'hidden\\'">';
-          }}
-          rankCell.innerHTML = icon + rankText(entry);
+          rankCell.innerHTML = rankIconHtml(entry, 20) + rankText(entry);
         }}
         var wins = (entry && entry.wins) || 0, losses = (entry && entry.losses) || 0;
         var total = wins + losses;
-        if (wrCell) wrCell.textContent = total ? (Math.round(wins / total * 1000) / 10) + '%' : '–';
+        var wrText = total ? (Math.round(wins / total * 1000) / 10) + '%' : '\u2013';
+        if (wrCell) wrCell.textContent = wrText;
         if (recCell) recCell.textContent = wins + 'W / ' + losses + 'L';
         row.classList.add('row-live');
+
+        // The same reading, on the card. It used to stop at the leaderboard,
+        // so a refresh left the rank in the card's corner and the rank row
+        // underneath it showing whatever was true when the page was built ·
+        // two different answers to the same question on one screen.
+        var card = document.getElementById('friend-' + label.toLowerCase());
+        if (!card) return;
+        card.style.setProperty('--card-tier', 'var(' + v + ')');
+        var now = card.querySelector('[data-cr-now]');
+        if (now) {{
+          now.innerHTML = rankIconHtml(entry, 34) +
+            '<div><b class="cr-tier" style="color:var(' + v + ');">' + rankShort(entry) +
+            '</b><span class="cr-lp">' + ((entry && entry.leaguePoints) || 0) + ' LP</span></div>';
+        }}
+        // A live reading above anything on record is the new peak. Leaving
+        // it alone printed "Diamond IV" with "Peak Emerald II" underneath.
+        var peakEl = card.querySelector('[data-cr-peak]');
+        if (peakEl && entry && entry.tier) {{
+          var live = ladderScore(entry);
+          if (live > (parseFloat(peakEl.getAttribute('data-peak-lp')) || 0)) {{
+            peakEl.setAttribute('data-peak-lp', live);
+            peakEl.hidden = false;
+            peakEl.innerHTML = '<span class="cr-peak-label">Peak</span>' +
+              rankIconHtml(entry, 16) + '<span>' + rankShort(entry) + '</span>' +
+              '<span class="cr-lp">' + (entry.leaguePoints || 0) + ' LP</span>';
+          }}
+        }}
+        var soloRow = card.querySelector('[data-rank-row="solo"]');
+        if (soloRow) {{
+          var lbl = soloRow.querySelector('[data-cell="rank"]');
+          if (lbl) {{
+            lbl.style.color = 'var(' + v + ')';
+            lbl.innerHTML = rankIconHtml(entry, 22) + rankText(entry);
+          }}
+          var fill = soloRow.querySelector('.wr-fill');
+          if (fill) fill.style.width = (total ? (wins / total * 100) : 0) + '%';
+          var txt = soloRow.querySelector('[data-cell="wr-text"]');
+          if (txt) txt.textContent = wrText + ' (' + wins + 'W ' + losses + 'L)';
+        }}
+        // No .row-live on the card: that rule tints every td it contains, and
+        // a card contains four tables. The banner and the leaderboard already
+        // say the reading is live.
       }}
 
       function run(key) {{

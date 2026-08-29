@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-08-30",
+    "title": "A live rank reading reaches the whole page",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Refreshing updated the leaderboard and nothing else. The rank in each card's top corner, the Solo/Duo row underneath it with its winrate bar and record, the card's accent colour, and the \"Rank now\" column under the LP chart all kept showing whatever was true when the page was built, so one screen gave two different answers to the same question. They all follow the live reading now."
+      },
+      {
+        "type": "fixed",
+        "text": "The \"Rank now\" column only updated when the refresh also found new games, because the live reading was only fed to the chart alongside them. It is applied on its own now."
+      },
+      {
+        "type": "fixed",
+        "text": "A live rank above anything on record is treated as the new peak, instead of printing a current rank with a lower peak underneath it."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Friend cards read like the game list",
     "items": [
       {
