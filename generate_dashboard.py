@@ -2057,7 +2057,13 @@ def compute_party_synergy(friends, min_size=3):
         rows.append({
             "members": list(members),
             "vars": [friend_var(min(order[x], len(FRIEND_PALETTE) - 1)) for x in members],
+            # Flex can be queued as one, two, three or five, never four, so four
+            # tracked names on a team is a five man premade whose fifth player
+            # is not in this group rather than a "four stack", which the game
+            # does not let you make.
             "size": len(members),
+            "kind": "Trio" if len(members) == 3 else "Five-man",
+            "partial": len(members) == 4,
             "games": g["games"], "wins": g["wins"], "losses": g["games"] - g["wins"],
             "winrate": winrate, "solo": g["solo"], "flex": g["flex"],
             "baseline": baseline,
@@ -2225,7 +2231,8 @@ def render_duo_synergy_panel(friends):
             for k, (m, v) in enumerate(zip(r["members"], r["vars"]))
         )
         + f'</td>'
-        f'<td class="num muted">{r["size"]}</td>'
+        f'<td class="muted nowrap">{r["kind"]}'
+        f'{" <span class='party-partial' title='Four tracked names, so the fifth player is not one of you'>+1</span>" if r["partial"] else ""}'
         f'{syn_cell(r)}'
         f'<td class="num"><b>{r["winrate"]}%</b></td>'
         f'<td class="num muted">{r["wins"]}W {r["losses"]}L</td>'
@@ -2247,12 +2254,13 @@ def render_duo_synergy_panel(friends):
         party_table = f'''
       <details class="matches-details duo-table-details" style="margin-top:12px;">
         <summary>Trios and full stacks</summary>
-        <p class="muted small" style="margin:8px 0 4px;">Lineups of three or more on the same team,
-        counted as whole lineups rather than as every pair inside them. Solo/Duo only allows two
-        premades, so these are Flex. Click a heading to sort.</p>
+        <p class="muted small" style="margin:8px 0 4px;">Lineups on the same team, counted whole
+        rather than as every pair inside them. Flex can be queued as two, three or five but never
+        four, so a row of four names is a five man whose fifth player is not one of you, marked +1.
+        Solo/Duo caps at two, so everything here is Flex. Click a heading to sort.</p>
         <table class="matches-table duo-table" data-sortable>
           <thead><tr><th class="num">#</th><th class="sortable" data-key="lineup">Lineup</th>
-          <th class="num sortable" data-key="size" data-numeric>Size</th>
+          <th class="sortable" data-key="size" data-numeric>Party</th>
           <th class="num sortable" data-key="syn" data-numeric>Synergy</th>
           <th class="num sortable" data-key="wr" data-numeric>Winrate</th>
           <th class="num">Record</th>
@@ -3812,6 +3820,7 @@ def build_html(data):
   th.sortable.sorted::after {{ content: "▾"; opacity: 1; }}
   th.sortable.sorted[data-dir="asc"]::after {{ content: "▴"; }}
   .boost-val {{ color: var(--good); font-weight: 700; }}
+  .party-partial {{ color: var(--muted); font-size: 10px; }}
   .syn {{ min-width: 96px; }}
   .syn-val {{ display: block; font-weight: 700; font-variant-numeric: tabular-nums; }}
   .syn.up .syn-val {{ color: var(--good); }}
