@@ -1,6 +1,52 @@
 [
   {
     "date": "2026-08-29",
+    "title": "Charts get a side key and a projected line; cards get matchups and LP rates",
+    "items": [
+      {
+        "type": "improved",
+        "text": "Both rank charts now put the key beside the plot with even gaps between names, instead of a row of chips above the chart and a legend below it. The season numbers move under the chart as a table: games, net LP, winrate and record, one row per player, so they can be compared down a column."
+      },
+      {
+        "type": "added",
+        "text": "A dashed projection on the LP per game chart. Each line is extended to the game count of whoever has played most, one game at a time at that player's own winrate and their own average LP per win and per loss, so it has the ups and downs a real climb has rather than being a straight diagonal."
+      },
+      {
+        "type": "improved",
+        "text": "Every pair is now listed twice, once under each name, so either player can be found in the first column. A dot in front of each pair carries the pairing's blended colour, the same one their shared games are tinted with on the Rank progress tab."
+      },
+      {
+        "type": "improved",
+        "text": "\"Boost\" is now \"Booster\", which is what the column actually names."
+      },
+      {
+        "type": "improved",
+        "text": "The stacks table says when a party size has no games rather than leaving a gap that looks like a bug, and explains that the 5s column is the Ranked 5s queue Riot removed from the game in 2016. It is still requested on every fetch and will fill in on its own if that queue ever returns."
+      },
+      {
+        "type": "added",
+        "text": "Each friend card shows their current Solo/Duo rank in the top right with the emblem and LP, and their season peak beneath it."
+      },
+      {
+        "type": "added",
+        "text": "A Top Champions section above Highest Mastery. The rating starts from that player's own winrate, adds how far each champion beats it (pulled back toward nothing while the sample is small, and halved for the share of games played in matchups that champion is already favoured in), then adds up to 16 points for volume. Games and winrate on their own each pick the wrong champion."
+      },
+      {
+        "type": "added",
+        "text": "LP per win and per loss, for Solo/Duo and Flex, across the tracked window and across the last 50 games. Riot never reports the LP change for one game, so this is solved from the rank snapshots: every gap between two of them gives one equation, and the two figures are fitted across all of them. A queue without at least two differently shaped gaps shows a dash rather than a guess."
+      },
+      {
+        "type": "added",
+        "text": "A lane matchups table per player: winrate and average KDA on each champion against each opposing laner faced five or more times, tagged a counter pick where they win it more often than they win in general. Riot only returns the lane opponent with the full match detail, so games cached before that was collected do not carry it; the table says how much of the season it covers, and fetch_data.py --refetch-details fills in the rest."
+      },
+      {
+        "type": "fixed",
+        "text": "The nemesis line is gone. One champion's name and a loss count said less than the matchup table now answers with a winrate and a KDA beside it."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "Shared games read as one game",
     "items": [
       {
