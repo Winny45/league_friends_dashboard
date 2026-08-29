@@ -311,13 +311,21 @@ def party_band(match_id, label, own_var):
     mates = _DUO_CTX["map"].get((match_id, label)) or []
     if not mates:
         return ""
-    colours = [own_var] + [v for _l, v in mates]
-    step = 100 / len(colours)
-    stops = ", ".join(
-        f"var({c}) {i * step:.0f}%, var({c}) {(i + 1) * step:.0f}%"
-        for i, c in enumerate(colours)
-    )
-    return f"--band: linear-gradient(180deg, {stops});"
+    # One blended colour, not a stack of segments. Segments were built from
+    # each row's own player outward, so the two rows of a game drew the same
+    # colours in opposite order and the bar flipped halfway down. An average
+    # is the same for every row of the game by construction, and gives the
+    # pairing an identity of its own: Neel with Winny is one colour wherever
+    # it appears.
+    return f"--band: {blend_vars(sorted([own_var] + [v for _l, v in mates]))};"
+
+
+def blend_vars(vars_):
+    """Equal-weight mix of a set of CSS colour variables."""
+    acc = f"var({vars_[0]})"
+    for i, v in enumerate(vars_[1:], start=1):
+        acc = f"color-mix(in srgb, {acc} {i / (i + 1) * 100:.0f}%, var({v}))"
+    return acc
 
 
 def render_duo_mates(match_id, label):
@@ -1487,8 +1495,20 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             for n, p in enumerate(tl)
             if p["match"]
         ),
-        key=lambda e: e["when"], reverse=True,
+        # Grouped by match inside a timestamp so the rows of one game are
+        # always adjacent, whatever order the friends were processed in.
+        key=lambda e: (-e["when"], e["match"].get("matchId") or "", e["label"]),
     )
+
+    # Which rows open and close a game, so the block is drawn once around the
+    # group rather than repeated on every row inside it.
+    group_pos = {}
+    for n, e in enumerate(lp_events):
+        mid = e["match"].get("matchId")
+        group_pos[id(e)] = (
+            n == 0 or lp_events[n - 1]["match"].get("matchId") != mid,
+            n == len(lp_events) - 1 or lp_events[n + 1]["match"].get("matchId") != mid,
+        )
 
     def lp_row(e):
         p, m = e["point"], e["match"]
@@ -1496,8 +1516,14 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         cls = "up" if (p["delta"] or 0) >= 0 else "down"
         party = party_size(m.get("matchId"), e["label"])
         band = party_band(m.get("matchId"), e["label"], e["var"])
+        first, last = group_pos[id(e)]
+        cls = ""
+        if party > 1:
+            cls = "party party-" + str(min(party, 5))
+            cls += " g-first" if first else ""
+            cls += " g-last" if last else ""
         return (
-            f'<tr class="{"party party-" + str(min(party, 5)) if party > 1 else ""}"'
+            f'<tr class="{cls}"'
             f'{f" style=\"{band}\"" if band else ""}>'
             f'<td class="muted small nowrap">{esc(format_match_when(m))}</td>'
             f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b>'
@@ -1532,8 +1558,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       {omitted_note}
       <details class="matches-details" style="margin-top:10px;">
         <summary>Every game, newest first</summary>
-        <p class="muted small" style="margin:8px 0 4px;">Games two or more of them played
-        together are striped down the left in the colours of whoever was on that team.</p>
+        <p class="muted small" style="margin:8px 0 4px;">A game two or more of them played
+        together is drawn as one block, tinted with the blend of their colours, so a pairing
+        looks the same wherever it appears.</p>
         <table class="matches-table lp-table">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
@@ -2043,14 +2070,21 @@ def compute_party_synergy(friends, min_size=3):
             if len(side) < min_size:
                 continue
             m0 = next(m for l, m in entries if l == side[0])
-            g = groups.setdefault(tuple(side), {"games": 0, "wins": 0, "solo": 0, "flex": 0})
+            # Solo/Duo cannot hold three premades, so a lineup here is Flex or the
+            # old Ranked 5s queue; a "solo" column could only ever be empty.
+            g = groups.setdefault(tuple(side), {"games": 0, "wins": 0, "fives": 0, "flex": 0})
             g["games"] += 1
             if won:
                 g["wins"] += 1
-            g["solo" if m0.get("queue") == "Ranked Solo/Duo" else "flex"] += 1
+            g["fives" if m0.get("queue") == "Ranked 5s" else "flex"] += 1
 
     rows = []
     for members, g in groups.items():
+        # Three or five only. Flex takes 1, 2, 3 or 5, so four tracked names on
+        # a team is somebody else's five man with four of you in it, not a
+        # lineup anyone queued as.
+        if len(members) not in (3, 5):
+            continue
         winrate = round(100 * g["wins"] / g["games"], 1)
         base = [own[x] for x in members if x in own]
         baseline = round(sum(base) / len(base), 1) if base else None
@@ -2063,9 +2097,8 @@ def compute_party_synergy(friends, min_size=3):
             # does not let you make.
             "size": len(members),
             "kind": "Trio" if len(members) == 3 else "Five-man",
-            "partial": len(members) == 4,
             "games": g["games"], "wins": g["wins"], "losses": g["games"] - g["wins"],
-            "winrate": winrate, "solo": g["solo"], "flex": g["flex"],
+            "winrate": winrate, "fives": g["fives"], "flex": g["flex"],
             "baseline": baseline,
             "lift": round(winrate - baseline, 1) if baseline is not None else None,
         })
@@ -2222,7 +2255,7 @@ def render_duo_synergy_panel(friends):
         f'data-size="{r["size"]}" '
         f'data-syn="{r["lift"] if r["lift"] is not None else -999}" '
         f'data-wr="{r["winrate"]}" data-games="{r["games"]}" '
-        f'data-solo="{r["solo"]}" data-flex="{r["flex"]}">'
+        f'data-fives="{r["fives"]}" data-flex="{r["flex"]}">'
         f'<td class="num muted small seq"></td>'
         f'<td class="duo-pair">'
         + "".join(
@@ -2231,15 +2264,14 @@ def render_duo_synergy_panel(friends):
             for k, (m, v) in enumerate(zip(r["members"], r["vars"]))
         )
         + f'</td>'
-        f'<td class="muted nowrap">{r["kind"]}'
-        f'{" <span class='party-partial' title='Four tracked names, so the fifth player is not one of you'>+1</span>" if r["partial"] else ""}'
+        f'<td class="muted nowrap">{r["kind"]}</td>'
         f'{syn_cell(r)}'
         f'<td class="num"><b>{r["winrate"]}%</b></td>'
         f'<td class="num muted">{r["wins"]}W {r["losses"]}L</td>'
         f'<td class="num">{r["games"]}'
         f'{" <span class=\'duo-thin\'>!</span>" if r["games"] < DUO_THIN_GAMES else ""}</td>'
-        f'<td class="num muted">{r["solo"] or "&ndash;"}</td>'
         f'<td class="num muted">{r["flex"] or "&ndash;"}</td>'
+        f'<td class="num muted">{r["fives"] or "&ndash;"}</td>'
         f'</tr>'
         for r in parties
     )
@@ -2265,8 +2297,8 @@ def render_duo_synergy_panel(friends):
           <th class="num sortable" data-key="wr" data-numeric>Winrate</th>
           <th class="num">Record</th>
           <th class="num sortable sorted" data-key="games" data-numeric data-dir="desc">Games</th>
-          <th class="num sortable" data-key="solo" data-numeric>Solo</th>
-          <th class="num sortable" data-key="flex" data-numeric>Flex</th></tr></thead>
+          <th class="num sortable" data-key="flex" data-numeric>Flex</th>
+          <th class="num sortable" data-key="fives" data-numeric>5s</th></tr></thead>
           <tbody>{party_rows}</tbody>
         </table>
       </details>'''
@@ -3820,7 +3852,6 @@ def build_html(data):
   th.sortable.sorted::after {{ content: "▾"; opacity: 1; }}
   th.sortable.sorted[data-dir="asc"]::after {{ content: "▴"; }}
   .boost-val {{ color: var(--good); font-weight: 700; }}
-  .party-partial {{ color: var(--muted); font-size: 10px; }}
   .syn {{ min-width: 96px; }}
   .syn-val {{ display: block; font-weight: 700; font-variant-numeric: tabular-nums; }}
   .syn.up .syn-val {{ color: var(--good); }}
@@ -3862,15 +3893,19 @@ def build_html(data):
   /* Games two or more of them were in together. The rows are already next to
      each other because the table is ordered by time; the band ties them into
      one game rather than leaving them as rows sharing a timestamp. */
-  .lp-table tr.party td {{ background: rgba(255,255,255,0.03); }}
-  /* The stripe is made of the players' own colours, so it says who the game
-     was shared with and not merely that it was. */
+  /* One game, one block. The rows of a shared game are adjacent, so the rule
+     between them comes out and the pairing's colour runs down the side of the
+     whole group. A gap under the last row separates one game from the next,
+     which matters most during a long duo queue session where every row would
+     otherwise be tinted the same. */
+  .lp-table tr.party td {{
+    background: color-mix(in srgb, var(--band) 12%, transparent);
+    border-bottom-color: transparent;
+  }}
+  .lp-table tr.party.g-last td {{ border-bottom: 7px solid var(--surface-1); }}
   .lp-table tr.party td:first-child {{
-    background-image: var(--band);
-    background-size: 4px 100%;
-    background-repeat: no-repeat;
-    background-position: left center;
-    padding-left: 12px;
+    box-shadow: inset 4px 0 0 var(--band);
+    padding-left: 14px;
   }}
   /* Not display:flex · on a <td> that removes the cell from the table's
      column layout, so it collapses to zero width and the emblem disappears.
