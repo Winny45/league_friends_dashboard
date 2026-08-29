@@ -30,8 +30,12 @@ TIER_COLOR = {
     "BRONZE":      {"light": "#8a5a3c", "dark": "#cf9163"},
     "SILVER":      {"light": "#5f6570", "dark": "#b7bcc2"},
     "GOLD":        {"light": "#a66f00", "dark": "#eda100"},
-    "PLATINUM":    {"light": "#1baf7a", "dark": "#199e70"},
-    "EMERALD":     {"light": "#147a3d", "dark": "#0d7530"},
+    # Platinum was #199e70 and Emerald #0d7530 — two greens a shade apart,
+    # which made the two most common ranks in this group indistinguishable in
+    # the leaderboard, the chart and the standings chips. Platinum takes the
+    # turquoise it has in game; Emerald keeps green.
+    "PLATINUM":    {"light": "#0e8ea6", "dark": "#2ec4de"},
+    "EMERALD":     {"light": "#157f3f", "dark": "#2ecc71"},
     "DIAMOND":     {"light": "#2a78d6", "dark": "#3987e5"},
     "MASTER":      {"light": "#6a3fc9", "dark": "#a78bfa"},
     "GRANDMASTER": {"light": "#d0362f", "dark": "#e66767"},
@@ -681,12 +685,15 @@ def render_friend_card(f, rank_position, now):
     ) if splash else ""
 
     return f'''
-    <section class="card" id="friend-{f["label"].lower()}" role="tabpanel"
-             aria-labelledby="pill-{f["label"].lower()}" tabindex="-1"
+    <section class="card" id="friend-{f["label"].lower()}" tabindex="-1"
+             aria-label="{esc(f["label"])}"
              style="--card-tier: var({solo_var});">
       {card_art}
       <header class="card-head">
-        <div class="rank-badge">#{rank_position}</div>
+        <div class="rank-crest">
+          {render_rank_icon((solo or {}).get("tier"), size=44)}
+          <span class="rank-badge">#{rank_position}</span>
+        </div>
         <div>
           <h2>{esc(f["label"])}</h2>
           <div class="muted small">{esc(f["riotId"])} &middot; Level {esc(f.get("summonerLevel", "?"))}</div>
@@ -1280,18 +1287,40 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         for s in standings
     )
 
-    table_rows = "".join(
-        f'<tr><td class="muted small">{esc(p["idx"])}</td><td>{esc(f["label"])}</td>'
-        f'<td><span class="tag {"win" if p["match"]["win"] else "loss"}">{"W" if p["match"]["win"] else "L"}</span></td>'
-        f'<td class="champ-cell">{render_champion_icon(p["match"]["champion"], size=18)}{esc(p["match"]["champion"])}</td>'
-        f'<td class="num">{esc(lp_step_label(tl[n - 1]["score"], p["score"], p["delta"], p["exact"]))}</td>'
-        f'<td class="num">{score_to_rank_label(p["score"])}</td>'
-        f'<td class="muted small">{esc(p["match"].get("gameStart", ""))}</td></tr>'
-        for f in chart_friends
-        for tl in [timelines[f["label"]]]
-        for n, p in enumerate(tl)
-        if p["match"]
+    # One list for everybody, newest game first. Grouped by friend and counted
+    # up from game 1, today's games sat at the bottom of whichever block they
+    # fell in, so "what just happened" meant scrolling past several hundred
+    # rows of somebody else's season.
+    lp_events = sorted(
+        (
+            {"label": f["label"], "var": friend_var(i), "idx": p["idx"], "point": p,
+             "prevScore": tl[n - 1]["score"], "match": p["match"],
+             "when": p["match"].get("gameStartMs") or 0}
+            for i, f in enumerate(chart_friends)
+            for tl in [timelines[f["label"]]]
+            for n, p in enumerate(tl)
+            if p["match"]
+        ),
+        key=lambda e: e["when"], reverse=True,
     )
+
+    def lp_row(e):
+        p, m = e["point"], e["match"]
+        move = lp_step_label(e["prevScore"], p["score"], p["delta"], p["exact"])
+        cls = "up" if (p["delta"] or 0) >= 0 else "down"
+        return (
+            f'<tr>'
+            f'<td class="muted small nowrap">{esc(format_match_when(m))}</td>'
+            f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b>'
+            f'<span class="muted small"> &middot; game {esc(e["idx"])}</span></td>'
+            f'<td><span class="tag {"win" if m["win"] else "loss"}">{"W" if m["win"] else "L"}</span></td>'
+            f'<td class="champ-cell">{render_champion_icon(m["champion"], size=18)}{esc(m["champion"])}</td>'
+            f'<td class="num lp-move {cls}">{esc(move)}</td>'
+            f'<td class="num nowrap">{score_to_rank_label(p["score"])}</td>'
+            f'</tr>'
+        )
+
+    table_rows = "".join(lp_row(e) for e in lp_events)
 
     return f'''
     <div class="panel">
@@ -1312,9 +1341,10 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       <div class="muted small" style="margin-top:2px;">Hover or tap a name to highlight that line; click to hide it. Tap any point for the game behind it.</div>
       {omitted_note}
       <details class="matches-details" style="margin-top:10px;">
-        <summary>View as table</summary>
-        <table class="matches-table">
-          <thead><tr><th>Game</th><th>Friend</th><th>Result</th><th>Champion</th><th class="num">LP</th><th class="num">Rank after</th><th>When</th></tr></thead>
+        <summary>Every game, newest first</summary>
+        <table class="matches-table lp-table">
+          <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th>
+          <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
           <tbody>{table_rows}</tbody>
         </table>
       </details>
@@ -1460,13 +1490,27 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
     if omitted:
         omitted_note = f'<div class="muted small" style="margin-top:8px;">Not shown: {esc(", ".join(omitted))} (chart shows up to {len(FRIEND_PALETTE)} friends at once).</div>'
 
+    # Only the days a rank actually moved, newest first. Listing every
+    # snapshot for every friend meant hundreds of rows whose Change column
+    # read "—", burying the handful that said anything.
+    daily_events = []
+    for i, f in enumerate(chart_friends):
+        pts = solo_history_by_label[f["label"]]
+        for idx, h in enumerate(pts):
+            change = snapshot_change_label(pts[idx - 1] if idx > 0 else None, h)
+            if not change:
+                continue
+            daily_events.append({"date": h["date"], "label": f["label"],
+                                 "var": friend_var(i), "h": h, "change": change})
+    daily_events.sort(key=lambda e: e["date"], reverse=True)
+
     table_rows = "".join(
-        f'<tr><td class="muted small">{esc(h["date"])}</td><td>{esc(f["label"])}</td><td>{rank_label(h)}</td>'
-        f'<td class="muted small">{esc(snapshot_change_label(pts[idx - 1] if idx > 0 else None, h) or "—")}</td></tr>'
-        for f in chart_friends
-        for pts in [solo_history_by_label[f["label"]]]
-        for idx, h in enumerate(pts)
-    )
+        f'<tr><td class="muted small nowrap">{esc(e["date"])}</td>'
+        f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b></td>'
+        f'<td class="nowrap">{render_rank_icon(e["h"].get("tier"), size=16)}{rank_label(e["h"])}</td>'
+        f'<td class="num nowrap">{esc(e["change"])}</td></tr>'
+        for e in daily_events
+    ) or '<tr><td colspan="4" class="muted small">Nothing has moved yet.</td></tr>' 
 
     distinct_dates = {h["date"] for f in chart_friends for h in solo_history_by_label[f["label"]]}
     sparse_note = ""
@@ -1501,9 +1545,9 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
       {omitted_note}
       {sparse_note}
       <details class="matches-details" style="margin-top:10px;">
-        <summary>View as table</summary>
-        <table class="matches-table">
-          <thead><tr><th>Date</th><th>Friend</th><th>Rank</th><th>Change</th></tr></thead>
+        <summary>Days a rank moved</summary>
+        <table class="matches-table daily-table">
+          <thead><tr><th>Date</th><th>Player</th><th>Rank</th><th class="num">Change</th></tr></thead>
           <tbody>{table_rows}</tbody>
         </table>
       </details>
@@ -2702,14 +2746,16 @@ def build_html(data):
         for i, f in enumerate(friends_sorted)
     )
     cards = "".join(render_friend_card(f, i + 1, now) for i, f in enumerate(friends_sorted))
-    # Pills select which friend card is shown, so they are a tablist, not a
-    # row of buttons: one tab stop for the group, arrow keys within it.
+    # Every card is on screen now, so a pill jumps to someone and highlights
+    # them rather than hiding the other six. That makes them toggles, not tabs
+    # — a tablist implies only one panel exists at a time, which is no longer
+    # true, so they are plain buttons with aria-pressed.
     friend_pills = "".join(
-        f'<button class="pill{" active" if i == 0 else ""}" type="button" role="tab"'
-        f' id="pill-{f["label"].lower()}" aria-controls="friend-{f["label"].lower()}"'
-        f' aria-selected="{"true" if i == 0 else "false"}" tabindex="{0 if i == 0 else -1}"'
-        f' data-friend="{f["label"].lower()}">{esc(f["label"])}</button>'
-        for i, f in enumerate(friends_sorted)
+        f'<button class="pill" type="button" id="pill-{f["label"].lower()}"'
+        f' aria-pressed="false" data-friend="{f["label"].lower()}">'
+        f'{render_rank_icon((f["ranked"].get("solo") or {{}}).get("tier"), size=16)}'
+        f'{esc(f["label"])}</button>'
+        for f in friends_sorted
     )
 
     awards = compute_awards(friends_sorted, now)
@@ -2726,6 +2772,38 @@ def build_html(data):
     duo_synergy_panel = render_duo_synergy_panel(friends_sorted)
 
     notes_html, notes_latest = render_patch_notes(load_patch_notes())
+
+    # A few numbers for the group as a whole. The leaderboard answers "who is
+    # ahead"; this answers "how much has this lot actually played".
+    all_season = [m for f in friends_sorted for m in f.get("seasonMatches", [])]
+    week_min = week_games = 0
+    for f in friends_sorted:
+        mins, games = weekly_playtime(f.get("seasonMatches", []), now)
+        week_min += mins
+        week_games += games
+    solo_w = sum((f["ranked"].get("solo") or {}).get("wins", 0) for f in friends_sorted)
+    solo_l = sum((f["ranked"].get("solo") or {}).get("losses", 0) for f in friends_sorted)
+    solo_total = solo_w + solo_l
+    champ_pool = len({m.get("champion") for m in all_season if m.get("champion")})
+    group_stats = f'''
+      <div class="season-stats" style="margin-top:0;">
+        <div class="stat-tile">
+          <div class="stat-value">{len(all_season)}</div>
+          <div class="stat-label">Ranked games this season ({format_minutes(sum(m.get("durationMin", 0) for m in all_season))})</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{week_games}</div>
+          <div class="stat-label">Games this week ({format_minutes(week_min)})</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{round(100 * solo_w / solo_total, 1) if solo_total else "&ndash;"}%</div>
+          <div class="stat-label">Combined Solo/Duo winrate ({solo_w}W {solo_l}L)</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{champ_pool}</div>
+          <div class="stat-label">Different champions played</div>
+        </div>
+      </div>'''
 
     tracking_since = data.get("rankTrackingSince", "recently")
     # Per-game LP is the primary view; it needs at least one snapshot-to-
@@ -3351,6 +3429,12 @@ def build_html(data):
   .syn.down .syn-bar i {{ right: 50%; background: var(--critical); }}
   .syn.thin .syn-bar i {{ opacity: .45; }}
 
+  .nowrap {{ white-space: nowrap; }}
+  .lp-table .lp-move.up {{ color: var(--good); font-weight: 700; }}
+  .lp-table .lp-move.down {{ color: var(--critical); font-weight: 700; }}
+  .lp-table tbody tr:hover, .daily-table tbody tr:hover {{ background: var(--surface-2); }}
+  .daily-table td:nth-child(3) {{ display: flex; align-items: center; gap: 6px; }}
+
   .duo-highlights {{ font-size: 12.5px; color: var(--text-secondary); margin-top: 12px; line-height: 1.6; }}
   .duo-highlights b {{ font-weight: 700; }}
   .duo-detail {{
@@ -3521,6 +3605,26 @@ def build_html(data):
   }}
 
   .friend-pills {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }}
+  .pill {{ display: inline-flex; align-items: center; gap: 7px; }}
+  .pill .rank-icon, .pill .rank-icon-ph {{ flex-shrink: 0; }}
+  /* The picked friend, scrolled to and ringed. Everyone stays on screen —
+     the button is a way of finding someone, not of hiding the rest. */
+  .card.card-focus {{
+    border-color: color-mix(in srgb, var(--card-tier, var(--accent)) 60%, var(--border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--card-tier, var(--accent)) 30%, transparent),
+                var(--shadow-md);
+  }}
+  /* The tier emblem, at a size worth looking at, with the standing on it. */
+  .rank-crest {{ position: relative; width: 44px; height: 44px; flex-shrink: 0; }}
+  .rank-crest .rank-icon, .rank-crest .rank-icon-ph {{ display: block; width: 44px; height: 44px; }}
+  .rank-crest .rank-badge {{
+    position: absolute; right: -4px; bottom: -3px;
+    min-width: 22px; height: 18px; padding: 0 5px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Outfit", sans-serif; font-weight: 700; font-size: 11px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }}
   .card[hidden], .tab-panel[hidden] {{ display: none; }}
   .pill {{
     appearance: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600;
@@ -3856,9 +3960,6 @@ def build_html(data):
     </div>
 
     <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="-1" data-tab-panel="overview">
-      {awards_panel}
-      {week_glance_panel}
-
       <div class="panel">
         <h2 style="margin-bottom:14px;">Ranked Solo/Duo leaderboard</h2>
         <p class="panel-hint">Click any row to open that player&rsquo;s full season.</p>
@@ -3868,7 +3969,12 @@ def build_html(data):
             <tbody>{leaderboard_rows}</tbody>
           </table>
         </div>
+        <div class="muted small" style="margin:16px 0 8px;">Across everyone</div>
+        {group_stats}
       </div>
+
+      {week_glance_panel}
+      {awards_panel}
     </section>
 
     <section class="tab-panel" id="panel-rank" role="tabpanel" aria-labelledby="tab-rank" tabindex="-1" data-tab-panel="rank" hidden>
@@ -5053,10 +5159,26 @@ def build_html(data):
         return true;
       }}
 
-      function showFriend(label) {{
+      // Every card stays on screen; picking someone rings their card and
+      // scrolls to it. Hiding six people to look at one made comparing them
+      // impossible and made the pills feel like a filter nobody asked for.
+      function showFriend(label, scroll) {{
         if (friendNames.indexOf(label) < 0) return false;
-        cards.forEach(function (c) {{ c.hidden = c.id !== 'friend-' + label; }});
-        pills.forEach(function (p) {{ setSelected(p, p.getAttribute('data-friend') === label); }});
+        cards.forEach(function (c) {{
+          c.classList.toggle('card-focus', c.id === 'friend-' + label);
+        }});
+        pills.forEach(function (p) {{
+          var on = p.getAttribute('data-friend') === label;
+          p.classList.toggle('active', on);
+          p.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }});
+        if (scroll) {{
+          var card = document.getElementById('friend-' + label);
+          if (card && card.scrollIntoView) {{
+            try {{ card.scrollIntoView({{ behavior: 'smooth', block: 'start' }}); }}
+            catch (e) {{ card.scrollIntoView(); }}
+          }}
+        }}
         return true;
       }}
 
@@ -5064,7 +5186,7 @@ def build_html(data):
         for (var i = 0; i < list.length; i++) {{
           if (list[i].classList.contains('active')) return names[i];
         }}
-        return names[0];
+        return null;
       }}
 
       // ---- The address bar carries the current view ----------------------
@@ -5073,7 +5195,7 @@ def build_html(data):
       // the Back button has to undo a tab switch rather than leave the site.
       function writeRoute(push) {{
         if (syncing) return;
-        var tab = activeOf(tabBtns, tabNames);
+        var tab = activeOf(tabBtns, tabNames) || tabNames[0];
         var friend = pills.length ? activeOf(pills, friendNames) : null;
         var hash = '#' + (tab === 'friends' && friend ? 'friends/' + friend : tab);
         if (hash === location.hash) return;
@@ -5094,7 +5216,7 @@ def build_html(data):
         if (raw.indexOf('friend-') === 0) {{ tab = 'friends'; friend = raw.slice(7); }}
         syncing = true;
         var ok = showTab(tab);
-        if (ok && friend) showFriend(friend);
+        if (ok && friend) showFriend(friend, true);
         syncing = false;
         return ok;
       }}
@@ -5124,9 +5246,19 @@ def build_html(data):
       }});
 
       pills.forEach(function (pl) {{
-        var pick = function (el) {{ activate(showFriend, el.getAttribute('data-friend')); }};
-        pl.addEventListener('click', function () {{ pick(pl); }});
-        pl.addEventListener('keydown', keyNav(pills, pick));
+        pl.addEventListener('click', function () {{
+          var label = pl.getAttribute('data-friend');
+          // Pressing the active one again clears the highlight.
+          if (pl.classList.contains('active')) {{
+            cards.forEach(function (c) {{ c.classList.remove('card-focus'); }});
+            pl.classList.remove('active');
+            pl.setAttribute('aria-pressed', 'false');
+            writeRoute(true);
+            return;
+          }}
+          showFriend(label, true);
+          writeRoute(true);
+        }});
       }});
 
       // Leaderboard rows open that player's card. The name stays a real link
@@ -5134,9 +5266,8 @@ def build_html(data):
       // just a bigger target for the same thing.
       function openFriend(label) {{
         showTab('friends');
-        showFriend(label);
+        showFriend(label, true);
         writeRoute(true);
-        window.scrollTo(0, 0);
         var card = document.getElementById('friend-' + label);
         if (card && card.focus) {{
           try {{ card.focus({{ preventScroll: true }}); }} catch (e) {{}}
@@ -5161,9 +5292,8 @@ def build_html(data):
         }});
       }});
 
-      // Default to the top-ranked friend so the Friends panel is never blank,
-      // then let the URL override it.
-      if (pills.length) showFriend(friendNames[0]);
+      // Nothing is highlighted by default — every card is visible, so there
+      // is nothing to fall back to. A link like #friends/rory still picks one.
       applyRoute();
       window.addEventListener('hashchange', applyRoute);
       window.addEventListener('popstate', applyRoute);
