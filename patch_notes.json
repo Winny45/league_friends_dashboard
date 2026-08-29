@@ -1,6 +1,28 @@
 [
   {
     "date": "2026-08-29",
+    "title": "A readable LP chart, and duo games marked",
+    "items": [
+      {
+        "type": "improved",
+        "text": "The LP chart no longer puts a green or red dot on every game. Four hundred of them buried the seven lines and fought the per-player colours for nothing — a step upward already tells you the game was won. Only the measured daily snapshots are drawn as markers now; the games between them are faint points in the player's own colour, and hovering any of them still gives the full game."
+      },
+      {
+        "type": "improved",
+        "text": "Tier lines on the chart are drawn firmly and the divisions between them faintly, instead of ten identical lines behind the data."
+      },
+      {
+        "type": "added",
+        "text": "Games played alongside another tracked player are marked with a \"With\" column in both the game-by-game table and each player's match list, naming whoever was on their team in that game."
+      },
+      {
+        "type": "fixed",
+        "text": "The rank emblem in the rank progress table was invisible because its cell had been dropped out of the table's column layout."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "Friends, Overview and the rank tables",
     "items": [
       {
