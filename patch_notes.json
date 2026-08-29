@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-08-29",
+    "title": "Shared games read as one game",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The stripe on a shared game was built starting from each row's own player, so the two rows of one game drew the same colours in opposite order and the bar flipped halfway down. Each pairing now has one blended colour that looks the same wherever it appears."
+      },
+      {
+        "type": "improved",
+        "text": "A shared game is drawn as a single block: the line between its rows is removed and a gap follows it, so a long duo queue session reads as a run of separate games rather than one continuous tinted stretch."
+      },
+      {
+        "type": "fixed",
+        "text": "The stacks table no longer invents groups of four. Flex takes one, two, three or five, so four of you on a team is somebody else's five man with four of you in it. Only trios and five mans are listed, and the queue columns are Flex and 5s rather than a Solo column that can never have anything in it."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-29",
     "title": "One key per chart, and who carries whom",
     "items": [
       {
