@@ -546,26 +546,30 @@ def save_rank_history(history):
 
 
 def parse_args(argv):
-    """fetch_data.py [config.json] [--resync [Label ...]]
+    """fetch_data.py [config.json] [--resync [Label ...]] [--allow-partial]
 
-    Returns (config_path, resync) where resync is None for a normal
-    incremental run, an empty set to re-list everybody, or a set of labels.
+    Returns (config_path, resync, allow_partial) where resync is None for a
+    normal incremental run, an empty set to re-list everybody, or a set of
+    labels. allow_partial permits writing data.json when some friends failed.
     """
-    config_path, resync, in_flag = None, None, False
+    config_path, resync, in_flag, allow_partial = None, None, False, False
     for a in argv:
         if a == "--resync":
             resync, in_flag = set(), True
+            continue
+        if a == "--allow-partial":
+            allow_partial, in_flag = True, False
             continue
         if in_flag and not a.startswith("-"):
             resync.add(a)
             continue
         if config_path is None:
             config_path = a
-    return Path(config_path or "config.json"), resync
+    return Path(config_path or "config.json"), resync, allow_partial
 
 
 def main():
-    config_path, resync = parse_args(sys.argv[1:])
+    config_path, resync, allow_partial = parse_args(sys.argv[1:])
     if not config_path.exists():
         print(f"Config file not found: {config_path}\n"
               f"Copy config.example.json to config.json and fill in your API key + friends.")
@@ -600,6 +604,7 @@ def main():
     scrape_log = load_scrape_log()
 
     results = []
+    auth_failed = False
     if resync is not None:
         who = ", ".join(sorted(resync)) if resync else "everyone"
         print(f"Re-listing full match history for {who}. This costs many more API calls "
@@ -617,6 +622,13 @@ def main():
                 results.append(summary)
         except Exception as e:
             print(f"  ! error fetching {friend.get('label')}: {e}")
+            # A rejected key fails every friend the same way. Stop now instead
+            # of spending six more requests to learn the same thing.
+            if "401" in str(e) or "403" in str(e):
+                auth_failed = True
+                print("  ! Riot rejected the API key — stopping. "
+                      "Development keys expire 24 hours after they are issued.")
+                break
         finally:
             # Save incrementally so a crash/interrupt partway through a big
             # first-time season pull doesn't lose already-fetched matches.
@@ -657,7 +669,32 @@ def main():
         "ddragonVersion": champ_data.get("version"),
         "championIconMap": champ_data.get("byName", {}),
     }
-    Path("data.json").write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Refuse to publish a worse dataset than the one already on disk.
+    #
+    # This used to write unconditionally, so a run where every lookup failed —
+    # an expired key does exactly that — replaced a good data.json with
+    # "friends": [], taking the whole dashboard down until the next successful
+    # fetch. The caches survive such a run, so nothing is lost by stopping
+    # here and leaving the previous file in place.
+    expected = len(config["friends"])
+    data_path = Path("data.json")
+    if not results:
+        print(f"\n! Fetched 0 of {expected} friends" +
+              (" because the API key was rejected." if auth_failed else ".") +
+              "\n! data.json has been left untouched. "
+              "Fix the problem and run again — the match cache is intact, so a "
+              "successful run will be quick.")
+        sys.exit(1)
+    if len(results) < expected and not allow_partial:
+        print(f"\n! Only {len(results)} of {expected} friends came back. Writing this would "
+              f"drop the missing one(s) from the dashboard, so data.json has been left "
+              f"untouched.\n! Re-run when the problem is fixed, or pass --allow-partial "
+              f"to publish anyway.")
+        sys.exit(1)
+    # Keep one generation back, so even a bad --allow-partial run is reversible.
+    if data_path.exists():
+        Path("data.prev.json").write_text(data_path.read_text(encoding="utf-8"), encoding="utf-8")
+    data_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nWrote data.json with {len(results)} friend(s). "
           f"Rank tracking has {len(rank_history)} snapshot(s) since {tracking_since}.")
 
