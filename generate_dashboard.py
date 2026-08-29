@@ -235,6 +235,49 @@ def render_profile_links(riot_id):
     return f'<div class="ext-links">{chips}</div>'
 
 
+# ---------------------------------------------------------------------------
+# Who played with whom
+#
+# Set once per render so the match renderers can mark a game as a duo without
+# every caller having to thread the whole friends list through. Teammates are
+# identified the same way the synergy panel does it: same match, same result.
+# ---------------------------------------------------------------------------
+
+_DUO_CTX = {"map": {}}
+
+
+def set_duo_context(friends_sorted):
+    by_match = {}
+    for i, f in enumerate(friends_sorted):
+        var = friend_var(min(i, len(FRIEND_PALETTE) - 1))
+        for m in f.get("seasonMatches", []):
+            if m.get("remake"):
+                continue
+            by_match.setdefault(m["matchId"], []).append((f["label"], var, bool(m["win"])))
+    duo = {}
+    for mid, entries in by_match.items():
+        if len(entries) < 2:
+            continue
+        for label, _var, win in entries:
+            mates = [(l, v) for (l, v, w) in entries if l != label and w == win]
+            if mates:
+                duo[(mid, label)] = sorted(mates)
+    _DUO_CTX["map"] = duo
+
+
+def render_duo_mates(match_id, label):
+    """The other tracked players in this game, or a dash."""
+    mates = _DUO_CTX["map"].get((match_id, label))
+    if not mates:
+        return '<span class="muted">&ndash;</span>'
+    names = "".join(
+        f'<span class="mate" style="color:var({v});">{esc(l)}</span>' for l, v in mates
+    )
+    who = ", ".join(l for l, _ in mates)
+    return (f'<span class="duo-with" title="Played this game with {esc(who)}">'
+            f'<span class="duo-with-icon" aria-hidden="true">\u21c4</span>{names}</span>')
+
+
 def champion_splash_url(champion_name):
     """Data Dragon splash art for a champion, used as the wash behind a
     friend's card. Unlike the square icons this path carries no patch
@@ -565,13 +608,14 @@ def render_mastery_chip(m):
     </div>'''
 
 
-def render_match_row(m):
+def render_match_row(m, friend_label=""):
     cls = "win" if m["win"] else "loss"
     label = "WIN" if m["win"] else "LOSS"
     return f'''<tr>
       <td class="muted small">{esc(format_match_when(m))}</td>
       <td><span class="tag {cls}">{label}</span></td>
       <td class="champ-cell">{render_champion_icon(m["champion"])}{esc(m["champion"])}</td>
+      <td class="with-cell">{render_duo_mates(m.get("matchId"), friend_label)}</td>
       <td class="num">{esc(m["kills"])}/{esc(m["deaths"])}/{esc(m["assists"])}</td>
       <td class="num">{esc(m["kda"])}</td>
       <td class="num">{esc(m["csPerMin"])}</td>
@@ -646,7 +690,7 @@ def render_friend_card(f, rank_position, now):
     losses = len(matches) - wins
     dots = "".join(render_match_dot(m) for m in matches) or '<span class="muted">No recent games</span>'
     mastery_html = "".join(render_mastery_chip(m) for m in f.get("mastery", [])) or '<span class="muted">No mastery data</span>'
-    match_rows = "".join(render_match_row(m) for m in matches)
+    match_rows = "".join(render_match_row(m, f["label"]) for m in matches)
     solo_wr = (solo or {}).get("winrate")
     flex_wr = (flex or {}).get("winrate")
 
@@ -747,7 +791,7 @@ def render_friend_card(f, rank_position, now):
       <details class="matches-details">
         <summary data-match-summary>Recent match detail ({len(matches)} games)</summary>
         <table class="matches-table">
-          <thead><tr><th>When</th><th>Result</th><th>Champion</th><th>K/D/A</th><th>KDA</th><th>CS/min</th><th>Queue</th><th>Length</th></tr></thead>
+          <thead><tr><th>When</th><th>Result</th><th>Champion</th><th>With</th><th>K/D/A</th><th>KDA</th><th>CS/min</th><th>Queue</th><th>Length</th></tr></thead>
           <tbody data-match-rows>{match_rows}</tbody>
         </table>
       </details>
@@ -1096,9 +1140,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             if ti >= len(TIER_ORDER):
                 continue
             if tick % tier_span == 0:
-                y_ticks.append((xy(0, tick)[1], TIER_ORDER[ti].capitalize()))
+                y_ticks.append((xy(0, tick)[1], TIER_ORDER[ti].capitalize(), True))
             elif show_divisions:
-                y_ticks.append((xy(0, tick)[1], rank_by_score.get(division, "")))
+                y_ticks.append((xy(0, tick)[1], rank_by_score.get(division, ""), False))
 
         step = max(1, round(max_games / (3 if compact else 6)))
         tick_idxs = list(range(0, max_games + 1, step))
@@ -1135,16 +1179,27 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                     move = lp_step_label(p["prevScore"], p["score"], p["delta"], p["exact"])
                     title = (f"{f['label']} — game {p.get('origIdx', p['idx'])} — {'Win' if m['win'] else 'Loss'} on {m['champion']} — "
                              f"{move} → {score_to_rank_label(p['score'])}").replace("&middot;", "·")
-                    fill = "var(--good)" if m["win"] else "var(--critical)"
-                    r = 3 if compact else 3.5
                 else:
                     title = (f"{f['label']} — tracking started — "
                              f"{score_to_rank_label(p['score'])}").replace("&middot;", "·")
-                    fill = f"var({var})"
+                # Every game keeps a point so it can still be hovered, but only
+                # the measured snapshots are drawn as markers. Four hundred
+                # estimated points in win/loss red and green buried the seven
+                # lines they belonged to, and fought the per-friend colours for
+                # no gain: a step upward already says the game was won, and the
+                # panel says outright that only the snapshots are measured.
+                fill = f"var({var})"
+                if p["exact"]:
                     r = 3.5 if compact else 4
+                    extra = ' stroke="var(--surface-1)" stroke-width="1.5"'
+                    cls = "pt"
+                else:
+                    r = 1.4 if compact else 1.6
+                    extra = ""
+                    cls = "pt est"
                 parts.append(
-                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" '
-                    f'stroke="var(--surface-1)" stroke-width="1.5"><title>{esc(title)}</title></circle>'
+                    f'<circle class="{cls}" cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}"'
+                    f'{extra}><title>{esc(title)}</title></circle>'
                 )
             series_groups.append(f'<g id="{prefix}-series-{i}">{"".join(parts)}</g>')
 
@@ -1167,10 +1222,15 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         label_groups = [] if compact else end_label_groups(
             label_entries, prefix, gutter_x=W - PAD_R + 10)
 
+        # Tier boundaries carry weight; the divisions between them are
+        # reference, not structure. Drawing all of them at the same strength
+        # put ten equal lines behind the data.
         grid_svg = "".join(
-            f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
-            f'<text x="{PAD_L - 6}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
-            for y, label in y_ticks
+            f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" '
+            f'class="chart-grid{"" if tier else " faint"}" />'
+            f'<text x="{PAD_L - 6}" y="{y + 4:.1f}" text-anchor="end" '
+            f'class="chart-tick{"" if tier else " faint"}">{esc(label)}</text>'
+            for y, label, tier in y_ticks
         )
         xticks_svg = "".join(
             f'<text x="{x:.1f}" y="{H - PAD_B + (16 if compact else 20)}" text-anchor="middle" class="chart-tick">{esc(label)}</text>'
@@ -1315,6 +1375,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             f'<span class="muted small"> &middot; game {esc(e["idx"])}</span></td>'
             f'<td><span class="tag {"win" if m["win"] else "loss"}">{"W" if m["win"] else "L"}</span></td>'
             f'<td class="champ-cell">{render_champion_icon(m["champion"], size=18)}{esc(m["champion"])}</td>'
+            f'<td class="with-cell">{render_duo_mates(m.get("matchId"), e["label"])}</td>'
             f'<td class="num lp-move {cls}">{esc(move)}</td>'
             f'<td class="num nowrap">{score_to_rank_label(p["score"])}</td>'
             f'</tr>'
@@ -1343,7 +1404,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       <details class="matches-details" style="margin-top:10px;">
         <summary>Every game, newest first</summary>
         <table class="matches-table lp-table">
-          <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th>
+          <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
           <tbody>{table_rows}</tbody>
         </table>
@@ -2458,8 +2519,8 @@ window.LpChart = (function () {
       if (tick < yMin || tick > yMax) continue;
       var dec = ladderDecompose(tick);
       if (dec[0] >= D.tierOrder.length) continue;
-      if (tick % tierSpan === 0) yTicks.push([xy(0, tick)[1], cap(D.tierOrder[dec[0]])]);
-      else if (showDivisions) yTicks.push([xy(0, tick)[1], rankBySc(dec[1])]);
+      if (tick % tierSpan === 0) yTicks.push([xy(0, tick)[1], cap(D.tierOrder[dec[0]]), true]);
+      else if (showDivisions) yTicks.push([xy(0, tick)[1], rankBySc(dec[1]), false]);
     }
 
     var step = Math.max(1, Math.round(maxGames / (compact ? 3 : 6)));
@@ -2490,22 +2551,30 @@ window.LpChart = (function () {
       parts.push('<path d="' + d + '" fill="none" stroke="var(' + varName +
                  ')" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />');
       tl.forEach(function (p, n) {
-        var m = p.match, title, fill, r;
+        var m = p.match, title;
         if (m) {
           var move = lpStepLabel(p.prevScore, p.score, p.delta, p.exact);
           title = (f.label + ' \u2014 game ' + (p.origIdx === undefined ? p.idx : p.origIdx) +
                    ' \u2014 ' + (m.win ? 'Win' : 'Loss') + ' on ' + m.champion + ' \u2014 ' +
                    move + ' \u2192 ' + scoreToRankLabel(p.score)).replace('&middot;', '\u00b7');
-          fill = m.win ? 'var(--good)' : 'var(--critical)';
-          r = compact ? 3 : 3.5;
         } else {
           title = (f.label + ' \u2014 tracking started \u2014 ' +
                    scoreToRankLabel(p.score)).replace('&middot;', '\u00b7');
-          fill = 'var(' + varName + ')';
-          r = compact ? 3.5 : 4;
         }
-        parts.push('<circle cx="' + fixed(coords[n][0], 1) + '" cy="' + fixed(coords[n][1], 1) +
-          '" r="' + r + '" fill="' + fill + '" stroke="var(--surface-1)" stroke-width="1.5">' +
+        // Markers only where a value was measured; see the note in
+        // render_lp_chart(). Every game keeps a point so it stays hoverable.
+        var fill = 'var(' + varName + ')', r, extra, cls;
+        if (p.exact) {
+          r = compact ? 3.5 : 4;
+          extra = ' stroke="var(--surface-1)" stroke-width="1.5"';
+          cls = 'pt';
+        } else {
+          r = compact ? 1.4 : 1.6;
+          extra = '';
+          cls = 'pt est';
+        }
+        parts.push('<circle class="' + cls + '" cx="' + fixed(coords[n][0], 1) + '" cy="' +
+          fixed(coords[n][1], 1) + '" r="' + r + '" fill="' + fill + '"' + extra + '>' +
           '<title>' + esc(title) + '</title></circle>');
       });
       seriesGroups.push('<g id="' + prefix + '-series-' + fi + '">' + parts.join('') + '</g>');
@@ -2529,9 +2598,10 @@ window.LpChart = (function () {
     var labelGroups = compact ? [] : endLabelGroups(labelEntries, prefix, W - PAD_R + 10);
 
     var gridSvg = yTicks.map(function (t) {
+      var faint = t[2] ? '' : ' faint';
       return '<line x1="' + PAD_L + '" y1="' + fixed(t[0], 1) + '" x2="' + (W - PAD_R) +
-        '" y2="' + fixed(t[0], 1) + '" class="chart-grid" /><text x="' + (PAD_L - 6) +
-        '" y="' + fixed(t[0] + 4, 1) + '" text-anchor="end" class="chart-tick">' +
+        '" y2="' + fixed(t[0], 1) + '" class="chart-grid' + faint + '" /><text x="' + (PAD_L - 6) +
+        '" y="' + fixed(t[0] + 4, 1) + '" text-anchor="end" class="chart-tick' + faint + '">' +
         esc(t[1]) + '</text>';
     }).join('');
     var xticksSvg = xTicks.map(function (t) {
@@ -2740,6 +2810,7 @@ def build_html(data):
     rank_history = data.get("rankHistory", [])
     set_icon_context(data.get("ddragonVersion"), data.get("championIconMap", {}))
     set_platform(data.get("platform"))
+    set_duo_context(friends_sorted)
 
     leaderboard_rows = "".join(
         render_leaderboard_row(f, i + 1, weekly_trend_for(rank_history, f["label"], now))
@@ -3336,8 +3407,13 @@ def build_html(data):
   .rank-chart {{ width: 100%; height: auto; overflow: visible; }}
   .chart-grid {{ stroke: var(--gridline); stroke-width: 1; }}
   .chart-tick {{ fill: var(--muted); font-size: 11px; font-family: "Inter", system-ui, sans-serif; }}
-  .rank-chart circle {{ transition: r .12s ease; }}
-  .rank-chart circle:hover {{ r: 6; }}
+  .rank-chart circle {{ transition: r .12s ease, opacity .12s ease; }}
+  /* Estimated points sit back as line texture; hovering brings one forward
+     with its tooltip. */
+  .rank-chart circle.est {{ opacity: .45; }}
+  .rank-chart circle:hover {{ r: 6; opacity: 1; }}
+  .chart-grid.faint {{ opacity: .38; }}
+  .chart-tick.faint {{ opacity: .55; }}
   /* Hovering a legend name fades the other lines back, which is the quickest
      way to follow one person through seven overlapping series. */
   .rank-chart g[id*="-series-"], .rank-chart g[id*="-label-"] {{ transition: opacity .15s ease; }}
@@ -3430,10 +3506,26 @@ def build_html(data):
   .syn.thin .syn-bar i {{ opacity: .45; }}
 
   .nowrap {{ white-space: nowrap; }}
+  /* Games played alongside another tracked player. The arrows read as "these
+     two were on the same team", and each name keeps that player's colour so
+     it ties back to the chart and the duo grid. */
+  .with-cell {{ white-space: nowrap; }}
+  .duo-with {{
+    display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+    border-radius: 999px; padding: 2px 9px;
+  }}
+  .duo-with-icon {{ color: var(--muted); font-size: 11px; }}
+  .duo-with .mate + .mate::before {{ content: ", "; color: var(--muted); font-weight: 500; }}
   .lp-table .lp-move.up {{ color: var(--good); font-weight: 700; }}
   .lp-table .lp-move.down {{ color: var(--critical); font-weight: 700; }}
   .lp-table tbody tr:hover, .daily-table tbody tr:hover {{ background: var(--surface-2); }}
-  .daily-table td:nth-child(3) {{ display: flex; align-items: center; gap: 6px; }}
+  /* Not display:flex — on a <td> that removes the cell from the table's
+     column layout, so it collapses to zero width and the emblem disappears.
+     The same mistake is documented on td.rank-cell above. */
+  .daily-table td:nth-child(3) .rank-icon,
+  .daily-table td:nth-child(3) .rank-icon-ph {{ margin-right: 6px; }}
 
   .duo-highlights {{ font-size: 12.5px; color: var(--text-secondary); margin-top: 12px; line-height: 1.6; }}
   .duo-highlights b {{ font-weight: 700; }}
