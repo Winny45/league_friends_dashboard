@@ -265,7 +265,8 @@ def extract_match_entry(m, puuid, match_id):
 
 def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: int,
                       season_start_epoch: float, season_start_key: str, max_season_matches: int,
-                      match_cache: dict, scrape_log: dict, force_resync: bool = False):
+                      match_cache: dict, scrape_log: dict, force_resync: bool = False,
+                      refetch_details: bool = False):
     if "#" not in riot_id:
         raise ValueError(f"Riot ID for '{label}' must look like Name#Tag, got {riot_id!r}")
     game_name, tag_line = riot_id.split("#", 1)
@@ -324,7 +325,13 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
     for mid in match_ids:
         cache_key = f"{mid}|{puuid}"
         cached = match_cache.get(cache_key)
-        if cached:
+        # A cache entry written before teamPosition/opponentChampion were
+        # extracted has no key for them at all, which is what --refetch-details
+        # looks for. An entry where the lane opponent could not be identified
+        # stores None under that key, so it counts as filled in and is never
+        # fetched again.
+        stale = refetch_details and "opponentChampion" not in (cached or {})
+        if cached and not stale:
             entry = cached
             cache_hits += 1
         else:
@@ -548,11 +555,14 @@ def save_rank_history(history):
 def parse_args(argv):
     """fetch_data.py [config.json] [--resync [Label ...]] [--allow-partial]
 
-    Returns (config_path, resync, allow_partial) where resync is None for a
-    normal incremental run, an empty set to re-list everybody, or a set of
-    labels. allow_partial permits writing data.json when some friends failed.
+    Returns (config_path, resync, allow_partial, refetch_details) where resync
+    is None for a normal incremental run, an empty set to re-list everybody, or
+    a set of labels. allow_partial permits writing data.json when some friends
+    failed. refetch_details re-pulls cached matches that predate the lane
+    opponent fields, which is what the matchup tables are built from.
     """
     config_path, resync, in_flag, allow_partial = None, None, False, False
+    refetch_details = False
     for a in argv:
         if a == "--resync":
             resync, in_flag = set(), True
@@ -560,16 +570,19 @@ def parse_args(argv):
         if a == "--allow-partial":
             allow_partial, in_flag = True, False
             continue
+        if a == "--refetch-details":
+            refetch_details, in_flag = True, False
+            continue
         if in_flag and not a.startswith("-"):
             resync.add(a)
             continue
         if config_path is None:
             config_path = a
-    return Path(config_path or "config.json"), resync, allow_partial
+    return Path(config_path or "config.json"), resync, allow_partial, refetch_details
 
 
 def main():
-    config_path, resync, allow_partial = parse_args(sys.argv[1:])
+    config_path, resync, allow_partial, refetch_details = parse_args(sys.argv[1:])
     if not config_path.exists():
         print(f"Config file not found: {config_path}\n"
               f"Copy config.example.json to config.json and fill in your API key + friends.")
@@ -605,6 +618,12 @@ def main():
 
     results = []
     auth_failed = False
+    if refetch_details:
+        missing = sum(1 for e in match_cache.values() if "opponentChampion" not in e)
+        print(f"Re-fetching {missing} cached matches that have no lane opponent recorded. "
+              f"At roughly one request every {client.pause}s that is about "
+              f"{missing * client.pause / 60:.0f} minutes. Progress is saved as it goes, so "
+              f"stopping and re-running picks up where it left off.\n")
     if resync is not None:
         who = ", ".join(sorted(resync)) if resync else "everyone"
         print(f"Re-listing full match history for {who}. This costs many more API calls "
@@ -617,6 +636,7 @@ def main():
                 match_cache, scrape_log,
                 force_resync=(resync is not None and
                               (not resync or friend["label"] in resync)),
+                refetch_details=refetch_details,
             )
             if summary:
                 results.append(summary)
