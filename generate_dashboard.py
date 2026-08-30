@@ -388,35 +388,42 @@ def render_duo_mates(match_id, label):
             f'<span class="duo-with-icon" aria-hidden="true">\u21c4</span>{names}</span>')
 
 
-def signature_champion(friend):
-    """The champion someone is most known for: their highest mastery.
+_SIGNATURE_CACHE = {}
 
-    Mastery is the lifetime score, which is what a player's face should be.
-    Most-played-this-season swings around with whatever they are grinding
-    that week, and the card already lists that separately.
+
+def signature_champion(friend):
+    """The champion someone is most known for: the top of their weighted
+    Top champions table.
+
+    Not highest mastery, which is a lifetime score and can name a champion
+    they have not touched all split, and not most played either, which hands
+    the face to whatever they are grinding this week however badly. The same
+    rating the card ranks champions with picks the face, so the two agree.
+
+    Cached per label: it is asked for once per card, once per leaderboard row
+    and once per pill, and the rating walks the whole season each time.
     """
-    top = (friend.get("mastery") or [])
-    if top and top[0].get("championName"):
-        return top[0]["championName"]
-    counts = {}
-    for m in friend.get("seasonMatches", []):
-        if m.get("remake"):
-            continue
-        c = m.get("champion")
-        if c:
-            counts[c] = counts.get(c, 0) + 1
-    if counts:
-        # Ties break on the name so a rebuild cannot silently reshuffle faces.
-        return max(sorted(counts), key=lambda c: counts[c])
-    mastery = friend.get("mastery") or []
-    return mastery[0].get("championName") if mastery else None
+    label = friend.get("label") or ""
+    if label in _SIGNATURE_CACHE:
+        return _SIGNATURE_CACHE[label]
+    played = [m for m in friend.get("seasonMatches", []) if not m.get("remake")]
+    champ = None
+    if played:
+        top = top_champions(played, champion_matchups(played), limit=1)
+        if top:
+            champ = top[0]["champion"]
+    if not champ:
+        mastery = friend.get("mastery") or []
+        champ = mastery[0].get("championName") if mastery else None
+    _SIGNATURE_CACHE[label] = champ
+    return champ
 
 
 def render_avatar(friend, size=34):
-    """A friend's face on the page: their most mastered champion.
+    """A friend's face on the page: their top champion.
 
-    Falls back to their initial when there is no mastery data or Data Dragon
-    has no icon, so the slot is never empty and never a broken image.
+    Falls back to their initial when there is no icon for it, so the slot is
+    never empty and never a broken image.
     """
     champ = signature_champion(friend)
     url = champion_icon_url(champ) if champ else None
@@ -486,11 +493,14 @@ def rank_icon_url(tier):
 
 
 def render_rank_icon(tier, size=20):
+    # The crests are not drawn to a common scale: the tier ones sit inside a
+    # 20x20 box with a margin around the artwork, while unranked fills a 16x16
+    # box edge to edge, so at the same rendered size it came out noticeably
+    # heavier than the rank beside it. Scaled back in CSS to match.
     url = rank_icon_url(tier)
-    if not url:
-        return f'<span class="rank-icon rank-icon-ph" style="width:{size}px;height:{size}px;"></span>'
+    cls = "rank-icon" if tier else "rank-icon rank-icon-unranked"
     return (
-        f'<img src="{esc(url)}" alt="" class="rank-icon" width="{size}" height="{size}" '
+        f'<img src="{esc(url)}" alt="" class="{cls}" width="{size}" height="{size}" '
         f'loading="lazy" onerror="this.style.visibility=\'hidden\'">'
     )
 
@@ -1356,13 +1366,10 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
 
     # One arrow per queue, so the header says at a glance which ladders moved
     # this week and which way.
-    # One group per queue, each tagged, because two untagged groups side by
-    # side read as one run of arrows about one thing.
-    trends = "".join(
-        render_trend_arrows(weekly_trend_for(rank_history, f["label"], now, queue=qr["key"]),
-                            qr["label"], qr["tag"])
-        for qr in queue_rows_for(f)
-    )
+    # Solo/Duo only. It is the ladder the rest of the page is about, and a
+    # row of arrows covering three queues at once was read as one number.
+    trends = render_trend_arrows(
+        weekly_trend_for(rank_history, f["label"], now, queue="solo"), "Ranked Solo/Duo")
 
     played_by_queue = {}
     for m in season_matches:
@@ -1465,7 +1472,7 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       <div class="card-lower">
         <div class="cl-block cl-wide">
           <div class="section-label">Top champions
-            <span class="label-note">weighted</span></div>
+            <span class="label-note" title="Rating = {esc(f["label"])}&#39;s winrate across every game ({(overall_winrate(season_matches) or 0):.1f}%), plus how far this champion beats it, plus up to {TOP_CHAMPION_VOLUME:.0f} points for volume.&#10;&#10;The lift is multiplied by games / (games + {TOP_CHAMPION_PRIOR}), so a 3 game 100% counts for a fraction of what a 300 game record does, and halved again for the share of its games played in matchups it already wins more often than usual.&#10;&#10;Volume = {TOP_CHAMPION_VOLUME:.0f} x log(1 + games) / log(1 + most played).">weighted</span></div>
           {render_top_champions(top_champs)}
         </div>
         <div class="cl-block">
@@ -2766,11 +2773,15 @@ def compute_kda_boost(friends):
     Comparing the two players *against each other in the same games* is the
     question actually being asked, because they shared every one of those
     games, so the map, the opponents and the result are held constant.
+
+    Solo/Duo only, matching the grid and the pair table it appears in. On all
+    queues a pair's game count here disagreed with the count in the cell right
+    next to it, because most of their shared games are Flex.
     """
     by_match = {}
     for f in friends:
         for m in f.get("seasonMatches", []):
-            if m.get("remake"):
+            if m.get("remake") or m.get("queue") != "Ranked Solo/Duo":
                 continue
             by_match.setdefault(m["matchId"], []).append((f["label"], m))
 
@@ -2958,6 +2969,7 @@ def render_duo_synergy_panel(friends):
         )
 
     by_pair = {tuple(sorted([r["a"], r["b"]])): r for r in rows}
+    boost_by_pair = compute_kda_boost(friends)
     idx = {label: i for i, label in enumerate(players)}
 
     def qattrs(prefix, buckets):
@@ -3001,9 +3013,18 @@ def render_duo_synergy_panel(friends):
             if not r:
                 cells.append('<td class="duo-cell duo-none"><span class="cell-wr">\u2013</span></td>')
                 continue
+            # A ring around the cell where the row's player is the one
+            # carrying the pair. Reading across a row then shows at a glance
+            # which pairings they lift and which lift them, without a column
+            # of names to cross-reference.
+            b = boost_by_pair.get(tuple(sorted([a, b])))
+            carry = ""
+            if b and b["booster"] == a:
+                carry = (f' data-carry="1" title="{esc(a)} holds the higher KDA in these '
+                         f'{b["games"]} games, {b["boosterKda"]} against {b["boostedKda"]}"')
             cells.append(
-                f'<td class="duo-cell" tabindex="0" role="button" '
-                f'data-a="{esc(r["a"])}" data-b="{esc(r["b"])}" {qattrs("", r)}>'
+                f'<td class="duo-cell{" duo-carry" if carry else ""}" tabindex="0" role="button" '
+                f'data-a="{esc(r["a"])}" data-b="{esc(r["b"])}"{carry} {qattrs("", r)}>'
                 f'<span class="cell-wr"></span><span class="cell-g"></span></td>')
         colour = friend_var(min(idx[a], len(FRIEND_PALETTE) - 1))
         body.append(f'<tr><th scope="row"><span style="color:var({colour});">{esc(a)}</span></th>'
@@ -3014,7 +3035,7 @@ def render_duo_synergy_panel(friends):
     # alphabetically, which is the only order that does not assert something.
     SYN_FULL_SCALE = 15.0   # points of lift that fill half the bar
 
-    boost = compute_kda_boost(friends)
+    boost = boost_by_pair
     parties = compute_party_synergy(friends)
 
     def syn_cell(t):
@@ -3164,6 +3185,7 @@ def render_duo_synergy_panel(friends):
       by how far it beats the winrate those two average apart.</p>
       <div class="duo-controls">
         <div class="duo-scale" aria-hidden="true">
+          <span class="duo-carry-key"><i></i> carries the pair</span>
           <span>worse together</span>
           <span class="sw lift-down-2"></span><span class="sw lift-down-1"></span>
           <span class="sw lift-flat"></span>
@@ -4071,11 +4093,24 @@ window.LpChart = (function () {
       netLabels.push({ text: moveText, direction: netLp > 0 ? 1 : (netLp < 0 ? -1 : 0) });
       tiers.push(last.tier);
       standings.push({ varName: '--series-f' + i, label: f.label, tier: last.tier,
+                       rank: last.rank, leaguePoints: last.leaguePoints || 0,
                        rankLabel: rankLabelOf(last), games: games, lp: netLp,
                        winrate: games ? Math.round(100 * wins / games) : 0,
                        record: record });
     });
     return { netLabels: netLabels, tiers: tiers, standings: standings };
+  }
+
+  // Ladder position of a standings row, from the rank it is displaying.
+  function ladderOf(s) {
+    if (!s.tier) return -1;
+    var ti = D.tierOrder.indexOf(s.tier);
+    if (ti < 0) ti = 0;
+    var lp = s.leaguePoints || 0;
+    if (D.apexTiers.indexOf(s.tier) !== -1) {
+      return ti * D.divisionsPerTier * D.lpPerDivision + lp;
+    }
+    return (ti * D.divisionsPerTier + (D.rankScore[s.rank] || 0)) * D.lpPerDivision + lp;
   }
 
   function rankName(h) {
@@ -4117,15 +4152,26 @@ window.LpChart = (function () {
   }
 
   // Mirrors render_chart_stats(). Not covered by verifySelf(), which only
-  // compares the SVGs, so it is kept short and structural on purpose.
+  // compares the SVGs and the game list, so it is kept short and structural.
+  //
+  // Sorted here rather than taken in state order. state.friends is the order
+  // the page was published in, and after a refresh that is last week's ladder:
+  // somebody who dropped to 0 LP stayed above somebody who did not. The chart
+  // series keep their published order, because that is what ties a line to a
+  // colour.
   function standingsHtml(state) {
-    var rows = state.standings.map(function (s) {
+    var ordered = state.standings.slice().sort(function (a, b) {
+      return ladderOf(b) - ladderOf(a);
+    });
+    var rows = ordered.map(function (s) {
       var icon = '<img src="' +
         esc(D.rankIconBase.replace('{tier}', (s.tier || 'unranked').toLowerCase())) +
-        '" alt="" class="rank-icon" width="18" height="18" loading="lazy" ' +
+        '" alt="" class="rank-icon' + (s.tier ? '' : ' rank-icon-unranked') +
+        '" width="18" height="18" loading="lazy" ' +
         'onerror="this.style.visibility=&#x27;hidden&#x27;">';
       var up = s.lp >= 0;
-      return '<tr><td class="cs-name"><span class="sw" style="background:var(' + s.varName +
+      return '<tr data-standing="' + esc(s.label) + '"><td class="cs-name">' +
+        '<span class="sw" style="background:var(' + s.varName +
         ');"></span><b style="color:var(' + s.varName + ');">' + esc(s.label) + '</b></td>' +
         '<td class="nowrap">' + icon + s.rankLabel + '</td>' +
         '<td class="num">' + s.games + '</td>' +
@@ -4257,6 +4303,24 @@ window.LpChart = (function () {
     if (chips) chips.innerHTML = standingsHtml(state);
     var body = document.querySelector('.lp-table tbody');
     if (body) body.innerHTML = tableHtml(state);
+
+    // The key is static markup, so it is reordered rather than rebuilt: the
+    // click handlers on it look their series up by id and survive the move.
+    var key = document.querySelector('.chart-key');
+    if (key && chips) {
+      var order = [];
+      chips.querySelectorAll('[data-standing]').forEach(function (tr) {
+        order.push(tr.getAttribute('data-standing'));
+      });
+      var byLabel = {};
+      key.querySelectorAll('.legend-item').forEach(function (el) {
+        var name = el.querySelector('.legend-name');
+        if (name) byLabel[name.textContent] = el;
+      });
+      order.forEach(function (label) {
+        if (byLabel[label]) key.appendChild(byLabel[label]);
+      });
+    }
 
     hidden.forEach(function (id) {
       var g = document.getElementById(id);
@@ -4800,6 +4864,10 @@ def build_html(data):
   .cr-peak .cr-lp {{ font-size: 11.5px; color: var(--muted); }}
 
   .stat-pct {{ font-size: 13px; font-weight: 700; color: var(--text-secondary); }}
+  /* Gold's crest is 17x13 where the rest are square, so contain rather than
+     stretch, and unranked comes back to the weight of a tier crest. */
+  .rank-icon {{ object-fit: contain; }}
+  .rank-icon-unranked {{ transform: scale(0.8); }}
   /* ---- Friend card ------------------------------------------------------ */
   /* Two columns while there is room: the ranked queues read down the left,
      the two shares of the season read as rings on the right. Both collapse to
@@ -4822,10 +4890,15 @@ def build_html(data):
     gap: 22px; align-items: start; margin-bottom: 18px;
   }}
   .card-queues {{ display: flex; flex-direction: column; gap: 12px; min-width: 0; }}
+  /* The last column is a fixed width, not auto. On auto it took whatever the
+     record text needed, so a queue reading "(0W / 0L)" gave the bar beside it
+     more room than one reading "(447W / 446L)" and the bars did not line up
+     down the card. */
   .q-row {{
-    display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(90px, 1fr) auto;
+    display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(90px, 1fr) 148px;
     gap: 6px 14px; align-items: center;
   }}
+  .q-wr {{ text-align: right; }}
   .q-name {{ display: flex; flex-direction: column; gap: 2px; font-weight: 700; font-size: 14px; }}
   .q-rank {{ font-size: 12.5px; font-weight: 600; }}
   .q-wr {{ font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }}
@@ -4883,6 +4956,7 @@ def build_html(data):
   .rate-pair {{ font-variant-numeric: tabular-nums; white-space: nowrap; }}
   .rate-pair .up {{ color: var(--good); font-weight: 700; }}
   .rate-pair .down {{ color: var(--critical); font-weight: 700; }}
+  .label-note[title] {{ cursor: help; border-bottom: 1px dotted var(--muted); }}
   .label-note {{
     font-weight: 500; text-transform: none; letter-spacing: 0;
     color: var(--muted); margin-left: 6px;
@@ -4935,8 +5009,8 @@ def build_html(data):
   .dot.loss {{ background: var(--critical); box-shadow: 0 1px 4px color-mix(in srgb, var(--critical) 35%, transparent); }}
   /* Games pulled in by the live refresh, ringed so it is obvious something
      actually arrived rather than leaving you to guess. */
-  .dot-new {{ box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 3px var(--accent); }}
-  tr.row-new td {{ background: color-mix(in srgb, var(--accent) 9%, transparent); }}
+  /* A game added by a refresh is a game like any other, and tinting it blue
+     fought with the shared-game colour on the same row. */
 
   .season-stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(152px, 1fr)); gap: 10px; margin-top: 14px; }}
   .stat-tile {{
@@ -5023,6 +5097,14 @@ def build_html(data):
   .duo-cell[tabindex] {{ cursor: pointer; }}
   .duo-cell[tabindex]:hover {{ transform: scale(1.06); box-shadow: var(--shadow-md); }}
   .duo-cell.selected {{ outline: 2px solid var(--accent); outline-offset: 1px; }}
+  /* The row's player carries this pairing on KDA. A corner mark rather than a
+     different fill, so it does not compete with the winrate colour. */
+  .duo-carry::after {{
+    content: ""; position: absolute; top: 3px; right: 3px;
+    border-top: 7px solid var(--gold); border-left: 7px solid transparent;
+    opacity: .85;
+  }}
+  .duo-cell {{ position: relative; }}
   .cell-wr {{
     display: block; font-size: 13.5px; font-weight: 700;
     font-variant-numeric: tabular-nums; line-height: 1.2;
@@ -5131,6 +5213,11 @@ def build_html(data):
   .duo-detail-names {{ font-weight: 700; font-size: 14px; margin-bottom: 6px; }}
   .duo-detail-line {{ font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }}
   .duo-thin {{ color: var(--critical); opacity: .8; font-weight: 600; }}
+  .duo-carry-key {{ display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }}
+  .duo-carry-key i {{
+    width: 0; height: 0; display: inline-block;
+    border-top: 7px solid var(--gold); border-left: 7px solid transparent;
+  }}
   .duo-lift-up {{ color: var(--good); font-weight: 700; }}
   .duo-lift-down {{ color: var(--critical); font-weight: 700; }}
 
@@ -6215,8 +6302,9 @@ def build_html(data):
 
       function rankIconHtml(e, size) {{
         var tier = (e && e.tier) ? e.tier.toLowerCase() : 'unranked';
+        var cls = (e && e.tier) ? 'rank-icon' : 'rank-icon rank-icon-unranked';
         return '<img src="' + CFG.rankIconBase.replace('{{tier}}', tier) +
-               '" alt="" class="rank-icon" width="' + size + '" height="' + size +
+               '" alt="" class="' + cls + '" width="' + size + '" height="' + size +
                '" onerror="this.style.visibility=&#x27;hidden&#x27;">';
       }}
 
