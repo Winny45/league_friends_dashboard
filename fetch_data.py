@@ -49,6 +49,16 @@ QUEUE_ID_NAMES = {
 # all (filtered server-side via Riot's own `queue` param, so non-ranked
 # games never cost an API call in the first place).
 RANKED_QUEUE_IDS = [420, 440, 42]
+
+# League-V4 queueType -> the key the dashboard reads. Anything not listed is
+# carried through under its own queueType rather than discarded, so a queue
+# that exists but is not in this map still reaches the page.
+QUEUE_TYPE_KEYS = {
+    "RANKED_SOLO_5x5": "solo",
+    "RANKED_FLEX_SR": "flex",
+    "RANKED_TEAM_5x5": "fives",
+    "RANKED_FLEX_TT": "flexTT",
+}
 RANKED_QUEUE_NAMES = {QUEUE_ID_NAMES[qid] for qid in RANKED_QUEUE_IDS}
 
 MATCH_CACHE_PATH = Path("matches_cache.json")
@@ -282,8 +292,23 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
     league_entries = client.get_league_entries_by_puuid(puuid)
     mastery = client.get_mastery_top_by_puuid(puuid, count=5)
 
-    solo = next((e for e in league_entries if e.get("queueType") == "RANKED_SOLO_5x5"), None)
-    flex = next((e for e in league_entries if e.get("queueType") == "RANKED_FLEX_SR"), None)
+    # Every queue Riot returns, not only the two we thought to ask for. The
+    # old version took RANKED_SOLO_5x5 and RANKED_FLEX_SR and dropped anything
+    # else on the floor, so if this account is ranked in a queue that is not
+    # one of those, the dashboard could never see it however many times it was
+    # asked to. Unknown queue types keep their own name and are printed, so
+    # what Riot actually returns is visible rather than guessed at.
+    ranked = {}
+    for e in league_entries:
+        qt = e.get("queueType")
+        key = QUEUE_TYPE_KEYS.get(qt, qt)
+        if key:
+            ranked[key] = _entry_summary(e)
+    ranked.setdefault("solo", _entry_summary(None))
+    ranked.setdefault("flex", _entry_summary(None))
+    extra = sorted(k for k in ranked if k not in ("solo", "flex", "fives"))
+    if extra:
+        print(f"  ranked queues beyond solo/flex: {', '.join(extra)}")
 
     log_entry = scrape_log.get(puuid, {})
     known_ids = log_entry.get("matchIds", [])
@@ -360,6 +385,12 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
             continue
         season_matches.append(entry)
 
+    unknown_queues = sorted({e.get("queue") for e in season_matches
+                             if str(e.get("queue", "")).startswith("Queue ")})
+    if unknown_queues:
+        print(f"  unnamed queues in this history: {', '.join(unknown_queues)} "
+              f"(add them to QUEUE_ID_NAMES if one of them is ranked)")
+
     scrape_log[puuid] = {"label": label, "riotId": riot_id, "seasonStart": season_start_key, "matchIds": kept_ids}
 
     # Trim to season_start in case season_start was tightened (moved later)
@@ -383,10 +414,7 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
         "riotId": riot_id,
         "puuid": puuid,
         "summonerLevel": summoner.get("summonerLevel"),
-        "ranked": {
-            "solo": _entry_summary(solo),
-            "flex": _entry_summary(flex),
-        },
+        "ranked": ranked,
         "mastery": [
             {
                 "championId": m.get("championId"),
