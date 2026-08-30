@@ -355,6 +355,7 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
     season_matches = []
     new_fetches = 0
     cache_hits = 0
+    stale_misses = 0
     remake_count = 0
     kept_ids = []
     for mid in match_ids:
@@ -371,15 +372,24 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
             cache_hits += 1
         else:
             m = client.get_match(mid)
-            if not m:
-                continue
-            entry = extract_match_entry(m, puuid, mid)
+            entry = extract_match_entry(m, puuid, mid) if m else None
             if not entry:
-                continue
-            match_cache[cache_key] = entry
-            new_fetches += 1
-            if new_fetches % 20 == 0:
-                print(f"    ...{new_fetches} new matches fetched so far")
+                # Riot stops serving old matches eventually. On a plain run
+                # there is nothing to fall back to, but a --refetch-details
+                # pass is re-reading something already held, and dropping it
+                # would delete a game from the season to gain a field.
+                if cached:
+                    entry = cached
+                    cache_hits += 1
+                    if stale:
+                        stale_misses += 1
+                else:
+                    continue
+            else:
+                match_cache[cache_key] = entry
+                new_fetches += 1
+                if new_fetches % 20 == 0:
+                    print(f"    ...{new_fetches} new matches fetched so far")
         # Ranked-only, belt-and-suspenders: the id listing above is already
         # queue-filtered server-side, but this also drops any stale
         # normals/ARAM ids left over in an old scrape_log from before this
@@ -394,6 +404,10 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
             remake_count += 1
             continue
         season_matches.append(entry)
+
+    if stale_misses:
+        print(f"  {stale_misses} matches could not be re-fetched (Riot no longer serves them); "
+              f"kept the cached copy without lane detail")
 
     unknown_queues = sorted({e.get("queue") for e in season_matches
                              if str(e.get("queue", "")).startswith("Queue ")})
@@ -516,6 +530,25 @@ def _entry_summary(entry):
     }
 
 
+def prune_match_cache(cache):
+    """Drop cache entries left over from the original key format.
+
+    The cache was first keyed by match id alone, one entry per match. That is
+    wrong as soon as two tracked players are in the same game: the second one
+    processed overwrites the first, and whoever reads it afterwards gets
+    somebody else's kills and champion. The key became "matchId|puuid" so each
+    player's own line is its own entry, and every lookup has used that form
+    since, which leaves the old ones unreachable rather than merely stale.
+
+    Nothing is lost by removing them: any match still wanted is re-fetched
+    under the current key on the next run, which would have happened anyway.
+    """
+    dead = [k for k in cache if "|" not in k]
+    for k in dead:
+        del cache[k]
+    return len(dead)
+
+
 def load_match_cache():
     if MATCH_CACHE_PATH.exists():
         try:
@@ -598,15 +631,18 @@ def save_rank_history(history):
 
 def parse_args(argv):
     """fetch_data.py [config.json] [--resync [Label ...]] [--allow-partial]
+                     [--refetch-details] [--prune-cache]
 
-    Returns (config_path, resync, allow_partial, refetch_details) where resync
-    is None for a normal incremental run, an empty set to re-list everybody, or
-    a set of labels. allow_partial permits writing data.json when some friends
-    failed. refetch_details re-pulls cached matches that predate the lane
-    opponent fields, which is what the matchup tables are built from.
+    Returns (config_path, resync, allow_partial, refetch_details, prune_cache).
+    resync is None for a normal incremental run, an empty set to re-list
+    everybody, or a set of labels. allow_partial permits writing data.json when
+    some friends failed. refetch_details re-pulls cached matches that predate
+    the lane opponent fields, which is what the matchup tables are built from.
+    prune_cache deletes entries under the original match-id-only key, which no
+    lookup can reach.
     """
     config_path, resync, in_flag, allow_partial = None, None, False, False
-    refetch_details = False
+    refetch_details = prune_cache = False
     for a in argv:
         if a == "--resync":
             resync, in_flag = set(), True
@@ -617,16 +653,19 @@ def parse_args(argv):
         if a == "--refetch-details":
             refetch_details, in_flag = True, False
             continue
+        if a == "--prune-cache":
+            prune_cache, in_flag = True, False
+            continue
         if in_flag and not a.startswith("-"):
             resync.add(a)
             continue
         if config_path is None:
             config_path = a
-    return Path(config_path or "config.json"), resync, allow_partial, refetch_details
+    return Path(config_path or "config.json"), resync, allow_partial, refetch_details, prune_cache
 
 
 def main():
-    config_path, resync, allow_partial, refetch_details = parse_args(sys.argv[1:])
+    config_path, resync, allow_partial, refetch_details, prune_cache = parse_args(sys.argv[1:])
     if not config_path.exists():
         print(f"Config file not found: {config_path}\n"
               f"Copy config.example.json to config.json and fill in your API key + friends.")
@@ -658,6 +697,11 @@ def main():
               f"Add \"season_start\": \"YYYY-MM-DD\" to config.json for true season-to-date stats.\n")
 
     match_cache = load_match_cache()
+    if prune_cache:
+        dropped = prune_match_cache(match_cache)
+        save_match_cache(match_cache)
+        print(f"Dropped {dropped} cache entries under the old match-id-only key. "
+              f"{len(match_cache)} left.\n")
     scrape_log = load_scrape_log()
 
     results = []

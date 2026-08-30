@@ -1,6 +1,32 @@
 [
   {
     "date": "2026-08-30",
+    "title": "A seven day trend that covers seven days",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The 7 day trend kept only the snapshots that fell inside the window, which measures whatever happened to land there rather than the window itself. With readings on the 21st, 27th and 29th it compared the 27th against the 29th and called two days a week: Shas2nd showed no movement at all despite a demotion, and a fifty LP drop earlier in the week did not register. It now anchors on the last reading at or before the cutoff, which is what the rank actually was seven days ago. Shas2nd reads -42 LP and a demotion; Kirish -53; Brett +119."
+      },
+      {
+        "type": "improved",
+        "text": "The leaderboard's trend column drops the (7d) suffix, which repeated its own heading."
+      },
+      {
+        "type": "improved",
+        "text": "The header says \"Data from\" and its build time, and a live refresh appends when the ranks on top of it were read. The build time only moves when fetch_data.py runs, which is what a shared link shows."
+      },
+      {
+        "type": "added",
+        "text": "fetch_data.py --prune-cache drops the 1,953 cache entries left under the original match-id-only key. Nothing can read them: every lookup uses matchId|puuid, which is what stops two friends in the same game from overwriting each other's stat line."
+      },
+      {
+        "type": "fixed",
+        "text": "A --refetch-details pass that could not re-fetch a match kept the cached copy instead of dropping the game. Riot stops serving very old matches, and losing a game from the season to gain a field on it is the wrong trade."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Faces follow the top champion, and the key follows the live ladder",
     "items": [
       {
