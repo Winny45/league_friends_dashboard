@@ -1,6 +1,44 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Faces follow the top champion, and the key follows the live ladder",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The LP per game key and the standings under it kept the order the page was published in, so after a refresh somebody who had dropped to 0 LP still sat above somebody on 26. Both now sort on the rank they are showing. The chart's own lines keep their published order, because that is what ties a line to a colour."
+      },
+      {
+        "type": "fixed",
+        "text": "The rank crests are not drawn to one scale: the tier ones sit inside a 20x20 box with a margin, unranked fills a 16x16 box edge to edge, and gold is 17x13. Unranked is scaled back to the weight of a tier crest and all of them fit rather than stretch."
+      },
+      {
+        "type": "fixed",
+        "text": "The queue bars started and finished at different points because the column holding the record was sized to its text, so a queue reading 0W / 0L gave the bar beside it more room than one reading 447W / 446L. Fixed width now."
+      },
+      {
+        "type": "improved",
+        "text": "The 7 day trend is Ranked Solo/Duo only, with no queue letters."
+      },
+      {
+        "type": "improved",
+        "text": "A game added by a refresh is no longer tinted blue. It fought with the shared-game colour on the same row, and a new game is a game like any other."
+      },
+      {
+        "type": "improved",
+        "text": "A card's face and background art are the top of its weighted champion table rather than highest mastery, so the picture and the table agree. Winny is Twitch rather than Samira."
+      },
+      {
+        "type": "added",
+        "text": "The duo grid marks the corner of a cell where the player on that row holds the higher KDA across the pair's games, so reading across a row shows which pairings they carry. The KDA comparison is Solo/Duo only now, matching the grid it sits in."
+      },
+      {
+        "type": "added",
+        "text": "Hovering \"weighted\" on a card spells out the rating: the player's own winrate, plus the champion's lift shrunk by games / (games + 15) and halved for its counter-pick share, plus up to 16 points for volume."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Ranked 5s on the cards, and rank colours that match their crests",
     "items": [
       {
