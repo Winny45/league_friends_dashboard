@@ -878,6 +878,13 @@ def render_role_breakdown(rows):
 # ---------------------------------------------------------------------------
 
 MATCHUP_MIN_GAMES = 5
+CARRY_MIN_PX, CARRY_MAX_PX = 5.0, 13.0   # corner mark, smallest to widest gap
+# A champion somebody plays more than this often is not a counter pick, it is
+# their champion: they were on it before the enemy locked in.
+COUNTER_MAX_PICK_RATE = 10.0
+# And a counter pick has to actually win. Sixty percent is the floor; clearing
+# their own average by more than a run this short could manage is the test.
+COUNTER_MIN_WINRATE = 60.0
 # 15 games of the player's own average mixed into every champion's record.
 # At 8 a two game 100% still beat a two hundred game main, which is the exact
 # result the rating exists to avoid.
@@ -923,6 +930,13 @@ def champion_matchups(season_matches, min_games=MATCHUP_MIN_GAMES):
     rather than quietly wrong.
     """
     base = overall_winrate(season_matches)
+    total = sum(1 for m in season_matches if not m.get("remake"))
+    picks = {}
+    for m in season_matches:
+        if not m.get("remake"):
+            picks[m["champion"]] = picks.get(m["champion"], 0) + 1
+    pick_rate = {c: 100 * n / total for c, n in picks.items()} if total else {}
+
     pairs = {}
     for m in season_matches:
         if m.get("remake"):
@@ -941,16 +955,16 @@ def champion_matchups(season_matches, min_games=MATCHUP_MIN_GAMES):
         if st["games"] < min_games:
             continue
         wr = 100 * st["wins"] / st["games"]
-        # "Better than their average" is not a counter pick. Over five games
-        # three wins already beats a 50% player, and that is what a coin does
-        # five times · a 60% record on five games was being tagged. The margin
-        # has to clear the standard error of a run that short, which at five
-        # games is over twenty points, with a ten point floor so a long
-        # matchup is not tagged on a difference nobody would notice.
+        # Three tests, and it has to pass all of them. A champion played more
+        # than a tenth of the time is that player's champion rather than an
+        # answer to anything, so it can never be one however well it does. The
+        # matchup has to win outright, not merely beat a losing average. And
+        # the margin over their own winrate has to clear what a run this short
+        # could produce on its own, which at five games is over twenty points.
         counter = False
-        if base is not None:
+        if base is not None and pick_rate.get(champ, 0) <= COUNTER_MAX_PICK_RATE:
             se = math.sqrt(base * (100 - base) / st["games"]) if 0 < base < 100 else 0.0
-            counter = (wr - base) >= max(10.0, se)
+            counter = wr >= COUNTER_MIN_WINRATE and (wr - base) >= max(10.0, se)
         rows.append({
             "champion": champ, "opponent": opp,
             "games": st["games"], "wins": st["wins"], "losses": st["games"] - st["wins"],
@@ -2761,11 +2775,21 @@ def compute_awards(friends, now):
             "text": f"{esc(f['label'])} still won going {m['kills']}/{m['deaths']}/{m['assists']} on {esc(m['champion'])}. Grit over stats.",
         })
 
+    # Every award names its player first. Matching longest first so "Shas2nd"
+    # is not read as "Shas".
+    labels = sorted((f["label"] for f in friends), key=len, reverse=True)
+    for a in awards:
+        a.setdefault("who", next((l for l in labels if l in a["text"]), None))
     return awards[:12]
 
 
 def render_award(a):
-    return f'''<div class="award">
+    # The strip down the left is that player's own colour, the same one they
+    # have on the charts and in the duo grid, rather than the same accent on
+    # every card.
+    who = a.get("who")
+    style = f' style="--award-colour: var({friend_colour(who)});"' if who else ""
+    return f'''<div class="award"{style}>
       <div class="award-icon">{a["icon"]}</div>
       <div>
         <div class="award-title">{esc(a["title"])}</div>
@@ -2995,6 +3019,7 @@ def render_duo_synergy_panel(friends):
 
     by_pair = {tuple(sorted([r["a"], r["b"]])): r for r in rows}
     boost_by_pair = compute_kda_boost(friends)
+    widest_gap = max((b["gap"] for b in boost_by_pair.values()), default=0) or 0
     idx = {label: i for i, label in enumerate(players)}
 
     def qattrs(prefix, buckets):
@@ -3045,8 +3070,15 @@ def render_duo_synergy_panel(friends):
             b = boost_by_pair.get(tuple(sorted([a, b])))
             carry = ""
             if b and b["booster"] == a:
-                carry = (f' data-carry="1" title="{esc(a)} holds the higher KDA in these '
-                         f'{b["games"]} games, {b["boosterKda"]} against {b["boostedKda"]}"')
+                # Sized by how far ahead they are, against the widest gap in
+                # the group, so the marks rank as well as flag. A floor keeps
+                # the smallest one visible.
+                share = (b["gap"] / widest_gap) if widest_gap else 0
+                size = CARRY_MIN_PX + (CARRY_MAX_PX - CARRY_MIN_PX) * share
+                carry = (f' data-carry="1" style="--carry:{size:.1f}px;"'
+                         f' title="{esc(a)} holds the higher KDA in these '
+                         f'{b["games"]} games, {b["boosterKda"]} against {b["boostedKda"]}, '
+                         f'a gap of {b["gap"]:.2f}"')
             cells.append(
                 f'<td class="duo-cell{" duo-carry" if carry else ""}" tabindex="0" role="button" '
                 f'data-a="{esc(r["a"])}" data-b="{esc(r["b"])}"{carry} {qattrs("", r)}>'
@@ -3161,28 +3193,6 @@ def render_duo_synergy_panel(friends):
     # An empty size reads as a broken table unless the table says so. Nobody
     # here has queued as an exact trio, and without this line that looks like
     # trios are not being counted rather than that there are none.
-    # Every Flex and 5s game each of them played, and which bucket it fell in.
-    # Rory playing 28 Flex games and appearing in rows worth 18 of them is not
-    # a gap in the table, and this is where that is shown rather than asserted.
-    cov = sorted(party_coverage(friends), key=lambda r: -r["games"])
-    coverage_table = ""
-    if cov:
-        cov_rows = "".join(
-            f'<tr><td class="nowrap"><b>{esc(r["label"])}</b></td>'
-            f'<td class="num">{r["games"]}</td>'
-            f'<td class="num">{r["listed"]}</td>'
-            f'<td class="num muted">{r["four"] or "&ndash;"}</td>'
-            f'<td class="num muted">{r["under"] or "&ndash;"}</td></tr>'
-            for r in cov
-        )
-        coverage_table = (
-            '<table class="matches-table duo-table" style="margin-top:14px;"><thead><tr><th>Player</th>'
-            '<th class="num">Flex &amp; 5s games</th><th class="num">In a trio or five man</th>'
-            '<th class="num">Four of you (a five man, fifth outside the group)</th>'
-            '<th class="num">One or two of you on the side</th></tr></thead>'
-            f'<tbody>{cov_rows}</tbody></table>'
-        )
-
     party_table = ""
     if parties:
         party_table = f'''
@@ -3200,7 +3210,6 @@ def render_duo_synergy_panel(friends):
           <th class="num sortable" data-key="fives" data-numeric>5s</th></tr></thead>
           <tbody>{party_rows}</tbody>
         </table>
-        {coverage_table}
       </details>'''
 
     return f'''
@@ -3314,8 +3323,17 @@ def render_week_glance_panel(friends_sorted, awards, rank_history, now):
     if not tiles:
         return ""
 
+    # Same rule as the highlight cards below: the strip is the colour of
+    # whoever the tile is about. A tile about the group ("Played together")
+    # keeps the house accent, which is the honest answer for it.
+    labels = sorted((f["label"] for f in friends_sorted), key=len, reverse=True)
+
+    def tile_style(text):
+        who = next((l for l in labels if l in text), None)
+        return f' style="--award-colour: var({friend_colour(who)});"' if who else ""
+
     tiles_html = "".join(
-        f'<div class="award"><div class="award-icon">{icon}</div><div>'
+        f'<div class="award"{tile_style(text)}><div class="award-icon">{icon}</div><div>'
         f'<div class="award-title">{esc(title)}</div><div class="award-text">{text}</div></div></div>'
         for icon, title, text in tiles
     )
@@ -4593,6 +4611,11 @@ def build_html(data):
     --bronze: #cc8a5b;
     --series-1: #4c8dff;
     --series-2: #ff7a45;
+    /* The queue bars ask for one of these by name. Only two existed, so the
+       Ranked 5s bar was pointing at an undefined variable: its gradient never
+       parsed and the bar rendered empty. */
+    --series-3: #a78bfa;
+    --series-4: #2ec4de;
     --good: #2ecc71;
     --critical: #ff5f5f;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
@@ -4811,7 +4834,8 @@ def build_html(data):
   }}
   .award::before {{
     content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
-    background: linear-gradient(var(--accent), var(--accent-2)); opacity: .75;
+    background: var(--award-colour, linear-gradient(var(--accent), var(--accent-2)));
+    opacity: .85;
   }}
   .award:hover {{ transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); }}
   .award-icon {{
@@ -4889,6 +4913,7 @@ def build_html(data):
   .cr-peak .cr-lp {{ font-size: 11.5px; color: var(--muted); }}
 
   .stat-pct {{ font-size: 13px; font-weight: 700; color: var(--text-secondary); }}
+  .duo-carry-key i {{ border-top-width: 9px; border-left-width: 9px; }}
   .live-at {{ color: var(--accent); font-weight: 600; }}
   /* Gold's crest is 17x13 where the rest are square, so contain rather than
      stretch, and unranked comes back to the weight of a tier crest. */
@@ -5126,8 +5151,9 @@ def build_html(data):
   /* The row's player carries this pairing on KDA. A corner mark rather than a
      different fill, so it does not compete with the winrate colour. */
   .duo-carry::after {{
-    content: ""; position: absolute; top: 3px; right: 3px;
-    border-top: 7px solid var(--gold); border-left: 7px solid transparent;
+    content: ""; position: absolute; top: 2px; right: 2px;
+    border-top: var(--carry, 7px) solid var(--gold);
+    border-left: var(--carry, 7px) solid transparent;
     opacity: .85;
   }}
   .duo-cell {{ position: relative; }}
