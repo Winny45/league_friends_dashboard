@@ -789,9 +789,15 @@ def main():
     if not results:
         print(f"\n! Fetched 0 of {expected} friends" +
               (" because the API key was rejected." if auth_failed else ".") +
-              "\n! data.json has been left untouched. "
-              "Fix the problem and run again — the match cache is intact, so a "
-              "successful run will be quick.")
+              "\n! data.json has been left untouched and the match cache is intact.")
+        if auth_failed:
+            print("!\n! Development keys expire 24 hours after they are issued. Get a new\n"
+                  "! one at https://developer.riotgames.com and replace the \"api_key\"\n"
+                  f"! value in {config_path}, then run the same command again.")
+        # Not "quick" when the point of the run is to re-fetch. Saying so set
+        # the wrong expectation for the next attempt.
+        if refetch_details:
+            print("! Nothing was re-fetched, so the next run is still the full pass.")
         sys.exit(1)
     if len(results) < expected and not allow_partial:
         print(f"\n! Only {len(results)} of {expected} friends came back. Writing this would "
