@@ -1,6 +1,44 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Ranked 5s on the cards, and rank colours that match their crests",
+    "items": [
+      {
+        "type": "added",
+        "text": "Ranked 5s has its own row on every friend card and its own slice in the game types ring. A queue with no ladder entry still shows its record, counted off the season's own games."
+      },
+      {
+        "type": "fixed",
+        "text": "Diamond's text was blue while its crest is violet. Every rank colour is now taken from the mini crest the page draws next to it. Diamond keeps the bluer half of the violet range and Master the redder, so the two stay apart in a leaderboard."
+      },
+      {
+        "type": "added",
+        "text": "An unranked crest, so an unranked queue gets the same treatment as a ranked one instead of an empty square."
+      },
+      {
+        "type": "fixed",
+        "text": "The 7 day trend used a hollow triangle for \"nothing recorded\", which is still an arrow shape: a card with two quiet queues read as two upward arrows. It is a grey dash now. Direction is settled first (green up for LP gained, red down for LP lost, grey dash for nothing), and only then does the distance decide the count. Each queue's group is tagged S, F or 5, since two untagged groups side by side read as one run of arrows about one thing."
+      },
+      {
+        "type": "fixed",
+        "text": "Top champions and Highest mastery now share a row height, so the two tables line up down the card."
+      },
+      {
+        "type": "improved",
+        "text": "A card's face and background art are the player's highest mastery champion."
+      },
+      {
+        "type": "fixed",
+        "text": "The refresh had a budget of 40 match lookups for the whole group, which a seven person list can exhaust partway down, leaving whoever came last with nothing and making it look as though only one person had played. Everyone gets their full window now, and the status line names who got new games rather than only counting them."
+      },
+      {
+        "type": "improved",
+        "text": "The Fresh badge is gone from the cards, and the snapshot count is gone from the rank progress table."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Ranked 5s found, and the cards lose their footnotes",
     "items": [
       {

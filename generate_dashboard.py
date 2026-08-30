@@ -26,23 +26,27 @@ APEX_TIERS = {"MASTER", "GRANDMASTER", "CHALLENGER"}
 # distinguishable from its neighbors) on both surfaces. Values are exposed as
 # CSS custom properties (--tier-xxx) so the dark-mode toggle swaps them in
 # one place rather than needing separate markup per theme.
+# Taken from the mini crests the page draws beside the text, so a rank reads
+# as one thing rather than two. The crest hex is in the middle of each pair;
+# the light and dark values are that colour pushed toward black or white far
+# enough to stay legible on the surface it sits on. Diamond was the one that
+# was plainly wrong: its crest is violet (#8141EB) and the text was blue.
 TIER_COLOR = {
-    "IRON":        {"light": "#5b5850", "dark": "#a6a399"},
-    "BRONZE":      {"light": "#8a5a3c", "dark": "#cf9163"},
-    "SILVER":      {"light": "#5f6570", "dark": "#b7bcc2"},
-    "GOLD":        {"light": "#a66f00", "dark": "#eda100"},
-    # Platinum was #199e70 and Emerald #0d7530 — two greens a shade apart,
-    # which made the two most common ranks in this group indistinguishable in
-    # the leaderboard, the chart and the standings chips. Platinum takes the
-    # turquoise it has in game; Emerald keeps green.
-    "PLATINUM":    {"light": "#0e8ea6", "dark": "#2ec4de"},
-    "EMERALD":     {"light": "#157f3f", "dark": "#2ecc71"},
-    "DIAMOND":     {"light": "#2a78d6", "dark": "#3987e5"},
-    "MASTER":      {"light": "#6a3fc9", "dark": "#a78bfa"},
-    "GRANDMASTER": {"light": "#d0362f", "dark": "#e66767"},
-    "CHALLENGER":  {"light": "#b8860b", "dark": "#f4c95d"},
+    "IRON":        {"light": "#4a4244", "dark": "#a99ea0"},   # crest #51484A
+    "BRONZE":      {"light": "#7e4833", "dark": "#d2896b"},   # crest #8C513A
+    "SILVER":      {"light": "#5f757a", "dark": "#b4c8cc"},   # crest #80989D
+    "GOLD":        {"light": "#96621f", "dark": "#e8a94f"},   # crest #CD8837
+    "PLATINUM":    {"light": "#10809e", "dark": "#4fc6e8"},   # crest #25ACD6
+    "EMERALD":     {"light": "#0f7a2c", "dark": "#2fcb5d"},   # crest #149C3A
+    # Diamond and Master are both violet in game. Diamond keeps the bluer
+    # half of that range and Master the redder, so the two stay apart in a
+    # leaderboard even though the crests are close.
+    "DIAMOND":     {"light": "#5b2ec4", "dark": "#9b6bf2"},   # crest #8141EB
+    "MASTER":      {"light": "#7b2fbc", "dark": "#c77fea"},   # crest #9D48E0
+    "GRANDMASTER": {"light": "#a83333", "dark": "#e87070"},   # crest #CD4545
+    "CHALLENGER":  {"light": "#a87a22", "dark": "#f7d48f"},   # crest #F4C874
 }
-DEFAULT_TIER_COLOR = {"light": "#898781", "dark": "#898781"}
+DEFAULT_TIER_COLOR = {"light": "#5a5d63", "dark": "#9aa0a8"}  # crest #63666B
 
 # Separate from TIER_COLOR: this is a per-*friend* identity palette for the
 # rank-progress chart, where each line needs its own distinguishable color
@@ -385,12 +389,15 @@ def render_duo_mates(match_id, label):
 
 
 def signature_champion(friend):
-    """The champion someone is most known for *this season*.
+    """The champion someone is most known for: their highest mastery.
 
-    Mastery is a lifetime score, so it kept showing a champion somebody has
-    not touched all split. Most games played this season is what people
-    actually recognise each other by.
+    Mastery is the lifetime score, which is what a player's face should be.
+    Most-played-this-season swings around with whatever they are grinding
+    that week, and the card already lists that separately.
     """
+    top = (friend.get("mastery") or [])
+    if top and top[0].get("championName"):
+        return top[0]["championName"]
     counts = {}
     for m in friend.get("seasonMatches", []):
         if m.get("remake"):
@@ -473,9 +480,9 @@ RANK_ICON_BASE = "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-stat
 
 
 def rank_icon_url(tier):
-    if not tier:
-        return None
-    return RANK_ICON_BASE.format(tier=tier.lower())
+    # Community Dragon carries an unranked crest, so an unranked player gets
+    # the same treatment as everyone else rather than an empty square.
+    return RANK_ICON_BASE.format(tier=(tier or "unranked").lower())
 
 
 def render_rank_icon(tier, size=20):
@@ -1236,8 +1243,8 @@ def render_top_champions(rows):
         return '<div class="muted small">No ranked games this season.</div>'
     body = "".join(
         f'<tr><td class="num muted small">{n}</td>'
-        f'<td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=22)}{esc(r["champion"])}'
-        f'{" <span class=\'counter-tag\' title=\'Some of this winrate comes from matchups this champion is already favoured in, so it counts for less\'>counter picks</span>" if r["counterShare"] else ""}</span></td>'
+        f'<td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=20)}{esc(r["champion"])}'
+        f'{" <span class=\'counter-tag\'>counter picks</span>" if r["counterShare"] else ""}</span></td>'
         f'<td class="num"><b>{r["rating"]}</b></td>'
         f'<td class="num">{r["games"]}</td>'
         f'<td class="num">{r["winrate"]}%</td>'
@@ -1283,21 +1290,19 @@ def queue_rows_for(f):
     those two.
     """
     ranked = f.get("ranked") or {}
-    known = [("solo", "Ranked Solo / Duo", "--series-1"),
-             ("flex", "Ranked Flex", "--series-2"),
-             ("fives", "Ranked 5s", "--series-3")]
-    rows = []
-    seen = set()
-    for key, label, colour in known:
-        entry = ranked.get(key)
-        if key in ("solo", "flex") or entry:
-            rows.append({"key": key, "label": label, "colour": colour, "entry": entry})
-            seen.add(key)
+    known = [("solo", "Ranked Solo / Duo", "--series-1", "S"),
+             ("flex", "Ranked Flex", "--series-2", "F"),
+             ("fives", "Ranked 5s", "--series-3", "5")]
+    rows, seen = [], set()
+    for key, label, colour, tag in known:
+        rows.append({"key": key, "label": label, "colour": colour, "tag": tag,
+                     "entry": ranked.get(key)})
+        seen.add(key)
     for key, entry in sorted(ranked.items()):
         if key in seen or not isinstance(entry, dict) or not entry.get("tier"):
             continue
         rows.append({"key": key, "label": key.replace("_", " ").title(),
-                     "colour": "--series-4", "entry": entry})
+                     "colour": "--series-4", "tag": key[:1].upper(), "entry": entry})
     return rows
 
 
@@ -1320,7 +1325,6 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
     season_hours = format_minutes(sum(m.get("durationMin", 0) for m in season_matches))
 
     peak_rank = f.get("peakRank", {}) or {}
-    solo_fresh_badge = render_fresh_badge(solo)
 
     champ_rows = champion_breakdown(season_matches)
     champion_pool = len(champ_rows)
@@ -1352,14 +1356,31 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
 
     # One arrow per queue, so the header says at a glance which ladders moved
     # this week and which way.
+    # One group per queue, each tagged, because two untagged groups side by
+    # side read as one run of arrows about one thing.
     trends = "".join(
         render_trend_arrows(weekly_trend_for(rank_history, f["label"], now, queue=qr["key"]),
-                            qr["label"])
+                            qr["label"], qr["tag"])
         for qr in queue_rows_for(f)
     )
 
+    played_by_queue = {}
+    for m in season_matches:
+        played_by_queue.setdefault(m.get("queue"), []).append(m)
+
     def queue_row(qr):
-        entry = qr["entry"] or {}
+        entry = dict(qr["entry"] or {})
+        # Riot has no ranked entry for every queue it runs, and one that is
+        # unranked still has a record worth showing, so the season's own games
+        # fill in the wins and losses when the ladder does not.
+        if not entry.get("wins") and not entry.get("losses"):
+            name = {"solo": "Ranked Solo/Duo", "flex": "Ranked Flex",
+                    "fives": "Ranked 5s"}.get(qr["key"])
+            pool = played_by_queue.get(name, [])
+            if pool:
+                w = sum(1 for m in pool if m["win"])
+                entry.update(wins=w, losses=len(pool) - w,
+                             winrate=round(100 * w / len(pool), 1))
         var = tier_var(entry.get("tier"))
         wr = entry.get("winrate")
         live = ' data-rank-row="solo"' if qr["key"] == "solo" else ""
@@ -1368,7 +1389,7 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
         return f'''<div class="q-row"{live}>
           <div class="q-name">{esc(qr["label"])}
             <span class="q-rank rank-cell"{cell} style="color:var({var});">
-              {render_rank_icon(entry.get("tier"), size=18)}{rank_label(entry or None)}</span>
+              {render_rank_icon(entry.get("tier"), size=18)}{rank_label(entry if entry.get("tier") else None)}</span>
           </div>
           {winrate_bar(wr, f"var({qr['colour']})")}
           <span class="q-wr"{wrcell}>{esc(wr) + "%" if wr is not None else "–"}
@@ -1410,7 +1431,6 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       <div class="card-mid">
         <div class="card-queues">
           {"".join(queue_row(qr) for qr in queue_rows_for(f))}
-          {f'<div class="muted small">{solo_fresh_badge}</div>' if solo_fresh_badge else ""}
           <div class="form-line">
             <span class="section-label" data-form-label>Last {len(matches)} games ({wins}W {losses}L)</span>
             <span class="dots" data-dots>{dots}</span>
@@ -1478,15 +1498,20 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
     </section>'''
 
 
-def render_trend_arrows(trend, label=""):
-    """One to three arrows: how far a rank moved this week, and which way.
+def render_trend_arrows(trend, label="", tag=""):
+    """Which way a rank moved this week, then how far.
 
-    One arrow up to 50 LP, two to 100, three beyond. A single arrow says a
-    ladder moved without saying whether it was a game or a division.
+    Three states and nothing else: a green up arrow for LP gained, a red down
+    arrow for LP lost, a grey dash for nothing recorded. Only once that is
+    settled does the size decide the count · one arrow to 50 LP, two to 100,
+    three beyond. The old hollow triangle for "no movement" was the problem:
+    it is still an arrow shape, so a card with two queues and no movement in
+    either read as two upward arrows.
     """
+    chip = f'<span class="tr-tag">{esc(tag)}</span>' if tag else ""
     if not trend or not trend.get("direction"):
-        return (f'<span class="tr-group" title="{esc(label)}: no movement recorded">'
-                f'<span class="tr-flat">&#9651;</span></span>')
+        return (f'<span class="tr-group" title="{esc(label)}: nothing recorded">'
+                f'{chip}<span class="tr-none">&ndash;</span></span>')
     lp = abs(trend.get("lp") or 0)
     count = 1 if lp <= 50 else (2 if lp <= 100 else 3)
     up = trend["direction"] > 0
@@ -1495,7 +1520,7 @@ def render_trend_arrows(trend, label=""):
     text = trend["text"]
     if trend.get("moved") and trend.get("lp") is not None:
         text = f"{'+' if trend['lp'] >= 0 else '−'}{abs(trend['lp'])} LP, {text}"
-    return (f'<span class="tr-group" title="{esc(label)}: {esc(text)}">'
+    return (f'<span class="tr-group" title="{esc(label)}: {esc(text)}">{chip}'
             + f'<span class="{cls}">{glyph}</span>' * count + '</span>')
 
 
@@ -2477,14 +2502,12 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
 
     standings_html = (
         f'<table class="chart-stats"><thead><tr><th>Player</th><th>Rank now</th>'
-        f'<th class="num">Over these {span_days + 1} days</th>'
-        f'<th class="num">Snapshots</th></tr></thead><tbody>'
+        f'<th class="num">Over these {span_days + 1} days</th></tr></thead><tbody>'
         + "".join(
             f'<tr><td class="cs-name"><span class="sw" style="background:var({s["var"]});"></span>'
             f'<b style="color:var({s["var"]});">{esc(s["label"])}</b></td>'
             f'<td class="nowrap">{render_rank_icon(s["tier"], size=18)}{s["rankLabel"]}</td>'
-            f'{daily_move(s)}'
-            f'<td class="num muted">{s["snapshots"]}</td></tr>'
+            f'{daily_move(s)}</tr>'
             for s in standings
         )
         + '</tbody></table>'
@@ -4097,11 +4120,10 @@ window.LpChart = (function () {
   // compares the SVGs, so it is kept short and structural on purpose.
   function standingsHtml(state) {
     var rows = state.standings.map(function (s) {
-      var icon = s.tier
-        ? '<img src="' + esc(D.rankIconBase.replace('{tier}', s.tier.toLowerCase())) +
-          '" alt="" class="rank-icon" width="18" height="18" loading="lazy" ' +
-          'onerror="this.style.visibility=&#x27;hidden&#x27;">'
-        : '<span class="rank-icon rank-icon-ph" style="width:18px;height:18px;"></span>';
+      var icon = '<img src="' +
+        esc(D.rankIconBase.replace('{tier}', (s.tier || 'unranked').toLowerCase())) +
+        '" alt="" class="rank-icon" width="18" height="18" loading="lazy" ' +
+        'onerror="this.style.visibility=&#x27;hidden&#x27;">';
       var up = s.lp >= 0;
       return '<tr><td class="cs-name"><span class="sw" style="background:var(' + s.varName +
         ');"></span><b style="color:var(' + s.varName + ');">' + esc(s.label) + '</b></td>' +
@@ -4784,8 +4806,13 @@ def build_html(data):
      one column on a narrow screen rather than shrinking to illegibility. */
   .card-id {{ min-width: 0; }}
   .card-trend {{ display: flex; flex-direction: column; gap: 3px; margin-left: 18px; }}
-  .tr-row {{ display: flex; gap: 9px; font-size: 14px; line-height: 1; }}
-  .tr-group {{ display: inline-flex; gap: 1px; }}
+  .tr-row {{ display: flex; gap: 12px; font-size: 13px; line-height: 1; align-items: center; }}
+  .tr-group {{ display: inline-flex; gap: 2px; align-items: center; }}
+  .tr-tag {{
+    font-size: 9.5px; font-weight: 800; letter-spacing: .04em; color: var(--muted);
+    margin-right: 3px;
+  }}
+  .tr-none {{ color: var(--muted); font-weight: 700; }}
   .tr-up {{ color: var(--good); }}
   .tr-down {{ color: var(--critical); }}
   .tr-flat {{ color: var(--muted); }}
@@ -4846,7 +4873,13 @@ def build_html(data):
   .cl-block .season-stats {{
     margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr));
   }}
+  /* The two tables sit side by side, so their rows have to be the same
+     height or they drift apart down the card. Fixed row height rather than
+     matching icon sizes, which only holds until one of them changes. */
   .cl-block .matches-table th, .cl-block .matches-table td {{ padding-left: 6px; padding-right: 6px; }}
+  .cl-block .matches-table td {{ height: 38px; }}
+  .cl-block .matches-table th {{ height: 30px; }}
+  .cl-block .champ-cell .champ-icon {{ width: 20px; height: 20px; }}
   .rate-pair {{ font-variant-numeric: tabular-nums; white-space: nowrap; }}
   .rate-pair .up {{ color: var(--good); font-weight: 700; }}
   .rate-pair .down {{ color: var(--critical); font-weight: 700; }}
@@ -6181,11 +6214,8 @@ def build_html(data):
       }}
 
       function rankIconHtml(e, size) {{
-        if (!e || !e.tier) {{
-          return '<span class="rank-icon rank-icon-ph" style="width:' + size +
-                 'px;height:' + size + 'px;"></span>';
-        }}
-        return '<img src="' + CFG.rankIconBase.replace('{{tier}}', e.tier.toLowerCase()) +
+        var tier = (e && e.tier) ? e.tier.toLowerCase() : 'unranked';
+        return '<img src="' + CFG.rankIconBase.replace('{{tier}}', tier) +
                '" alt="" class="rank-icon" width="' + size + '" height="' + size +
                '" onerror="this.style.visibility=&#x27;hidden&#x27;">';
       }}
@@ -6201,7 +6231,10 @@ def build_html(data):
       // worst case is 7x(1 account + 1 league + 2 id lists) + 45 = 73.
       var IDS_PER_QUEUE = 10;      // newest N ranked ids asked for, per queue
       var MAX_NEW_PER_FRIEND = 10; // one player cannot exceed the window anyway
-      var matchBudget = 40;        // match-detail calls for the whole refresh
+      // Every friend gets their full window. At 40 the budget ran out partway
+      // down a seven person list, so whoever came last silently got nothing
+      // and it looked as though only one person had played.
+      var matchBudget = 7 * MAX_NEW_PER_FRIEND;
       var budgetSpent = false;
 
       function escapeHtml(v) {{
@@ -6590,12 +6623,16 @@ def build_html(data):
             // Be explicit about what did and did not move: the season tiles and
             // the LP chart need the whole season, which the browser cannot
             // rebuild, so they stay on the published snapshot.
+            // Named rather than counted: "3 new games" leaves you guessing
+            // whose, and whether somebody was skipped.
+            var who = Object.keys(pending).map(function (l) {{
+              return l + ' ' + pending[l].length;
+            }});
             say('Ranks updated for ' + updated + ' of ' + friends.length + ' friends' +
-                (newGames ? ', ' + newGames + ' new game' + (newGames === 1 ? '' : 's') +
-                            ' added to their Form and match lists' +
+                (who.length ? ', new games for ' + who.join(', ') +
                             (budgetSpent ? ' (some older ones skipped to stay inside Riot’s ' +
                                            'rate limit · refresh again for the rest)' : '')
-                          : ', no new games since the last build') +
+                          : ', no new games for anyone since the last build') +
                 '. Live as of ' + when + '.' +
                 (charted ? ' The LP chart has been redrawn with them.' : '') +
                 ' Season totals and the champion breakdown still show the published ' +
