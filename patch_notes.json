@@ -1,6 +1,40 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Friend cards rebuilt, and 64 remakes stop counting as games",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "64 remakes were counting as real games. fetch_data.py drops them, but only for matches fetched since it started reading Riot's early-surrender flag, and 2,396 of 2,565 records here predate that. They are now spotted by duration: nothing but a remake ends inside four minutes, and there is a clean gap between the three minute remakes and the six minute stomps. Kirish's season drops from 971 games to 946 and his Zed from 401 to 393."
+      },
+      {
+        "type": "fixed",
+        "text": "LP per win and per loss was wrong. It solved for one pair of numbers across every snapshot gap at once, and a single gap that could not be squared with the rest dragged the whole answer: Brett came out at 13.4 LP a loss when he actually loses about 19. It now reads the per-game steps the LP chart is already drawn from, which are fitted to land exactly on each measured snapshot. Brett is 22.0 and 18.3, and 20 wins and 8 losses at those rates comes to the +294 LP his rank really moved."
+      },
+      {
+        "type": "fixed",
+        "text": "A game added by a refresh was built with eight cells where the table has nine: the \"With\" column was missing entirely, so every column from Champion rightwards landed one place left of its own heading. Those rows now also carry the shared-game tint, and are written only once every friend has been fetched, since a game two of them played is only recognisable as shared once both fetches are back."
+      },
+      {
+        "type": "improved",
+        "text": "Friend cards rebuilt. The ranked queues read down the left with their winrate bars, and two ring charts on the right show what the season was made of: which queue each game was played in, with Solo/Duo split by whether one of the group was on the team, and which lane it was played from. Under them, the weighted champion table, the mastery table and the season tiles sit side by side, then LP per win and per loss for every queue over the season and the last 20 games. The card header carries a trend arrow per queue."
+      },
+      {
+        "type": "added",
+        "text": "A switch to turn the projected lines on the LP per game chart off."
+      },
+      {
+        "type": "added",
+        "text": "Under the stacks table, an account of where everyone's Flex and Ranked 5s games went: how many were in a listed trio or five man, how many had four of them on a team (a five man whose fifth player is outside the group, since Flex has no four player party), and how many had only one or two of them. The three add up to the total, so Rory playing 28 Flex games and appearing in rows worth 18 of them is explained rather than looking like a gap."
+      },
+      {
+        "type": "fixed",
+        "text": "fetch_data.py kept only RANKED_SOLO_5x5 and RANKED_FLEX_SR from Riot's ranked entries and discarded anything else. Every queue Riot returns is now carried through under its own name, and any queue in a match history that has no name yet is printed, so a ranked queue that exists can no longer be invisible."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "A live rank reading reaches the whole page",
     "items": [
       {

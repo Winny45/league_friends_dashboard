@@ -282,6 +282,32 @@ def render_profile_links(riot_id):
 _DUO_CTX = {"map": {}}
 
 
+# A remake ends inside Riot's four minute window. Nothing else does: the
+# earliest a real game can finish is a fifteen minute surrender, and the
+# shortest real game in this data is six minutes.
+REMAKE_MAX_MINUTES = 4.5
+
+
+def mark_legacy_remakes(friends):
+    """Flag remakes on records cached before the flag existed.
+
+    fetch_data.py reads gameEndedInEarlySurrender and drops those games, but
+    only for matches fetched since that was added · 2,396 of 2,565 here predate
+    it and carry no such key, so 64 one and two minute games were counting as
+    real games in every total, every champion record and every winrate.
+    Duration is enough to tell: there is a clean gap between the three minute
+    remakes and the six minute stomps.
+    """
+    fixed = 0
+    for f in friends:
+        for m in f.get("seasonMatches", []) + f.get("recentMatches", []):
+            if "remake" in m:
+                continue
+            m["remake"] = (m.get("durationMin") or 99) < REMAKE_MAX_MINUTES
+            fixed += 1 if m["remake"] else 0
+    return fixed
+
+
 def set_duo_context(friends_sorted):
     by_match = {}
     for i, f in enumerate(friends_sorted):
@@ -644,12 +670,13 @@ def compute_duo_synergy(friends):
     return {"rows": rows, "own": own, "players": [f["label"] for f in friends]}
 
 
-def weekly_trend_for(rank_history, label, now):
-    """Same net-change logic as weekly_rank_leader, scoped to one friend –
-    powers the ▲/▼ trend arrow on each leaderboard row."""
+def weekly_trend_for(rank_history, label, now, queue="solo"):
+    """Same net-change logic as weekly_rank_leader, scoped to one friend and
+    one queue – powers the ▲/▼ trend arrow on the leaderboard and the row of
+    one-per-queue arrows in a card's header."""
     cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
     pts = sorted(
-        (h for h in rank_history if h.get("queue") == "solo" and h["label"] == label),
+        (h for h in rank_history if h.get("queue") == queue and h["label"] == label),
         key=lambda h: h["date"],
     )
     window = [h for h in pts if h["date"] >= cutoff]
@@ -944,104 +971,174 @@ def top_champions(season_matches, matchups, limit=5):
     return out[:limit]
 
 
-# What one ranked game can plausibly be worth. A segment implying more than
-# this per game is not a run of games, it is a snapshot that missed something:
-# decay, a game played on a smurf, or a fetch that skipped a day.
-LP_PER_GAME_CEILING = 40
-LP_RATE_MIN, LP_RATE_MAX = 8.0, 45.0
-LP_RATE_MIN_SEGMENTS = 3
-LP_RATE_MIN_GAMES = 15
-LP_RATE_MAX_RESIDUAL = 6.0   # LP per game the fit is allowed to be out by
+LP_RATE_MIN_GAMES = 10   # below this the average is one bad night
+LP_RATE_MIN_SIDE = 3     # and it needs both sides of the ledger
+LP_RATE_RECENT = 20      # the "last N games" window
 
 
-def lp_rate_segments(snapshots, matches, window=None):
-    """One (wins, losses, LP moved) per gap between two snapshots.
-
-    Games are attributed by timestamp where the snapshots record one, and by
-    date otherwise. Date alone is a real source of error: a snapshot taken at
-    midday puts that afternoon's games in the gap that ended before they were
-    played. fetch_data.py records the time from now on, so this sharpens as
-    history accumulates rather than needing a re-fetch.
-    """
-    played = sorted((m for m in matches if not m.get("remake")),
-                    key=lambda m: m.get("gameStartMs") or 0)
-    if window:
-        played = played[-window:]
-    if not played:
+def queue_timeline(rank_history, label, queue_key, matches, queue_name):
+    """One player's reconstructed per-game LP path for one queue."""
+    pts = sorted((h for h in rank_history
+                  if h.get("label") == label and h.get("queue") == queue_key),
+                 key=lambda h: h["date"])
+    played = [m for m in matches if m.get("queue") == queue_name and not m.get("remake")]
+    if len(pts) < 2 or not played:
         return []
-    timed = all(h.get("atMs") for h in snapshots)
-    by_date = {}
-    for m in played:
-        by_date.setdefault(m.get("dateKey"), []).append(m)
-
-    segs = []
-    for prev, cur in zip(snapshots, snapshots[1:]):
-        if timed:
-            seg = [m for m in played
-                   if prev["atMs"] < (m.get("gameStartMs") or 0) <= cur["atMs"]]
-        else:
-            seg = [m for d in sorted(by_date) if prev["date"] < d <= cur["date"]
-                   for m in by_date[d]]
-        if not seg:
-            continue
-        net = ladder_lp(cur) - ladder_lp(prev)
-        # Two kinds of gap that cannot be what they claim, and both wreck a
-        # fit they are allowed into. A gap where nothing moved across real
-        # games is a snapshot that did not update; a gap moving more per game
-        # than a game can be worth is missing games or LP decay.
-        if net == 0 or abs(net) > LP_PER_GAME_CEILING * len(seg):
-            continue
-        w = sum(1 for m in seg if m["win"])
-        segs.append((w, len(seg) - w, net))
-    return segs
+    return build_lp_timeline(pts, played)
 
 
-def estimate_lp_rates(snapshots, matches, window=None):
-    """What a win and a loss are worth, solved from the rank snapshots.
+def lp_rate(tl, window=None):
+    """Average LP for a win and for a loss, read off the reconstructed path.
 
-    Riot never reports the LP change for a single game. What is known is the
-    LP at each snapshot and every game played between two of them, which gives
-    one equation per gap: net = wins x gain - losses x drop. Several gaps with
-    different win/loss mixes make that solvable, so this is a least squares fit
-    across them rather than a number spread evenly over games.
+    The earlier version solved for one (gain, drop) pair across every gap at
+    once by least squares, and it was wrong: it put Brett at 13.4 LP a loss
+    where he actually loses about 19. One gap of his recorded four wins and no
+    losses against +60 LP, which cannot be squared with the rest, dragged the
+    whole answer.
 
-    Returns None whenever the snapshots do not actually support an answer, and
-    that is most of the time on a young history. Three usable gaps and fifteen
-    games are the minimum, the two figures have to land inside the range a
-    ranked game can be worth, and the fit has to reproduce the gaps it was
-    built from to within a few LP a game. Without those guards a single odd
-    snapshot · one loss recorded against forty four LP · sets somebody's whole
-    reading, and the number looks exactly as confident as a good one.
+    This reads the per-game steps the LP chart is already drawn from instead.
+    Each gap is solved on its own, closest to a nominal 20 LP while still
+    landing exactly on the next measured snapshot, so the answer always
+    reproduces the LP that really moved: Brett's 20W 8L at 22.0 and 18.3 comes
+    to +294, which is what his rank actually did. A gap that cannot be
+    explained distorts only its own games rather than everybody's.
     """
-    if len(snapshots) < 2 or not matches:
+    rows = [(bool(p["match"]["win"]), p["delta"] or 0) for p in tl[1:] if p["match"]]
+    if window:
+        rows = rows[-window:]
+    gains = [d for w, d in rows if w]
+    drops = [-d for w, d in rows if not w]
+    if (len(rows) < LP_RATE_MIN_GAMES or len(gains) < LP_RATE_MIN_SIDE
+            or len(drops) < LP_RATE_MIN_SIDE):
         return None
-    segs = lp_rate_segments(snapshots, matches, window)
-    games = sum(w + l for w, l, _n in segs)
-    if len(segs) < LP_RATE_MIN_SEGMENTS or games < LP_RATE_MIN_GAMES:
-        return None
-
-    sww = sum(w * w for w, _l, _n in segs)
-    sll = sum(l * l for _w, l, _n in segs)
-    swl = sum(w * l for w, l, _n in segs)
-    swn = sum(w * n for w, _l, n in segs)
-    sln = sum(l * n for _w, l, n in segs)
-    det = sww * sll - swl * swl
-    if abs(det) < 1e-9:
-        return None
-    gain = (swn * sll - swl * sln) / det
-    drop = (swl * swn - sww * sln) / det
-    if not (LP_RATE_MIN <= gain <= LP_RATE_MAX and LP_RATE_MIN <= drop <= LP_RATE_MAX):
-        return None
-
-    # How far the answer is from the gaps it came out of, per game. A fit that
-    # cannot reproduce its own inputs is not measuring anything.
-    err = math.sqrt(sum((gain * w - drop * l - n) ** 2 for w, l, n in segs) / len(segs))
-    residual = err / (games / len(segs))
-    if residual > LP_RATE_MAX_RESIDUAL:
-        return None
+    gain, drop = sum(gains) / len(gains), sum(drops) / len(drops)
     return {"gain": round(gain, 1), "drop": round(drop, 1),
-            "mmr": round(gain - drop, 1), "games": games, "segments": len(segs),
-            "residual": round(residual, 1)}
+            "mmr": round(gain - drop, 1), "games": len(rows),
+            "wins": len(gains), "losses": len(drops)}
+
+
+# ---------------------------------------------------------------------------
+# Ring charts. Two shares matter on a card and both are shares of a whole:
+# which queue a game was played in, and which lane it was played from. A table
+# of counts makes the reader do the division; a ring does not.
+# ---------------------------------------------------------------------------
+
+DONUT_VARS = ["--series-f0", "--series-f1", "--series-f2", "--series-f3",
+              "--series-f4", "--series-f5", "--series-f6", "--series-f7"]
+
+
+def render_donut(slices, centre, size=152, thickness=26, note=""):
+    """One ring plus its legend. Slices are {label, value} and optionally var."""
+    live = [sl for sl in slices if sl.get("value")]
+    total = sum(sl["value"] for sl in live)
+    if not total:
+        return (f'<div class="donut"><div class="donut-empty">'
+                f'<b>{esc(centre)}</b><span class="muted small">Nothing recorded yet</span></div>'
+                f'{f"<p class=\"muted small donut-note\">{note}</p>" if note else ""}</div>')
+
+    r = (size - thickness) / 2
+    circ = 2 * math.pi * r
+    arcs, legend, offset = [], [], 0.0
+    for i, sl in enumerate(live):
+        frac = sl["value"] / total
+        seg = frac * circ
+        var = sl.get("var") or DONUT_VARS[i % len(DONUT_VARS)]
+        arcs.append(
+            f'<circle cx="{size / 2:.1f}" cy="{size / 2:.1f}" r="{r:.1f}" fill="none" '
+            f'stroke="var({var})" stroke-width="{thickness}" '
+            f'stroke-dasharray="{seg:.2f} {circ - seg:.2f}" stroke-dashoffset="{-offset:.2f}">'
+            f'<title>{esc(sl["label"])}: {sl["value"]} of {total} ({frac * 100:.0f}%)</title>'
+            f'</circle>'
+        )
+        legend.append(
+            f'<li><span class="sw" style="background:var({var});"></span>'
+            f'<span class="dl-name">{esc(sl["label"])}</span>'
+            f'<span class="dl-val">{sl["value"]}<span class="muted"> &middot; {frac * 100:.0f}%</span></span></li>'
+        )
+        offset += seg
+
+    lines = centre.split("\n")
+    dy = -0.1 if len(lines) > 1 else 0.35
+    text = "".join(
+        f'<tspan x="{size / 2:.1f}" dy="{dy if n == 0 else 1.15}em">{esc(l)}</tspan>'
+        for n, l in enumerate(lines)
+    )
+    return f'''<div class="donut">
+      <svg viewBox="0 0 {size} {size}" class="donut-svg" role="img"
+           aria-label="{esc(centre.replace(chr(10), " "))}">
+        <g transform="rotate(-90 {size / 2:.1f} {size / 2:.1f})">{"".join(arcs)}</g>
+        <text x="{size / 2:.1f}" y="{size / 2:.1f}" text-anchor="middle"
+              class="donut-centre">{text}</text>
+      </svg>
+      <ul class="donut-legend">{"".join(legend)}</ul>
+      {f'<p class="muted small donut-note">{note}</p>' if note else ""}
+    </div>'''
+
+
+def queue_mix(season_matches, label):
+    """How a season splits across the ranked queues, with Solo/Duo divided by
+    whether one of the others was on the team.
+
+    Riot does not say who was premade, so "with one of you" means another
+    tracked player was on the same side · a duo with somebody outside this
+    group counts as alone from here.
+    """
+    played = [m for m in season_matches if not m.get("remake")]
+    solo = [m for m in played if m.get("queue") == "Ranked Solo/Duo"]
+    with_mate = sum(1 for m in solo if _DUO_CTX["map"].get((m.get("matchId"), label)))
+    mix = [
+        {"label": "Solo/Duo, with one of you", "value": with_mate, "var": "--series-f0"},
+        {"label": "Solo/Duo, on their own", "value": len(solo) - with_mate, "var": "--series-f2"},
+        {"label": "Flex", "value": sum(1 for m in played if m.get("queue") == "Ranked Flex"),
+         "var": "--series-f4"},
+        {"label": "Ranked 5s", "value": sum(1 for m in played if m.get("queue") == "Ranked 5s"),
+         "var": "--series-f1"},
+    ]
+    return mix, len(played)
+
+
+def render_mastery_table(mastery):
+    if not mastery:
+        return '<div class="muted small">No mastery data.</div>'
+    body = "".join(
+        f'<tr><td class="champ-cell"><span class="cc">'
+        f'{render_champion_icon(m["championName"], size=20)}{esc(m["championName"])}</span></td>'
+        f'<td class="num">{m["points"]:,}</td>'
+        f'<td class="num muted">M{esc(m["level"])}</td></tr>'
+        for m in mastery
+    )
+    return (f'<table class="matches-table"><thead><tr><th>Champion</th>'
+            f'<th class="num">Mastery</th><th class="num">Level</th></tr></thead>'
+            f'<tbody>{body}</tbody></table>')
+
+
+def render_rate_strip(rows):
+    """LP a win is worth against LP a loss costs, per queue, two windows.
+
+    MMR is the difference: positive means wins pay more than losses cost,
+    which is what sitting above your hidden rating looks like.
+    """
+    def pair(r):
+        if not r:
+            return ('<td class="num muted" title="Not enough games in this window '
+                    'to average">&ndash;</td><td class="num muted">&ndash;</td>')
+        cls = "up" if r["mmr"] >= 0 else "down"
+        return (f'<td class="num rate-pair">'
+                f'<span class="up">+{r["gain"]}</span>'
+                f'<span class="muted"> / </span>'
+                f'<span class="down">&minus;{r["drop"]}</span></td>'
+                f'<td class="num {cls}" title="Across {r["games"]} games, '
+                f'{r["wins"]}W {r["losses"]}L">'
+                f'{"+" if r["mmr"] >= 0 else "−"}{abs(r["mmr"]):.1f}</td>')
+
+    body = "".join(
+        f'<tr><td class="nowrap">{esc(q)}</td>{pair(season)}{pair(recent)}</tr>'
+        for q, season, recent in rows
+    )
+    return (f'<table class="matches-table rate-table">'
+            f'<thead><tr><th>Queue</th><th class="num">Season LP</th><th class="num">MMR</th>'
+            f'<th class="num">Last {LP_RATE_RECENT} LP</th><th class="num">MMR</th>'
+            f'</tr></thead><tbody>{body}</tbody></table>')
 
 
 def render_card_rank(entry, peak):
@@ -1166,20 +1263,44 @@ def render_matchups(rows, covered, total):
     handful of games has to be won convincingly before it counts as anything.</p>'''
 
 
+def queue_rows_for(f):
+    """Every ranked queue Riot reports for this account, in a fixed order.
+
+    Solo/Duo and Flex are named because they always exist; anything else Riot
+    returns is passed through under whatever it calls itself rather than being
+    dropped, which is what used to happen to every queue that was not one of
+    those two.
+    """
+    ranked = f.get("ranked") or {}
+    known = [("solo", "Ranked Solo / Duo", "--series-1"),
+             ("flex", "Ranked Flex", "--series-2"),
+             ("fives", "Ranked 5s", "--series-3")]
+    rows = []
+    seen = set()
+    for key, label, colour in known:
+        entry = ranked.get(key)
+        if key in ("solo", "flex") or entry:
+            rows.append({"key": key, "label": label, "colour": colour, "entry": entry})
+            seen.add(key)
+    for key, entry in sorted(ranked.items()):
+        if key in seen or not isinstance(entry, dict) or not entry.get("tier"):
+            continue
+        rows.append({"key": key, "label": key.replace("_", " ").title(),
+                     "colour": "--series-4", "entry": entry})
+    return rows
+
+
 def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""):
-    solo = f["ranked"].get("solo")
-    flex = f["ranked"].get("flex")
+    ranked = f.get("ranked") or {}
+    solo, flex = ranked.get("solo"), ranked.get("flex")
     solo_var = tier_var((solo or {}).get("tier"))
-    flex_var = tier_var((flex or {}).get("tier"))
-    matches = f.get("recentMatches", [])
-    season_matches = f.get("seasonMatches", matches)
+    matches = [m for m in f.get("recentMatches", []) if not m.get("remake")]
+    season_matches = [m for m in f.get("seasonMatches", f.get("recentMatches", []))
+                      if not m.get("remake")]
     wins = sum(1 for m in matches if m["win"])
     losses = len(matches) - wins
     dots = "".join(render_match_dot(m) for m in matches) or '<span class="muted">No recent games</span>'
-    mastery_html = "".join(render_mastery_chip(m) for m in f.get("mastery", [])) or '<span class="muted">No mastery data</span>'
     match_rows = "".join(render_match_row(m, f["label"]) for m in matches)
-    solo_wr = (solo or {}).get("winrate")
-    flex_wr = (flex or {}).get("winrate")
 
     weekly_min, weekly_games = weekly_playtime(season_matches, now)
     busiest_date, busiest_count = busiest_day(season_matches)
@@ -1188,51 +1309,76 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
     season_hours = format_minutes(sum(m.get("durationMin", 0) for m in season_matches))
 
     peak_rank = f.get("peakRank", {}) or {}
-    # The Solo/Duo peak is in the card's corner now, under the current rank.
-    # Printing it here as well put the same line on the card twice.
-    flex_peak_badge = render_peak_badge(flex, peak_rank.get("flex"))
     solo_fresh_badge = render_fresh_badge(solo)
 
     champ_rows = champion_breakdown(season_matches)
     champion_pool = len(champ_rows)
     role_rows = role_breakdown(season_matches)
-    # The nemesis line is gone: one champion's name and a loss count said less
-    # than the matchup table below, which answers the same question with the
-    # winrate and the KDA beside it.
     matchups = champion_matchups(season_matches)
-    played = [m for m in season_matches if not m.get("remake")]
-    matchup_covered = sum(1 for m in played if m.get("opponentChampion"))
+    matchup_covered = sum(1 for m in season_matches if m.get("opponentChampion"))
     top_champs = top_champions(season_matches, matchups)
-    duo_split = duo_share(season_matches, f["label"])
 
-    # Snapshots for this player, per queue, so a win and a loss can be priced.
-    snaps = {"solo": [], "flex": []}
-    for h in rank_history:
-        if h.get("label") == f["label"] and h.get("queue") in snaps:
-            snaps[h["queue"]].append(h)
-    for lst in snaps.values():
-        lst.sort(key=lambda h: h["date"])
-    solo_games = [m for m in played if m.get("queue") == "Ranked Solo/Duo"]
-    flex_games = [m for m in played if m.get("queue") == "Ranked Flex"]
-    rates_html = render_lp_rates(
-        estimate_lp_rates(snaps["solo"], solo_games),
-        estimate_lp_rates(snaps["flex"], flex_games),
-        estimate_lp_rates(snaps["solo"], solo_games, window=50),
-        estimate_lp_rates(snaps["flex"], flex_games, window=50),
-        tracking_since,
-    )
+    # LP a win is worth and LP a loss costs, read off the same reconstructed
+    # path the LP chart is drawn from, per queue and over two windows.
+    rate_rows = []
+    for qr in queue_rows_for(f):
+        queue_name = {"solo": "Ranked Solo/Duo", "flex": "Ranked Flex",
+                      "fives": "Ranked 5s"}.get(qr["key"])
+        if not queue_name:
+            continue
+        tl = queue_timeline(rank_history, f["label"], qr["key"], season_matches, queue_name)
+        rate_rows.append((qr["label"], lp_rate(tl), lp_rate(tl, window=LP_RATE_RECENT)))
 
-    # A friend's most-played champion, washed out behind the top of their
-    # card. Purely decorative, and the whole element removes itself if the
-    # image 404s, so a renamed or brand-new champion just means a plain card.
-    # Cards other than the visible one are display:none, so the browser never
-    # fetches six splashes nobody is looking at.
+    mix, mix_total = queue_mix(season_matches, f["label"])
+    role_slices = [{"label": r["role"], "value": r["games"]} for r in role_rows]
+    role_note = ""
+    positioned = sum(1 for m in season_matches if m.get("position"))
+    if positioned < season_games:
+        role_note = (f"From the {positioned} of {season_games} games that record a lane. "
+                     f"Riot only returns it with the full match detail, so games cached before "
+                     f"that was collected do not carry one.")
+
     signature = signature_champion(f)
     splash = champion_splash_url(signature)
     card_art = (
         f'<div class="card-art" aria-hidden="true"><img src="{esc(splash)}" alt="" '
         f'loading="lazy" decoding="async" onerror="this.parentElement.remove()"></div>'
     ) if splash else ""
+
+    # One arrow per queue, so the header says at a glance which ladders moved
+    # this week and which way.
+    trends = "".join(
+        f'<span class="tr-item" title="{esc(qr["label"])}">'
+        f'{render_trend_arrow(weekly_trend_for(rank_history, f["label"], now, queue=qr["key"]), compact=True)}'
+        f'</span>'
+        for qr in queue_rows_for(f)
+    )
+
+    def queue_row(qr):
+        entry = qr["entry"] or {}
+        var = tier_var(entry.get("tier"))
+        wr = entry.get("winrate")
+        live = ' data-rank-row="solo"' if qr["key"] == "solo" else ""
+        cell = ' data-cell="rank"' if qr["key"] == "solo" else ""
+        wrcell = ' data-cell="wr-text"' if qr["key"] == "solo" else ""
+        return f'''<div class="q-row"{live}>
+          <div class="q-name">{esc(qr["label"])}
+            <span class="q-rank rank-cell"{cell} style="color:var({var});">
+              {render_rank_icon(entry.get("tier"), size=18)}{rank_label(entry or None)}</span>
+          </div>
+          {winrate_bar(wr, f"var({qr['colour']})")}
+          <span class="q-wr"{wrcell}>{esc(wr) + "%" if wr is not None else "–"}
+            <span class="muted">({esc(entry.get("wins", 0))}W / {esc(entry.get("losses", 0))}L)</span></span>
+        </div>'''
+
+    form_net = ""
+    tl_solo = queue_timeline(rank_history, f["label"], "solo", season_matches, "Ranked Solo/Duo")
+    if len(tl_solo) > 1:
+        recent = [p for p in tl_solo[1:] if p["match"]][-len(matches):]
+        if recent:
+            moved = sum(p["delta"] or 0 for p in recent)
+            form_net = (f'<span class="form-net {"up" if moved >= 0 else "down"}">'
+                        f'{"+" if moved >= 0 else "−"}{abs(moved):.0f} LP</span>')
 
     return f'''
     <section class="card" id="friend-{f["label"].lower()}" tabindex="-1"
@@ -1241,80 +1387,78 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       {card_art}
       <header class="card-head">
         <div class="rank-crest">
-          {render_avatar(f, size=44)}
-          {render_rank_icon((solo or {}).get("tier"), size=26)}
+          {render_avatar(f, size=52)}
           <span class="rank-badge">#{rank_position}</span>
         </div>
-        <div>
+        <div class="card-id">
           <h2>{esc(f["label"])}</h2>
           <div class="muted small">{esc(f["riotId"])} &middot; Level {esc(f.get("summonerLevel", "?"))}</div>
           {render_profile_links(f.get("riotId", ""))}
+        </div>
+        <div class="card-trend">
+          <span class="muted small">7 day trend</span>
+          <span class="tr-row">{trends}</span>
         </div>
         {'<div class="hot">🔥 Hot streak</div>' if (solo or {}).get("hotStreak") else ""}
         {render_card_rank(solo, peak_rank.get("solo"))}
       </header>
 
-      <div class="rank-rows">
-        <div class="rank-row" data-rank-row="solo">
-          <span class="rank-label rank-cell" data-cell="rank" style="color:var({solo_var})">{render_rank_icon((solo or {}).get("tier"), size=22)}{rank_label(solo)}</span>
-          <span class="muted small">Solo/Duo</span>
-          {winrate_bar(solo_wr, "var(--series-1)")}
-          <span class="wr-text" data-cell="wr-text">{esc(solo_wr) + '%' if solo_wr is not None else '–'} ({esc((solo or {}).get('wins', 0))}W {esc((solo or {}).get('losses', 0))}L)</span>
+      <div class="card-mid">
+        <div class="card-queues">
+          {"".join(queue_row(qr) for qr in queue_rows_for(f))}
+          {f'<div class="muted small">{solo_fresh_badge}</div>' if solo_fresh_badge else ""}
+          <div class="form-line">
+            <span class="section-label" data-form-label>Last {len(matches)} games ({wins}W {losses}L)</span>
+            <span class="dots" data-dots>{dots}</span>
+            {form_net}
+          </div>
         </div>
-        <div class="rank-row">
-          <span class="rank-label rank-cell" style="color:var({flex_var})">{render_rank_icon((flex or {}).get("tier"), size=22)}{rank_label(flex)}</span>
-          <span class="muted small">Flex</span>
-          {winrate_bar(flex_wr, "var(--series-2)")}
-          <span class="wr-text">{esc(flex_wr) + '%' if flex_wr is not None else '–'} ({esc((flex or {}).get('wins', 0))}W {esc((flex or {}).get('losses', 0))}L)</span>
-        </div>
-        {f'<div class="muted small">{solo_fresh_badge}{flex_peak_badge}</div>' if (solo_fresh_badge or flex_peak_badge) else ""}
-      </div>
-
-      <div class="section-label" data-form-label>Form (last {len(matches)} games, {wins}W {losses}L)</div>
-      <div class="dots" data-dots>{dots}</div>
-
-      <div class="season-stats">
-        <div class="stat-tile">
-          <div class="stat-value">{format_minutes(weekly_min)}</div>
-          <div class="stat-label">Played this week ({weekly_games} games)</div>
-        </div>
-        <div class="stat-tile">
-          <div class="stat-value">{busiest_count if busiest_date else "–"}</div>
-          <div class="stat-label">Busiest day{f" · {busiest_label}" if busiest_date else ""}</div>
-        </div>
-        <div class="stat-tile">
-          <div class="stat-value">{season_games}</div>
-          <div class="stat-label">Games this season ({season_hours})</div>
-        </div>
-        <div class="stat-tile">
-          <div class="stat-value">{champion_pool}</div>
-          <div class="stat-label">Champion pool this season</div>
-        </div>
-        <div class="stat-tile">
-          <div class="stat-value">{f'{duo_split["with"]} <span class="stat-pct">{duo_split["withPct"]}%</span>' if duo_split else "–"}</div>
-          <div class="stat-label">Solo/Duo games with one of you</div>
-        </div>
-        <div class="stat-tile">
-          <div class="stat-value">{f'{duo_split["alone"]} <span class="stat-pct">{duo_split["alonePct"]}%</span>' if duo_split else "–"}</div>
-          <div class="stat-label">Solo/Duo games without</div>
+        <div class="card-rings">
+          {render_donut(mix, f"Game\ntypes")}
+          {render_donut(role_slices, "Roles\nplayed", note=role_note)}
         </div>
       </div>
 
-      <div class="section-label">Top champions
-        <span class="label-note">this season, weighted</span></div>
-      {render_top_champions(top_champs)}
-      <p class="muted small" style="margin:6px 0 2px;">Rating starts from {esc(f["label"])}&#39;s own
-      winrate across every game, adds how far this champion beats it (pulled back toward nothing
-      while the sample is small, and halved for the share of its games played in matchups it was
-      already favoured in), then adds up to {TOP_CHAMPION_VOLUME:.0f} points for how much it gets
-      played. Games and winrate on their own each pick the wrong champion.</p>
-
-      <div class="section-label">Highest mastery champions</div>
-      <div class="chips">{mastery_html}</div>
+      <div class="card-lower">
+        <div class="cl-block">
+          <div class="section-label">Top champions
+            <span class="label-note">weighted</span></div>
+          {render_top_champions(top_champs)}
+        </div>
+        <div class="cl-block">
+          <div class="section-label">Highest mastery</div>
+          {render_mastery_table(f.get("mastery", []))}
+        </div>
+        <div class="cl-block">
+          <div class="season-stats">
+            <div class="stat-tile">
+              <div class="stat-value">{season_games}</div>
+              <div class="stat-label">Games this season ({season_hours})</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-value">{champion_pool}</div>
+              <div class="stat-label">Champions played this season</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-value">{weekly_games}</div>
+              <div class="stat-label">Games this week ({format_minutes(weekly_min)})</div>
+            </div>
+            <div class="stat-tile">
+              <div class="stat-value">{busiest_count if busiest_date else "–"}</div>
+              <div class="stat-label">Busiest day{f" &middot; {busiest_label}" if busiest_date else ""}</div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div class="section-label">LP per win and per loss
-        <span class="label-note">gain minus loss</span></div>
-      {rates_html}
+        <span class="label-note">MMR is the difference</span></div>
+      {render_rate_strip(rate_rows)}
+      <p class="muted small" style="margin:6px 0 2px;">Riot never reports the LP change for one
+      game. These are the per-game steps the LP chart is built from: each gap between two rank
+      snapshots is split across the games inside it, as close to an even 20 LP as it can be while
+      still landing exactly on the next measured snapshot. A queue with fewer than
+      {LP_RATE_MIN_GAMES} games in the window shows a dash.</p>
 
       <details class="matches-details">
         <summary data-match-summary>Every game, newest first ({len(matches)})</summary>
@@ -1331,22 +1475,22 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
 
       <details class="matches-details">
         <summary>Every matchup, most played first ({len(matchups)})</summary>
-        {render_matchups(matchups, matchup_covered, len(played))}
-      </details>
-
-      <details class="matches-details">
-        <summary>Every role, most played first</summary>
-        {render_role_breakdown(role_rows)}
+        {render_matchups(matchups, matchup_covered, len(season_matches))}
       </details>
     </section>'''
 
 
-def render_trend_arrow(trend):
+def render_trend_arrow(trend, compact=False):
     """▲/▼/– since 7 days ago, for the leaderboard. `trend` is a
     net_change_label()-style dict (direction + text) or None if there's
-    not enough history yet to compare."""
+    not enough history yet to compare.
+
+    `compact` drops the text and keeps the glyph, for the row of arrows in
+    a card header where there is room for a symbol and a tooltip but not a
+    sentence."""
     if not trend:
-        return '<span class="muted small">–</span>'
+        return ('<span class="tr-flat" title="No movement recorded">&#9651;</span>'
+                if compact else '<span class="muted small">–</span>')
     # A rank change alone says a division moved but not how far, so the LP
     # travelled goes in front of it. Within a division the text already is an
     # LP figure.
@@ -1354,6 +1498,12 @@ def render_trend_arrow(trend):
     if trend.get("moved") and trend.get("lp") is not None:
         lp = trend["lp"]
         text = f"{'+' if lp >= 0 else '−'}{abs(lp)} LP, {text}"
+    if compact:
+        if trend["direction"] > 0:
+            return f'<span class="tr-up" title="{esc(text)}">&#9650;</span>'
+        if trend["direction"] < 0:
+            return f'<span class="tr-down" title="{esc(text)}">&#9660;</span>'
+        return f'<span class="tr-flat" title="{esc(text)}">&#9651;</span>'
     if trend["direction"] > 0:
         return f'<span class="small" style="color:var(--good);">▲ {esc(text)}</span>'
     if trend["direction"] < 0:
@@ -1956,6 +2106,18 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             '</div>'
         )
 
+    # The projection is a guess, and a guess is not always what you want on
+    # screen. Toggled with a class on the container so it applies to both
+    # renders, both zoom levels, and anything the browser redraws later.
+    proj_toggle = (
+        '<div class="range-toggle" role="group" aria-label="Projection">'
+        '<button type="button" class="range-btn active" data-proj="on" aria-pressed="true">'
+        'Projection on</button>'
+        '<button type="button" class="range-btn" data-proj="off" aria-pressed="false">'
+        'Projection off</button>'
+        '</div>'
+    )
+
     omitted_note = ""
     if omitted:
         omitted_note = (f'<div class="muted small" style="margin-top:8px;">Not shown: {esc(", ".join(omitted))} '
@@ -2092,7 +2254,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         known net LP change across the games that produced it, which means the shape of each run is an
         estimate even though every snapshot it passes through is exact.
       </div>
-      {zoom_toggle}
+      <div class="chart-toggles">{zoom_toggle}{proj_toggle}</div>
       <div class="chart-row">
         <div class="chart-plot" data-lp-charts>{charts_svg}</div>
         <div class="chart-key" role="group" aria-label="Players on this chart">{"".join(legend_items)}</div>
@@ -2690,6 +2852,42 @@ def compute_party_synergy(friends, min_size=3):
     return rows
 
 
+def party_coverage(friends):
+    """Where each player's Flex and 5s games went.
+
+    The stacks table lists exact lineups of three or five, so a player's games
+    do not add up to the rows they appear in and the difference looks like
+    something is being lost. It is not: this counts the rest. Four tracked
+    names on a team is a five man whose fifth player is outside this group,
+    because Flex has no four player party, and a game with one or two of them
+    on a side is not a stack at all.
+    """
+    by_match = {}
+    for f in friends:
+        for m in f.get("seasonMatches", []):
+            if m.get("remake") or m.get("queue") not in PARTY_QUEUES:
+                continue
+            by_match.setdefault(m["matchId"], []).append((f["label"], bool(m["win"])))
+
+    rows = {}
+    for f in friends:
+        rows[f["label"]] = {"games": 0, "listed": 0, "four": 0, "under": 0}
+    for entries in by_match.values():
+        for label, win in entries:
+            side = [l for l, w in entries if w == win]
+            r = rows.get(label)
+            if r is None:
+                continue
+            r["games"] += 1
+            if len(side) in (3, 5):
+                r["listed"] += 1
+            elif len(side) == 4:
+                r["four"] += 1
+            else:
+                r["under"] += 1
+    return [dict(r, label=k) for k, r in rows.items() if r["games"]]
+
+
 def render_duo_synergy_panel(friends):
     """A matrix, not a list of cards.
 
@@ -2906,6 +3104,31 @@ def render_duo_synergy_panel(friends):
             'the queue ever comes back.</p>'
         )
 
+    # Every Flex and 5s game each of them played, and which bucket it fell in.
+    # Rory playing 28 Flex games and appearing in rows worth 18 of them is not
+    # a gap in the table, and this is where that is shown rather than asserted.
+    cov = sorted(party_coverage(friends), key=lambda r: -r["games"])
+    coverage_table = ""
+    if cov:
+        cov_rows = "".join(
+            f'<tr><td class="nowrap"><b>{esc(r["label"])}</b></td>'
+            f'<td class="num">{r["games"]}</td>'
+            f'<td class="num">{r["listed"]}</td>'
+            f'<td class="num muted">{r["four"] or "&ndash;"}</td>'
+            f'<td class="num muted">{r["under"] or "&ndash;"}</td></tr>'
+            for r in cov
+        )
+        coverage_table = (
+            '<p class="muted small" style="margin:14px 0 4px;">Where everyone&#39;s Flex and '
+            'Ranked 5s games went. The three numbers add up to the total, so a player appearing '
+            'in fewer games than they played is accounted for rather than missing.</p>'
+            '<table class="matches-table duo-table"><thead><tr><th>Player</th>'
+            '<th class="num">Flex &amp; 5s games</th><th class="num">In a trio or five man</th>'
+            '<th class="num">Four of you (a five man, fifth outside the group)</th>'
+            '<th class="num">One or two of you on the side</th></tr></thead>'
+            f'<tbody>{cov_rows}</tbody></table>'
+        )
+
     party_table = ""
     if parties:
         party_table = f'''
@@ -2927,6 +3150,7 @@ def render_duo_synergy_panel(friends):
           <th class="num sortable" data-key="fives" data-numeric>5s</th></tr></thead>
           <tbody>{party_rows}</tbody>
         </table>
+        {coverage_table}
       </details>'''
 
     return f'''
@@ -4035,7 +4259,9 @@ window.LpChart = (function () {
       if (g.style.display === 'none') hidden.push(g.id);
     });
     var activeRange = null;
-    var activeBtn = document.querySelector('.range-btn.active');
+    // Scoped to the zoom control: the projection switch beside it also
+    // carries .active, and it has no data-range to restore.
+    var activeBtn = document.querySelector('.range-btn.active[data-range]');
     if (activeBtn) activeRange = activeBtn.getAttribute('data-range');
 
     host.innerHTML = chartsHtml(state);
@@ -4057,7 +4283,13 @@ window.LpChart = (function () {
     return touched;
   }
 
-  return { init: init, verifySelf: verifySelf, rerender: rerender };
+  // Lent to the live-refresh block so a row it adds is tinted with exactly
+  // the blend the server would have used, rather than a second copy of the
+  // same formula drifting from this one.
+  function colourFor(label) { return (D && D.varByLabel && D.varByLabel[label]) || '--accent'; }
+
+  return { init: init, verifySelf: verifySelf, rerender: rerender,
+           blend: blendVars, colourFor: colourFor };
 })();
 '''
 
@@ -4070,6 +4302,9 @@ def build_html(data):
     # Read before the cards now: they price a win and a loss from these
     # snapshots, and have to say which window that is.
     tracking_since = data.get("rankTrackingSince", "recently")
+    # Before anything counts a game. Everything downstream filters on
+    # m["remake"], and until this runs most records have no such key.
+    mark_legacy_remakes(friends)
     set_icon_context(data.get("ddragonVersion"), data.get("championIconMap", {}))
     set_platform(data.get("platform"))
     set_duo_context(friends_sorted)
@@ -4576,6 +4811,80 @@ def build_html(data):
   .cr-peak .cr-lp {{ font-size: 11.5px; color: var(--muted); }}
 
   .stat-pct {{ font-size: 13px; font-weight: 700; color: var(--text-secondary); }}
+  /* ---- Friend card ------------------------------------------------------ */
+  /* Two columns while there is room: the ranked queues read down the left,
+     the two shares of the season read as rings on the right. Both collapse to
+     one column on a narrow screen rather than shrinking to illegibility. */
+  .card-id {{ min-width: 0; }}
+  .card-trend {{ display: flex; flex-direction: column; gap: 3px; margin-left: 18px; }}
+  .tr-row {{ display: flex; gap: 7px; font-size: 15px; line-height: 1; }}
+  .tr-up {{ color: var(--good); }}
+  .tr-down {{ color: var(--critical); }}
+  .tr-flat {{ color: var(--muted); }}
+
+  .card-mid {{
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    gap: 22px; align-items: start; margin-bottom: 18px;
+  }}
+  .card-queues {{ display: flex; flex-direction: column; gap: 12px; min-width: 0; }}
+  .q-row {{
+    display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(90px, 1fr) auto;
+    gap: 6px 14px; align-items: center;
+  }}
+  .q-name {{ display: flex; flex-direction: column; gap: 2px; font-weight: 700; font-size: 14px; }}
+  .q-rank {{ font-size: 12.5px; font-weight: 600; }}
+  .q-wr {{ font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+
+  .form-line {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px; }}
+  .form-line .section-label {{ margin: 0; }}
+  .form-line .dots {{ margin: 0; }}
+  .form-net {{ font-weight: 800; font-variant-numeric: tabular-nums; }}
+  .form-net.up {{ color: var(--good); }}
+  .form-net.down {{ color: var(--critical); }}
+
+  .card-rings {{ display: flex; gap: 18px; flex-wrap: wrap; justify-content: flex-end; }}
+  .donut {{ width: 190px; }}
+  .donut-svg {{ width: 152px; height: 152px; display: block; margin: 0 auto; }}
+  .donut-centre {{
+    fill: var(--text-secondary); font-size: 15px; font-weight: 700;
+    font-family: inherit;
+  }}
+  .donut-empty {{
+    width: 152px; height: 152px; margin: 0 auto; border-radius: 50%;
+    border: 26px solid var(--surface-2); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 3px;
+    color: var(--text-secondary); font-size: 13px;
+  }}
+  .donut-legend {{ list-style: none; margin: 10px 0 0; padding: 0; font-size: 11.5px; }}
+  .donut-legend li {{
+    display: flex; align-items: center; gap: 6px; padding: 2px 0;
+    color: var(--text-secondary);
+  }}
+  .donut-legend .sw {{
+    width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto;
+  }}
+  .donut-legend .dl-name {{ flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .donut-legend .dl-val {{ font-variant-numeric: tabular-nums; white-space: nowrap; }}
+  .donut-note {{ margin: 8px 0 0; }}
+
+  /* Three blocks that wrap: the weighted table, the mastery table, the tiles. */
+  /* The two champion tables want more room than the tiles, and the tiles read
+     better two across than in a single tall column. */
+  .card-lower {{
+    display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+    gap: 18px; margin-bottom: 6px;
+  }}
+  @media (max-width: 1080px) {{
+    .card-lower {{ grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }}
+  }}
+  .cl-block {{ min-width: 0; overflow-x: auto; }}
+  .cl-block .season-stats {{
+    margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr));
+  }}
+  .cl-block .matches-table th, .cl-block .matches-table td {{ padding-left: 6px; padding-right: 6px; }}
+  .rate-pair {{ font-variant-numeric: tabular-nums; white-space: nowrap; }}
+  .rate-pair .up {{ color: var(--good); font-weight: 700; }}
+  .rate-pair .down {{ color: var(--critical); font-weight: 700; }}
   .label-note {{
     font-weight: 500; text-transform: none; letter-spacing: 0;
     color: var(--muted); margin-left: 6px;
@@ -4987,6 +5296,8 @@ def build_html(data):
   /* The projected tail is a guess and reads as one: thinner, dashed, and it
      does not respond to hover so it never steals a tooltip from a real game. */
   .rank-chart path.proj {{ pointer-events: none; }}
+  .chart-plot.hide-proj .rank-chart path.proj {{ display: none; }}
+  .chart-toggles {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
   footer {{
     text-align: center; color: var(--muted); font-size: 12px; line-height: 1.6;
     margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--border);
@@ -5284,6 +5595,11 @@ def build_html(data):
 
     .chart-wide {{ display: none; }}
     .chart-compact {{ display: block; }}
+    .card-mid {{ grid-template-columns: minmax(0, 1fr); }}
+    .card-rings {{ justify-content: flex-start; }}
+    .card-trend {{ margin-left: 0; }}
+    .q-row {{ grid-template-columns: minmax(0, 1fr) auto; }}
+    .q-row .wr-track {{ grid-column: 1 / -1; }}
     .chart-row {{ flex-direction: column; gap: 8px; }}
     .chart-key {{
       flex: 0 0 auto; flex-direction: row; flex-wrap: wrap;
@@ -5698,6 +6014,19 @@ def build_html(data):
     (function () {{
       // Zoom toggle: both ranges are already in the DOM, so this only swaps
       // which one is shown.
+      document.querySelectorAll('.range-btn[data-proj]').forEach(function (b) {{
+        b.addEventListener('click', function () {{
+          var host = document.querySelector('[data-lp-charts]');
+          var off = b.getAttribute('data-proj') === 'off';
+          if (host) host.classList.toggle('hide-proj', off);
+          document.querySelectorAll('.range-btn[data-proj]').forEach(function (o) {{
+            var on = o === b;
+            o.classList.toggle('active', on);
+            o.setAttribute('aria-pressed', on ? 'true' : 'false');
+          }});
+        }});
+      }});
+
       // data-range only: the duo panel reuses .range-btn for its sort control.
       document.querySelectorAll('.range-btn[data-range]').forEach(function (b) {{
         b.addEventListener('click', function () {{
@@ -5972,13 +6301,54 @@ def build_html(data):
                escapeHtml(title) + '"></span>';
       }}
 
-      function rowHtml(m) {{
-        return '<tr class="row-new">' +
+      // Who else in the group was on this team, from the games this refresh
+      // just fetched. Built once per refresh in run(), keyed by match id.
+      var freshSides = {{}};
+
+      function matesFor(matchId, label, win) {{
+        var side = freshSides[matchId];
+        if (!side) return [];
+        var out = [];
+        side.forEach(function (e) {{
+          if (e[0] !== label && !!e[1] === !!win) {{
+            out.push([e[0], (window.LpChart && LpChart.colourFor(e[0])) || '--accent']);
+          }}
+        }});
+        out.sort(function (a, b) {{ return a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0); }});
+        return out;
+      }}
+
+      function rowHtml(m, label) {{
+        // Nine cells, matching render_match_row(). It used to build eight: the
+        // "With" column was missing entirely, so every column from Champion
+        // rightwards landed one place left of its own heading on any row a
+        // refresh added.
+        var mates = matesFor(m.matchId, label, m.win);
+        var withCell = '<span class="muted">&ndash;</span>';
+        var cls = 'row-new', style = '';
+        if (mates.length) {{
+          var names = mates.map(function (x) {{
+            return '<span class="mate" style="color:var(' + x[1] + ');">' +
+                   escapeHtml(x[0]) + '</span>';
+          }}).join('');
+          var who = mates.map(function (x) {{ return x[0]; }}).join(', ');
+          withCell = '<span class="duo-with" title="Played this game with ' + escapeHtml(who) +
+            '"><span class="duo-with-icon" aria-hidden="true">\u21c4</span>' + names + '</span>';
+          var vars = [(window.LpChart && LpChart.colourFor(label)) || '--accent'];
+          mates.forEach(function (x) {{ vars.push(x[1]); }});
+          vars.sort();
+          cls += ' party party-' + Math.min(mates.length + 1, 5);
+          if (window.LpChart && LpChart.blend) {{
+            style = ' style="--band: ' + LpChart.blend(vars) + ';"';
+          }}
+        }}
+        return '<tr class="' + cls + '"' + style + '>' +
           '<td class="muted small">' + escapeHtml(whenText(m)) + '</td>' +
           '<td><span class="tag ' + (m.win ? 'win' : 'loss') + '">' +
             (m.win ? 'WIN' : 'LOSS') + '</span></td>' +
           '<td class="champ-cell"><span class="cc">' + championIcon(m.champion) +
             escapeHtml(m.champion) + '</span></td>' +
+          '<td class="with-cell">' + withCell + '</td>' +
           '<td class="num">' + m.kills + '/' + m.deaths + '/' + m.assists + '</td>' +
           '<td class="num">' + m.kda + '</td>' +
           '<td class="num">' + m.csPerMin + '</td>' +
@@ -6004,7 +6374,7 @@ def build_html(data):
         // Oldest first at the front, so the newest ends up leftmost.
         matches.slice().reverse().forEach(function (m) {{
           if (dots) dots.insertAdjacentHTML('afterbegin', dotHtml(m));
-          if (rows) rows.insertAdjacentHTML('afterbegin', rowHtml(m));
+          if (rows) rows.insertAdjacentHTML('afterbegin', rowHtml(m, label));
         }});
         trim(dots, '.dot', limit);
         trim(rows, 'tr', limit);
@@ -6083,8 +6453,12 @@ def build_html(data):
             out.forEach(function (m) {{
               if (known.indexOf(m.matchId) < 0) known.push(m.matchId);
               if (m.gameStartMs > seenNewest[f.label]) seenNewest[f.label] = m.gameStartMs;
+              if (!freshSides[m.matchId]) freshSides[m.matchId] = [];
+              freshSides[m.matchId].push([f.label, !!m.win]);
             }});
-            applyMatches(f.label, out);
+            // Rows are written after every friend has been fetched, in run():
+            // a game two of them just played is only recognisable as shared
+            // once both of their fetches have come back.
             return out;
           }});
         }});
@@ -6197,12 +6571,18 @@ def build_html(data):
         keyBtn.disabled = true;
         var friends = CFG.friends || [];
         var done = 0, updated = 0, newGames = 0;
+        // Held back until every friend has been fetched, so a game two of
+        // them played is drawn as one shared game rather than two loose rows.
+        var pending = {{}};
         // Per friend: the live rank reading plus whatever games came back, fed
         // to the chart at the end so it redraws once rather than seven times.
         var live = {{}};
 
         function step(i) {{
           if (i >= friends.length) {{
+            Object.keys(pending).forEach(function (label) {{
+              applyMatches(label, pending[label]);
+            }});
             resortLeaderboard(live);
             // The chart is rebuilt from the whole season, so it redraws once
             // here rather than per friend.
@@ -6262,6 +6642,7 @@ def build_html(data):
             .then(function (added) {{
               added = added || [];
               newGames += added.length;
+              if (added.length) pending[f.label] = added;
               if (live[f.label]) live[f.label].matches = added;
               done++;
               step(i + 1);
