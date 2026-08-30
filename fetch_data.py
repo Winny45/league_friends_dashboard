@@ -66,7 +66,8 @@ RANKED_QUEUE_IDS = [420, 440, 710]
 QUEUE_TYPE_KEYS = {
     "RANKED_SOLO_5x5": "solo",
     "RANKED_FLEX_SR": "flex",
-    "RANKED_TEAM_5x5": "fives",
+    "RANKED_PREMADE_5x5": "fives",
+    "RANKED_TEAM_5x5": "fives",   # what the pre-2016 team queue answered
     "RANKED_FLEX_TT": "flexTT",
 }
 RANKED_QUEUE_NAMES = {QUEUE_ID_NAMES[qid] for qid in RANKED_QUEUE_IDS}
@@ -601,7 +602,9 @@ def record_rank_snapshots(history, results, today_key):
     by_key = {(h["label"], h["queue"], h["date"]): h for h in history}
     now_ms = datetime.now().timestamp() * 1000
     for r in results:
-        for queue_key, entry in (("solo", r["ranked"].get("solo")), ("flex", r["ranked"].get("flex"))):
+        ranked = r.get("ranked") or {}
+        for queue_key in ("solo", "flex", "fives"):
+            entry = ranked.get(queue_key)
             if not entry or not entry.get("tier"):
                 continue
             snap = {
@@ -759,6 +762,7 @@ def main():
         r["peakRank"] = {
             "solo": peaks.get((r["label"], "solo")),
             "flex": peaks.get((r["label"], "flex")),
+            "fives": peaks.get((r["label"], "fives")),
         }
 
     # Champion icons: the dashboard builds icon URLs itself from a Data

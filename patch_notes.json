@@ -1,6 +1,32 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Ranked 5s is in, and every game now knows its lane",
+    "items": [
+      {
+        "type": "added",
+        "text": "Ranked 5s is imported: 172 games across six players, with a ladder rank for each. Riot calls that ladder RANKED_PREMADE_5x5 and the queue 710. It has its own row on every card, its own slice in the game types ring, its own column in the champion table, and it counts toward the five-man stacks."
+      },
+      {
+        "type": "added",
+        "text": "Lane data is complete. Every one of the 2,713 games now records the position played and the champion in the opposing lane, where before only 171 did. Kirish's matchup table goes from nothing to 43 entries and the roles ring is built from every game rather than one in seventeen."
+      },
+      {
+        "type": "improved",
+        "text": "Remakes are Riot's own call now rather than a guess from game length. The duration rule was cutting games Riot does not consider remakes at all."
+      },
+      {
+        "type": "improved",
+        "text": "Rank snapshots cover Ranked 5s as well as Solo/Duo and Flex, so its trend, its peak and its LP per win will build up the same way the others did."
+      },
+      {
+        "type": "fixed",
+        "text": "1,953 cache entries under the original match-id-only key are gone. Nothing could read them: every lookup is matchId|puuid, which is what stops two friends in the same game from overwriting each other's stat line."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "A seven day trend that covers seven days",
     "items": [
       {
