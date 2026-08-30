@@ -695,19 +695,38 @@ def compute_duo_synergy(friends):
     return {"rows": rows, "own": own, "players": [f["label"] for f in friends]}
 
 
+def week_window(pts, cutoff):
+    """The pair of snapshots that actually spans the last seven days.
+
+    Keeping only snapshots inside the window measured whatever happened to
+    fall in it, not the window: with readings on the 21st, 27th and 29th, a
+    seven day trend from the 23rd compared the 27th against the 29th and
+    called two days a week. Somebody who dropped fifty LP on the 24th showed
+    as up, and somebody whose last two readings matched showed as nothing at
+    all. The anchor is the last reading at or before the cutoff, which is what
+    the rank actually was seven days ago.
+    """
+    if len(pts) < 2:
+        return None
+    before = [h for h in pts if h["date"] <= cutoff]
+    start = before[-1] if before else pts[0]
+    if start is pts[-1]:
+        return None
+    return start, pts[-1]
+
+
 def weekly_trend_for(rank_history, label, now, queue="solo"):
-    """Same net-change logic as weekly_rank_leader, scoped to one friend and
-    one queue – powers the ▲/▼ trend arrow on the leaderboard and the row of
-    one-per-queue arrows in a card's header."""
+    """Net movement over the last seven days for one friend and one queue –
+    powers the ▲/▼ trend arrow on the leaderboard and on each card."""
     cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
     pts = sorted(
         (h for h in rank_history if h.get("queue") == queue and h["label"] == label),
         key=lambda h: h["date"],
     )
-    window = [h for h in pts if h["date"] >= cutoff]
-    if len(window) < 2:
-        return None
-    return net_change_label(window[0], window[-1], window="7d")
+    pair = week_window(pts, cutoff)
+    # No suffix: every place this is shown already says the period, in a
+    # column heading or a label beside it.
+    return net_change_label(*pair) if pair else None
 
 
 def weekly_rank_leader(rank_history, now):
@@ -724,14 +743,14 @@ def weekly_rank_leader(rank_history, now):
     best = None
     for label, pts in by_label.items():
         pts.sort(key=lambda h: h["date"])
-        window = [h for h in pts if h["date"] >= cutoff]
-        if len(window) < 2:
+        pair = week_window(pts, cutoff)
+        if not pair:
             continue
-        delta = tier_score(window[-1]) - tier_score(window[0])
+        delta = tier_score(pair[1]) - tier_score(pair[0])
         if delta <= 0:
             continue
         if best is None or delta > best["delta"]:
-            net = net_change_label(window[0], window[-1], window="7d")
+            net = net_change_label(*pair)
             best = {"label": label, "delta": delta,
                     "text": net["text"] if net else None,
                     "lp": net.get("lp") if net else None,
@@ -4864,6 +4883,7 @@ def build_html(data):
   .cr-peak .cr-lp {{ font-size: 11.5px; color: var(--muted); }}
 
   .stat-pct {{ font-size: 13px; font-weight: 700; color: var(--text-secondary); }}
+  .live-at {{ color: var(--accent); font-weight: 600; }}
   /* Gold's crest is 17x13 where the rest are square, so contain rather than
      stretch, and unranked comes back to the weight of a tier crest. */
   .rank-icon {{ object-fit: contain; }}
@@ -5732,7 +5752,7 @@ def build_html(data):
           <h1>League Friends Dashboard</h1>
           <div class="meta-row">
             <span class="meta-chip">Platform <b>{esc(data.get("platform", "?"))}</b></span>
-            <span class="meta-chip">Updated <b>{esc(data.get("generatedAt", ""))}</b></span>
+            <span class="meta-chip" data-updated>Data from <b>{esc(data.get("generatedAt", ""))}</b></span>
             {f'<span class="meta-chip">Season since <b>{esc(data.get("seasonStart"))}</b></span>' if data.get("seasonStart") else ""}
           </div>
         </div>
@@ -6708,6 +6728,15 @@ def build_html(data):
               try {{ charted = LpChart.rerender(live) || 0; }} catch (e) {{ charted = 0; }}
             }}
             var when = new Date().toLocaleTimeString([], {{ hour: '2-digit', minute: '2-digit' }});
+            // The header carries the build date, which is what a shared link
+            // shows. Say when the live reading on top of it was taken.
+            var chip = document.querySelector('[data-updated]');
+            if (chip && !chip.querySelector('.live-at')) {{
+              chip.insertAdjacentHTML('beforeend',
+                ' <span class="live-at">&middot; ranks live ' + when + '</span>');
+            }} else if (chip) {{
+              chip.querySelector('.live-at').textContent = '\u00b7 ranks live ' + when;
+            }}
             // Be explicit about what did and did not move: the season tiles and
             // the LP chart need the whole season, which the browser cannot
             // rebuild, so they stay on the published snapshot.
