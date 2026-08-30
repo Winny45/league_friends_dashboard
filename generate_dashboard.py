@@ -392,27 +392,27 @@ _SIGNATURE_CACHE = {}
 
 
 def signature_champion(friend):
-    """The champion someone is most known for: the top of their weighted
-    Top champions table.
+    """The champion someone has played most this season.
 
     Not highest mastery, which is a lifetime score and can name a champion
-    they have not touched all split, and not most played either, which hands
-    the face to whatever they are grinding this week however badly. The same
-    rating the card ranks champions with picks the face, so the two agree.
-
-    Cached per label: it is asked for once per card, once per leaderboard row
-    and once per pill, and the rating walks the whole season each time.
+    they have not touched all split, and not the weighted rating either: a
+    face should be what you would actually see them on, which is the one they
+    pick most, however it goes.
     """
     label = friend.get("label") or ""
     if label in _SIGNATURE_CACHE:
         return _SIGNATURE_CACHE[label]
-    played = [m for m in friend.get("seasonMatches", []) if not m.get("remake")]
-    champ = None
-    if played:
-        top = top_champions(played, champion_matchups(played), limit=1)
-        if top:
-            champ = top[0]["champion"]
-    if not champ:
+    counts = {}
+    for m in friend.get("seasonMatches", []):
+        if m.get("remake"):
+            continue
+        c = m.get("champion")
+        if c:
+            counts[c] = counts.get(c, 0) + 1
+    if counts:
+        # Ties break on the name so a rebuild cannot silently reshuffle faces.
+        champ = max(sorted(counts), key=lambda c: counts[c])
+    else:
         mastery = friend.get("mastery") or []
         champ = mastery[0].get("championName") if mastery else None
     _SIGNATURE_CACHE[label] = champ
@@ -566,7 +566,9 @@ def busiest_day(matches):
     return best_date, counts[best_date]
 
 
-POSITION_LABELS = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "Bottom", "UTILITY": "Support"}
+POSITION_LABELS = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "ADC", "UTILITY": "Support"}
+ROLE_VARS = {"Top": "--role-top", "Jungle": "--role-jungle", "Mid": "--role-mid",
+             "ADC": "--role-adc", "Support": "--role-support"}
 
 
 QUEUE_COLUMNS = (("Ranked Solo/Duo", "solo"), ("Ranked Flex", "flex"), ("Ranked 5s", "fives"))
@@ -1111,12 +1113,21 @@ def render_donut(slices, centre, size=152, thickness=26):
     arcs, offset = [], 0.0
     for i, sl in enumerate(live):
         frac = sl["value"] / total
-        seg = frac * circ
+        # Rounded before it is accumulated, so the offset of each segment is
+        # the exact sum of the ones printed before it and the ring tiles with
+        # no hairline between arcs.
+        seg = round(frac * circ, 4)
         var = sl.get("var") or DONUT_VARS[i % len(DONUT_VARS)]
         arcs.append(
             f'<circle class="donut-arc" cx="{size / 2:.1f}" cy="{size / 2:.1f}" r="{r:.1f}" '
             f'fill="none" stroke="var({var})" stroke-width="{thickness}" '
-            f'stroke-dasharray="{seg:.2f} {circ - seg:.2f}" stroke-dashoffset="{-offset:.2f}" '
+            # The gap is a whole circumference, not "the rest of the circle".
+            # A dash pattern repeats, and seg + (circ - seg) only equals circ
+            # exactly if neither number was rounded; at two decimal places it
+            # did not, so the pattern wrapped and painted a sliver of each
+            # segment back over the start of the next one. A gap this long can
+            # never come back round.
+            f'stroke-dasharray="{seg:.4f} {circ:.4f}" stroke-dashoffset="{-offset:.4f}" '
             f'tabindex="0" role="img" data-label="{esc(sl["label"])}" '
             f'data-value="{sl["value"]}" data-pct="{frac * 100:.0f}%" '
             f'aria-label="{esc(sl["label"])}: {sl["value"]} of {total}, {frac * 100:.0f} percent">'
@@ -1152,12 +1163,12 @@ def queue_mix(season_matches, label):
     solo = [m for m in played if m.get("queue") == "Ranked Solo/Duo"]
     with_mate = sum(1 for m in solo if _DUO_CTX["map"].get((m.get("matchId"), label)))
     mix = [
-        {"label": "Duo Queue", "value": with_mate, "var": "--series-f0"},
-        {"label": "Solo Queue", "value": len(solo) - with_mate, "var": "--series-f2"},
+        {"label": "Solo Queue", "value": len(solo) - with_mate, "var": "--q-solo"},
+        {"label": "Duo Queue", "value": with_mate, "var": "--q-duo"},
         {"label": "Ranked Flex", "value": sum(1 for m in played if m.get("queue") == "Ranked Flex"),
-         "var": "--series-f4"},
+         "var": "--q-flex"},
         {"label": "Ranked 5s", "value": sum(1 for m in played if m.get("queue") == "Ranked 5s"),
-         "var": "--series-f1"},
+         "var": "--q-fives"},
     ]
     return mix, len(played)
 
@@ -1286,8 +1297,8 @@ def render_top_champions(rows):
         return '<div class="muted small">No ranked games this season.</div>'
     body = "".join(
         f'<tr><td class="num muted small">{n}</td>'
-        f'<td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=20)}{esc(r["champion"])}'
-        f'{" <span class=\'counter-tag\'>counter picks</span>" if r["counterShare"] else ""}</span></td>'
+        f'<td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=20)}'
+        f'{esc(r["champion"])}</span></td>'
         f'<td class="num"><b>{r["rating"]}</b></td>'
         f'<td class="num">{r["games"]}</td>'
         f'<td class="num">{r["winrate"]}%</td>'
@@ -1339,9 +1350,10 @@ def queue_rows_for(f):
         if raw in ranked and not ranked.get("fives"):
             ranked["fives"] = ranked.pop(raw)
         ranked.pop(raw, None)
-    known = [("solo", "Ranked Solo / Duo", "--series-1", "S"),
-             ("flex", "Ranked Flex", "--series-2", "F"),
-             ("fives", "Ranked 5s", "--series-3", "5")]
+    # Each bar is the colour its queue has in the ring above it.
+    known = [("solo", "Ranked Solo / Duo", "--q-solo", "S"),
+             ("flex", "Ranked Flex", "--q-flex", "F"),
+             ("fives", "Ranked 5s", "--q-fives", "5")]
     rows, seen = [], set()
     for key, label, colour, tag in known:
         rows.append({"key": key, "label": label, "colour": colour, "tag": tag,
@@ -1394,7 +1406,8 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
         rate_rows.append((qr["label"], lp_rate(tl), lp_rate(tl, window=LP_RATE_RECENT)))
 
     mix, mix_total = queue_mix(season_matches, f["label"])
-    role_slices = [{"label": r["role"], "value": r["games"]} for r in role_rows]
+    role_slices = [{"label": r["role"], "value": r["games"], "var": ROLE_VARS.get(r["role"])}
+                   for r in role_rows]
 
     signature = signature_champion(f)
     splash = champion_splash_url(signature)
@@ -4616,6 +4629,23 @@ def build_html(data):
        parsed and the bar rendered empty. */
     --series-3: #a78bfa;
     --series-4: #2ec4de;
+
+    /* Queues: two families, each a base and a lighter sibling, so Solo reads
+       against Duo and Flex against 5s at a glance. Deliberately off the
+       accents and off the win/loss greens and reds, which mean something
+       else everywhere on this page. */
+    --q-solo:  #6f5bd0;
+    --q-duo:   #9d8ce6;
+    --q-flex:  #1f9e8f;
+    --q-fives: #5fcbbd;
+
+    /* Roles: the hues the game uses, pulled down and desaturated so none of
+       them can be mistaken for a winrate colour or a friend's identity. */
+    --role-top:     #c9584c;
+    --role-jungle:  #6b9e3f;
+    --role-mid:     #4a7fc1;
+    --role-adc:     #c9a227;
+    --role-support: #d1793c;
     --good: #2ecc71;
     --critical: #ff5f5f;
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
@@ -5483,9 +5513,12 @@ def build_html(data):
   .pill-all {{ font-weight: 700; }}
 
   /* Each player's face: their most mastered champion. */
+  /* The ring is a shadow, not a border. A border sits inside the box, so a
+     44px avatar was drawing 42px of champion inside a 44px circle and the
+     ring read as a gap between the art and the edge. */
   .avatar {{
     border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;
-    background: var(--surface-2); border: 1px solid var(--border);
+    background: var(--surface-2); box-shadow: 0 0 0 1px var(--border);
   }}
   .avatar.broken {{ visibility: hidden; }}
   .avatar-fallback {{
