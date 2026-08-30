@@ -1,6 +1,36 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Ring seams, and a palette per queue and per role",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The ring segments overlapped at their edges. Each arc was drawn as a dash pattern of \"this segment, then the rest of the circle\", and those two numbers were rounded separately, so the pattern came out about seven ten-thousandths short of the circumference. A dash pattern repeats, so every arc wrapped and painted a sliver of itself back over the start of the ring. The gap is now a whole circumference, which can never come round, and each segment starts on the exact sum of the ones before it."
+      },
+      {
+        "type": "improved",
+        "text": "Roles have their own colours: Top red, Jungle green, Mid blue, ADC yellow, Support orange, all pulled down and desaturated so none can be mistaken for a winrate or a friend's identity colour. Bottom is labelled ADC."
+      },
+      {
+        "type": "improved",
+        "text": "Game types are two families: Solo Queue violet with Duo Queue a lighter violet, Ranked Flex teal with Ranked 5s a lighter teal. The winrate bars on each card take the colour their queue has in the ring above them."
+      },
+      {
+        "type": "fixed",
+        "text": "A player's face was drawn 42 pixels wide inside a 44 pixel circle, because the ring around it was a border and a border sits inside the box. The ring is a shadow now, so the art fills the circle."
+      },
+      {
+        "type": "improved",
+        "text": "Faces and card art are the champion played most this season. A face should be what you would actually see them on."
+      },
+      {
+        "type": "improved",
+        "text": "The counter pick tag is off the Top champions table. It still marks the matchups it describes."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Shorter names",
     "items": [
       {
