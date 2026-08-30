@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Shorter names",
+    "items": [
+      {
+        "type": "improved",
+        "text": "The collapsible sections are named for what they hold rather than described: Recent Games, Daily Changes, Ranked Pairs, and on each card Most Recent Games, Champion Pool and Champion Matchups. The counts come off the headings, since the tables state their own length."
+      },
+      {
+        "type": "improved",
+        "text": "The game types ring reads Duo Queue, Solo Queue, Ranked Flex and Ranked 5s."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "The 5s bar draws, and a counter pick has to earn the name",
     "items": [
       {
