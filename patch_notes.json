@@ -1,6 +1,32 @@
 [
   {
     "date": "2026-08-30",
+    "title": "The 5s bar draws, and a counter pick has to earn the name",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The Ranked 5s bar was empty. It asked for a colour variable that was never defined, so its gradient did not parse and the fill had nothing to draw with."
+      },
+      {
+        "type": "improved",
+        "text": "The strip down the side of each Overview card is that player's own colour, the same one they carry on the charts and in the duo grid. Cards about the group rather than a person keep the house accent."
+      },
+      {
+        "type": "improved",
+        "text": "The corner mark in the duo grid is sized by how far ahead the carrying player is, scaled against the widest gap in the group, so the marks rank as well as flag. Brett and Winny is the widest at the moment."
+      },
+      {
+        "type": "improved",
+        "text": "A counter pick now has to pass three tests: the champion is played a tenth of the time or less, so a main can never be one; the matchup wins outright at 60% or better; and the margin over that player's own winrate clears what a run that short could produce by chance. Two matchups qualify across the group, where the old rule tagged Zed on 423 games."
+      },
+      {
+        "type": "improved",
+        "text": "The coverage table under Trios and five mans is gone."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Ranked 5s is in, and every game now knows its lane",
     "items": [
       {
