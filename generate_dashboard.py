@@ -1152,9 +1152,9 @@ def queue_mix(season_matches, label):
     solo = [m for m in played if m.get("queue") == "Ranked Solo/Duo"]
     with_mate = sum(1 for m in solo if _DUO_CTX["map"].get((m.get("matchId"), label)))
     mix = [
-        {"label": "Solo/Duo, with one of you", "value": with_mate, "var": "--series-f0"},
-        {"label": "Solo/Duo, on their own", "value": len(solo) - with_mate, "var": "--series-f2"},
-        {"label": "Flex", "value": sum(1 for m in played if m.get("queue") == "Ranked Flex"),
+        {"label": "Duo Queue", "value": with_mate, "var": "--series-f0"},
+        {"label": "Solo Queue", "value": len(solo) - with_mate, "var": "--series-f2"},
+        {"label": "Ranked Flex", "value": sum(1 for m in played if m.get("queue") == "Ranked Flex"),
          "var": "--series-f4"},
         {"label": "Ranked 5s", "value": sum(1 for m in played if m.get("queue") == "Ranked 5s"),
          "var": "--series-f1"},
@@ -1525,7 +1525,7 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       {render_rate_strip(rate_rows)}
 
       <details class="matches-details">
-        <summary data-match-summary>Every game, newest first ({len(matches)})</summary>
+        <summary data-match-summary>Most Recent Games</summary>
         <table class="matches-table">
           <thead><tr><th>When</th><th>Result</th><th>Champion</th><th>With</th><th>K/D/A</th><th>KDA</th><th>CS/min</th><th>Queue</th><th>Length</th></tr></thead>
           <tbody data-match-rows>{match_rows}</tbody>
@@ -1533,12 +1533,12 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       </details>
 
       <details class="matches-details">
-        <summary>Every champion, most played first ({len(champ_rows)})</summary>
+        <summary>Champion Pool</summary>
         {render_champion_breakdown(champ_rows)}
       </details>
 
       <details class="matches-details">
-        <summary>Every matchup, most played first ({len(matchups)})</summary>
+        <summary>Champion Matchups</summary>
         {render_matchups(matchups, matchup_covered, len(season_matches))}
       </details>
     </section>'''
@@ -2347,7 +2347,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       {omitted_note}
       <div class="chart-stats-wrap" data-lp-standings>{standings_html}</div>
       <details class="matches-details" style="margin-top:10px;">
-        <summary>Every game, newest first</summary>
+        <summary>Recent Games</summary>
         <table class="matches-table lp-table">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
@@ -2579,7 +2579,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
       {sparse_note}
       <div class="chart-stats-wrap">{standings_html}</div>
       <details class="matches-details" style="margin-top:10px;">
-        <summary>Days a rank moved</summary>
+        <summary>Daily Changes</summary>
         <table class="matches-table daily-table">
           <thead><tr><th>Date</th><th>Player</th><th>Rank</th><th class="num">Change</th></tr></thead>
           <tbody>{table_rows}</tbody>
@@ -3237,7 +3237,7 @@ def render_duo_synergy_panel(friends):
       {coverage_note}
       <div class="duo-detail" data-duo-detail hidden></div>
       <details class="matches-details duo-table-details" style="margin-top:12px;">
-        <summary>Every pair</summary>
+        <summary>Ranked Pairs</summary>
 
         <table class="matches-table duo-table" data-sortable>
           <thead><tr><th class="num">#</th>
@@ -6553,8 +6553,8 @@ def build_html(data):
         if (lbl) lbl.textContent = 'Form (last ' + total + ' games, ' + wins + 'W ' +
                                    (total - wins) + 'L)';
         var sum = card.querySelector('[data-match-summary]');
-        if (sum && rows) sum.textContent = 'Every game, newest first (' +
-                                           rows.querySelectorAll('tr').length + ')';
+        // The heading no longer carries a count, so a refresh has nothing to
+        // rewrite here.
         return matches.length;
       }}
 
