@@ -1318,7 +1318,13 @@ def queue_rows_for(f):
     dropped, which is what used to happen to every queue that was not one of
     those two.
     """
-    ranked = f.get("ranked") or {}
+    ranked = dict(f.get("ranked") or {})
+    # A data.json written before the queueType was mapped carries Riot's own
+    # name for the 5s ladder, so both are accepted and neither needs a re-fetch.
+    for raw in ("RANKED_PREMADE_5x5", "RANKED_TEAM_5x5"):
+        if raw in ranked and not ranked.get("fives"):
+            ranked["fives"] = ranked.pop(raw)
+        ranked.pop(raw, None)
     known = [("solo", "Ranked Solo / Duo", "--series-1", "S"),
              ("flex", "Ranked Flex", "--series-2", "F"),
              ("fives", "Ranked 5s", "--series-3", "5")]
