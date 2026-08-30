@@ -36,7 +36,15 @@ from pathlib import Path
 QUEUE_ID_NAMES = {
     420: "Ranked Solo/Duo",
     440: "Ranked Flex",
-    42: "Ranked 5s",  # legacy pre-2016 "Team Ranked 5x5" queue; kept in case old data ever carries it
+    # Identified from the games already in the match cache. Of the three queue
+    # ids in there with no name, 710 is the only one played on Summoner's Rift
+    # at all: all 34 of its games have a real CS per minute, where every game
+    # under 1740 and 1750 has none. All 34 fall on a Friday, Saturday or
+    # Sunday, and all 34 start between 19:00 and 23:59, which is when this
+    # group queues as five. It was dropped from the fetch list at some point
+    # and nothing has imported one since.
+    710: "Ranked 5s",
+    42: "Ranked 5s",  # the pre-2016 team queue, gone from the game since
     400: "Normal Draft",
     430: "Normal Blind",
     450: "ARAM",
@@ -48,7 +56,9 @@ QUEUE_ID_NAMES = {
 # and highlights — normals/ARAM/Arena/etc. are fetched by nothing here at
 # all (filtered server-side via Riot's own `queue` param, so non-ranked
 # games never cost an API call in the first place).
-RANKED_QUEUE_IDS = [420, 440, 42]
+# 42 is not listed: the queue has not existed since 2016, so asking for it
+# only costs a request per friend per run.
+RANKED_QUEUE_IDS = [420, 440, 710]
 
 # League-V4 queueType -> the key the dashboard reads. Anything not listed is
 # carried through under its own queueType rather than discarded, so a queue

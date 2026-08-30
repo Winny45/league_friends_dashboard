@@ -461,8 +461,8 @@ def render_champion_icon(champion_name, size=20):
 # Queues the live refresh asks Riot for. Riot filters by queue server-side,
 # so a normal game never costs a call. Names must match the strings
 # fetch_data.py stores, or a live row would read differently from a built one.
-LIVE_RANKED_QUEUES = [420, 440]
-LIVE_QUEUE_NAMES = {"420": "Ranked Solo/Duo", "440": "Ranked Flex"}
+LIVE_RANKED_QUEUES = [420, 440, 710]
+LIVE_QUEUE_NAMES = {"420": "Ranked Solo/Duo", "440": "Ranked Flex", "710": "Ranked 5s"}
 
 # ranked-emblems-latest/ was removed from Community Dragon and every tier
 # under it now 404s, which is why no card had an emblem. The mini crests are
@@ -552,16 +552,24 @@ def busiest_day(matches):
 POSITION_LABELS = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "Bottom", "UTILITY": "Support"}
 
 
+QUEUE_COLUMNS = (("Ranked Solo/Duo", "solo"), ("Ranked Flex", "flex"), ("Ranked 5s", "fives"))
+
+
 def champion_breakdown(season_matches):
-    """Per-champion games/wins/winrate for one friend's season, most-played first."""
+    """Per-champion games/wins/winrate for one friend's season, most-played
+    first, split by queue so a total can be checked against a site that counts
+    a different set of queues."""
     stats = {}
     for m in season_matches:
-        s = stats.setdefault(m["champion"], {"games": 0, "wins": 0})
+        s = stats.setdefault(m["champion"], {"games": 0, "wins": 0, "solo": 0, "flex": 0, "fives": 0})
         s["games"] += 1
         if m["win"]:
             s["wins"] += 1
+        for name, key in QUEUE_COLUMNS:
+            if m.get("queue") == name:
+                s[key] += 1
     rows = [
-        {"champion": c, "games": s["games"], "wins": s["wins"], "winrate": round(100 * s["wins"] / s["games"], 1)}
+        dict(s, champion=c, winrate=round(100 * s["wins"] / s["games"], 1))
         for c, s in stats.items()
     ]
     rows.sort(key=lambda r: (-r["games"], -r["winrate"]))
@@ -795,13 +803,20 @@ def render_champion_breakdown(rows):
     if not rows:
         return '<div class="muted small">No ranked games this season.</div>'
     body = "".join(
-        f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"])}{esc(r["champion"])}</span></td><td class="num">{r["games"]}</td>'
+        f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"])}'
+        f'{esc(r["champion"])}</span></td>'
+        f'<td class="num">{r["games"]}</td>'
+        f'<td class="num muted">{r["solo"] or "&ndash;"}</td>'
+        f'<td class="num muted">{r["flex"] or "&ndash;"}</td>'
+        f'<td class="num muted">{r["fives"] or "&ndash;"}</td>'
         f'<td class="num">{r["wins"]}W {r["games"] - r["wins"]}L</td>'
         f'<td class="num">{r["winrate"]}%</td></tr>'
         for r in rows
     )
     return f'''<table class="matches-table">
-      <thead><tr><th>Champion</th><th class="num">Games</th><th class="num">Record</th><th class="num">Winrate</th></tr></thead>
+      <thead><tr><th>Champion</th><th class="num">Games</th><th class="num">Solo</th>
+      <th class="num">Flex</th><th class="num">5s</th><th class="num">Record</th>
+      <th class="num">Winrate</th></tr></thead>
       <tbody>{body}</tbody>
     </table>'''
 
@@ -1027,51 +1042,51 @@ DONUT_VARS = ["--series-f0", "--series-f1", "--series-f2", "--series-f3",
               "--series-f4", "--series-f5", "--series-f6", "--series-f7"]
 
 
-def render_donut(slices, centre, size=152, thickness=26, note=""):
-    """One ring plus its legend. Slices are {label, value} and optionally var."""
+def render_donut(slices, centre, size=152, thickness=26):
+    """One ring. Hovering a segment names it in the middle of the ring.
+
+    A legend under a ring is a second copy of the same information taking up
+    more room than the ring, and it makes the reader match colours by eye. The
+    hole is already there and already empty, so the answer goes in it.
+    """
     live = [sl for sl in slices if sl.get("value")]
     total = sum(sl["value"] for sl in live)
     if not total:
         return (f'<div class="donut"><div class="donut-empty">'
-                f'<b>{esc(centre)}</b><span class="muted small">Nothing recorded yet</span></div>'
-                f'{f"<p class=\"muted small donut-note\">{note}</p>" if note else ""}</div>')
+                f'<b>{esc(centre.replace(chr(10), " "))}</b>'
+                f'<span class="muted small">Nothing recorded yet</span></div></div>')
 
     r = (size - thickness) / 2
     circ = 2 * math.pi * r
-    arcs, legend, offset = [], [], 0.0
+    arcs, offset = [], 0.0
     for i, sl in enumerate(live):
         frac = sl["value"] / total
         seg = frac * circ
         var = sl.get("var") or DONUT_VARS[i % len(DONUT_VARS)]
         arcs.append(
-            f'<circle cx="{size / 2:.1f}" cy="{size / 2:.1f}" r="{r:.1f}" fill="none" '
-            f'stroke="var({var})" stroke-width="{thickness}" '
-            f'stroke-dasharray="{seg:.2f} {circ - seg:.2f}" stroke-dashoffset="{-offset:.2f}">'
-            f'<title>{esc(sl["label"])}: {sl["value"]} of {total} ({frac * 100:.0f}%)</title>'
+            f'<circle class="donut-arc" cx="{size / 2:.1f}" cy="{size / 2:.1f}" r="{r:.1f}" '
+            f'fill="none" stroke="var({var})" stroke-width="{thickness}" '
+            f'stroke-dasharray="{seg:.2f} {circ - seg:.2f}" stroke-dashoffset="{-offset:.2f}" '
+            f'tabindex="0" role="img" data-label="{esc(sl["label"])}" '
+            f'data-value="{sl["value"]}" data-pct="{frac * 100:.0f}%" '
+            f'aria-label="{esc(sl["label"])}: {sl["value"]} of {total}, {frac * 100:.0f} percent">'
             f'</circle>'
-        )
-        legend.append(
-            f'<li><span class="sw" style="background:var({var});"></span>'
-            f'<span class="dl-name">{esc(sl["label"])}</span>'
-            f'<span class="dl-val">{sl["value"]}<span class="muted"> &middot; {frac * 100:.0f}%</span></span></li>'
         )
         offset += seg
 
-    lines = centre.split("\n")
+    lines = centre.split(chr(10))
     dy = -0.1 if len(lines) > 1 else 0.35
     text = "".join(
         f'<tspan x="{size / 2:.1f}" dy="{dy if n == 0 else 1.15}em">{esc(l)}</tspan>'
         for n, l in enumerate(lines)
     )
-    return f'''<div class="donut">
-      <svg viewBox="0 0 {size} {size}" class="donut-svg" role="img"
-           aria-label="{esc(centre.replace(chr(10), " "))}">
+    label = esc(centre.replace(chr(10), " "))
+    return f'''<div class="donut" data-donut data-centre="{label}">
+      <svg viewBox="0 0 {size} {size}" class="donut-svg">
         <g transform="rotate(-90 {size / 2:.1f} {size / 2:.1f})">{"".join(arcs)}</g>
         <text x="{size / 2:.1f}" y="{size / 2:.1f}" text-anchor="middle"
-              class="donut-centre">{text}</text>
+              class="donut-centre" data-donut-centre>{text}</text>
       </svg>
-      <ul class="donut-legend">{"".join(legend)}</ul>
-      {f'<p class="muted small donut-note">{note}</p>' if note else ""}
     </div>'''
 
 
@@ -1149,16 +1164,21 @@ def render_card_rank(entry, peak):
     the eye lands first.
     """
     if not entry or not entry.get("tier"):
-        now_html = ('<div class="cr-now" data-cr-now><span class="rank-icon rank-icon-ph" '
-                    'style="width:34px;height:34px;"></span>'
-                    '<div><b class="cr-tier">Unranked</b></div></div>')
+        now_html = ('<div class="cr-now" data-cr-now>'
+                    '<div><b class="cr-tier">Unranked</b></div>'
+                    '<span class="rank-icon rank-icon-ph" style="width:38px;height:38px;"></span>'
+                    '</div>')
     else:
         var = tier_var(entry.get("tier"))
         now_html = (
-            f'<div class="cr-now" data-cr-now>{render_rank_icon(entry.get("tier"), size=34)}'
+            # Emblem on the outside edge of the card, past the text, so the
+            # two crests line up down the right rather than sitting between
+            # the words and the edge.
+            f'<div class="cr-now" data-cr-now>'
             f'<div><b class="cr-tier" style="color:var({var});">'
             f'{rank_label(entry).split(" &middot;")[0]}</b>'
-            f'<span class="cr-lp">{entry.get("leaguePoints", 0)} LP</span></div></div>'
+            f'<span class="cr-lp">{entry.get("leaguePoints", 0)} LP</span></div>'
+            f'{render_rank_icon(entry.get("tier"), size=38)}</div>'
         )
     # Always rendered, even with no recorded peak, so a refresh that finds a
     # rank above anything on record has somewhere to put it.
@@ -1168,9 +1188,9 @@ def render_card_rank(entry, peak):
         f'{"" if has_peak else " hidden"}'
         f' title="Highest Solo/Duo rank recorded this season">'
         f'<span class="cr-peak-label">Peak</span>'
-        f'{render_rank_icon((peak or {}).get("tier"), size=16)}'
         f'<span>{rank_label(peak).split(" &middot;")[0] if has_peak else ""}</span>'
-        f'<span class="cr-lp">{(peak or {}).get("leaguePoints", 0)} LP</span></div>'
+        f'<span class="cr-lp">{(peak or {}).get("leaguePoints", 0)} LP</span>'
+        f'{render_rank_icon((peak or {}).get("tier"), size=20)}</div>'
     )
     return f'<div class="card-rank">{now_html}{peak_html}</div>'
 
@@ -1233,16 +1253,10 @@ def render_top_champions(rows):
 
 def render_matchups(rows, covered, total):
     """Lane matchups, and how much of the season the answer is based on."""
-    coverage = (
-        f'<p class="muted small" style="margin:8px 0 4px;">Built from the {covered} of '
-        f'{total} games that record who was in the same lane on the other team. Riot only returns '
-        f'that with the full match detail, so games cached before this was collected do not carry '
-        f'it; re-run <code>fetch_data.py --refetch-details</code> to fill in the rest.</p>'
-    ) if covered < total else ""
+    coverage = ""
     if not rows:
-        return (coverage or '<p class="muted small" style="margin:8px 0 4px;">No opponent data yet.</p>') + \
-            (f'<div class="muted small">No champion has been faced {MATCHUP_MIN_GAMES} or more '
-             f'times in the same lane on the same champion yet.</div>')
+        return (f'<div class="muted small">Nothing yet with {MATCHUP_MIN_GAMES} or more games. '
+                f'Lane opponents are recorded on {covered} of {total} games.</div>')
     body = "".join(
         f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=20)}{esc(r["champion"])}'
         f'<span class="muted"> vs </span>{render_champion_icon(r["opponent"], size=20)}{esc(r["opponent"])}'
@@ -1257,10 +1271,7 @@ def render_matchups(rows, covered, total):
       <thead><tr><th>Matchup</th><th class="num">Games</th><th class="num">Record</th>
       <th class="num">Winrate</th><th class="num">KDA</th></tr></thead>
       <tbody>{body}</tbody>
-    </table>
-    <p class="muted small" style="margin:6px 0 2px;">A matchup is tagged a counter pick when it
-    beats their overall winrate by more than a run that length could produce on its own, so a
-    handful of games has to be won convincingly before it counts as anything.</p>'''
+    </table>'''
 
 
 def queue_rows_for(f):
@@ -1331,12 +1342,6 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
 
     mix, mix_total = queue_mix(season_matches, f["label"])
     role_slices = [{"label": r["role"], "value": r["games"]} for r in role_rows]
-    role_note = ""
-    positioned = sum(1 for m in season_matches if m.get("position"))
-    if positioned < season_games:
-        role_note = (f"From the {positioned} of {season_games} games that record a lane. "
-                     f"Riot only returns it with the full match detail, so games cached before "
-                     f"that was collected do not carry one.")
 
     signature = signature_champion(f)
     splash = champion_splash_url(signature)
@@ -1348,9 +1353,8 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
     # One arrow per queue, so the header says at a glance which ladders moved
     # this week and which way.
     trends = "".join(
-        f'<span class="tr-item" title="{esc(qr["label"])}">'
-        f'{render_trend_arrow(weekly_trend_for(rank_history, f["label"], now, queue=qr["key"]), compact=True)}'
-        f'</span>'
+        render_trend_arrows(weekly_trend_for(rank_history, f["label"], now, queue=qr["key"]),
+                            qr["label"])
         for qr in queue_rows_for(f)
     )
 
@@ -1415,12 +1419,31 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
         </div>
         <div class="card-rings">
           {render_donut(mix, f"Game\ntypes")}
-          {render_donut(role_slices, "Roles\nplayed", note=role_note)}
+          {render_donut(role_slices, "Roles\nplayed")}
+        </div>
+      </div>
+
+      <div class="season-stats season-stats-row">
+        <div class="stat-tile">
+          <div class="stat-value">{season_games}</div>
+          <div class="stat-label">Games this season ({season_hours})</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{champion_pool}</div>
+          <div class="stat-label">Champions played this season</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{weekly_games}</div>
+          <div class="stat-label">Games this week ({format_minutes(weekly_min)})</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{busiest_count if busiest_date else "–"}</div>
+          <div class="stat-label">Busiest day{f" &middot; {busiest_label}" if busiest_date else ""}</div>
         </div>
       </div>
 
       <div class="card-lower">
-        <div class="cl-block">
+        <div class="cl-block cl-wide">
           <div class="section-label">Top champions
             <span class="label-note">weighted</span></div>
           {render_top_champions(top_champs)}
@@ -1429,36 +1452,11 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
           <div class="section-label">Highest mastery</div>
           {render_mastery_table(f.get("mastery", []))}
         </div>
-        <div class="cl-block">
-          <div class="season-stats">
-            <div class="stat-tile">
-              <div class="stat-value">{season_games}</div>
-              <div class="stat-label">Games this season ({season_hours})</div>
-            </div>
-            <div class="stat-tile">
-              <div class="stat-value">{champion_pool}</div>
-              <div class="stat-label">Champions played this season</div>
-            </div>
-            <div class="stat-tile">
-              <div class="stat-value">{weekly_games}</div>
-              <div class="stat-label">Games this week ({format_minutes(weekly_min)})</div>
-            </div>
-            <div class="stat-tile">
-              <div class="stat-value">{busiest_count if busiest_date else "–"}</div>
-              <div class="stat-label">Busiest day{f" &middot; {busiest_label}" if busiest_date else ""}</div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div class="section-label">LP per win and per loss
         <span class="label-note">MMR is the difference</span></div>
       {render_rate_strip(rate_rows)}
-      <p class="muted small" style="margin:6px 0 2px;">Riot never reports the LP change for one
-      game. These are the per-game steps the LP chart is built from: each gap between two rank
-      snapshots is split across the games inside it, as close to an even 20 LP as it can be while
-      still landing exactly on the next measured snapshot. A queue with fewer than
-      {LP_RATE_MIN_GAMES} games in the window shows a dash.</p>
 
       <details class="matches-details">
         <summary data-match-summary>Every game, newest first ({len(matches)})</summary>
@@ -1478,6 +1476,27 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
         {render_matchups(matchups, matchup_covered, len(season_matches))}
       </details>
     </section>'''
+
+
+def render_trend_arrows(trend, label=""):
+    """One to three arrows: how far a rank moved this week, and which way.
+
+    One arrow up to 50 LP, two to 100, three beyond. A single arrow says a
+    ladder moved without saying whether it was a game or a division.
+    """
+    if not trend or not trend.get("direction"):
+        return (f'<span class="tr-group" title="{esc(label)}: no movement recorded">'
+                f'<span class="tr-flat">&#9651;</span></span>')
+    lp = abs(trend.get("lp") or 0)
+    count = 1 if lp <= 50 else (2 if lp <= 100 else 3)
+    up = trend["direction"] > 0
+    glyph = "&#9650;" if up else "&#9660;"
+    cls = "tr-up" if up else "tr-down"
+    text = trend["text"]
+    if trend.get("moved") and trend.get("lp") is not None:
+        text = f"{'+' if trend['lp'] >= 0 else '−'}{abs(trend['lp'])} LP, {text}"
+    return (f'<span class="tr-group" title="{esc(label)}: {esc(text)}">'
+            + f'<span class="{cls}">{glyph}</span>' * count + '</span>')
 
 
 def render_trend_arrow(trend, compact=False):
@@ -2248,26 +2267,16 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     <div class="panel">
       <h2 style="margin-bottom:4px;">LP per game</h2>
       <div class="muted small" style="margin-bottom:12px;">Ranked Solo/Duo &middot; every game since rank tracking began on {esc(tracking_since)}</div>
-      <div class="banner" style="margin-bottom:14px;">
-        <strong>How this is built:</strong> Riot's API doesn't expose the LP change for an individual
-        game, so only the daily snapshots are measured values. The steps in between reconstruct the
-        known net LP change across the games that produced it, which means the shape of each run is an
-        estimate even though every snapshot it passes through is exact.
-      </div>
       <div class="chart-toggles">{zoom_toggle}{proj_toggle}</div>
       <div class="chart-row">
         <div class="chart-plot" data-lp-charts>{charts_svg}</div>
         <div class="chart-key" role="group" aria-label="Players on this chart">{"".join(legend_items)}</div>
       </div>
       <script type="application/json" id="lp-chart-data">{lp_chart_json}</script>
-      <div class="muted small" style="margin-top:6px;">Hover or tap a name to highlight that line; click to hide it. Tap any point for the game behind it. The dashed tail is where each line would reach after enough games to match {esc(most_played)}&#39;s {most_games}, played at that person&#39;s own winrate and their own average LP per win and per loss.</div>
       {omitted_note}
       <div class="chart-stats-wrap" data-lp-standings>{standings_html}</div>
       <details class="matches-details" style="margin-top:10px;">
         <summary>Every game, newest first</summary>
-        <p class="muted small" style="margin:8px 0 4px;">A game two or more of them played
-        together is drawn as one block, tinted with the blend of their colours, so a pairing
-        looks the same wherever it appears.</p>
         <table class="matches-table lp-table">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
@@ -2497,7 +2506,6 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
         </div>
         <div class="chart-key" role="group" aria-label="Players on this chart">{"".join(legend_items)}</div>
       </div>
-      <div class="muted small" style="margin-top:6px;">Click a name beside the chart to show or hide that friend&#39;s line.</div>
       {omitted_note}
       {sparse_note}
       <div class="chart-stats-wrap">{standings_html}</div>
@@ -2912,7 +2920,7 @@ def render_duo_synergy_panel(friends):
         if sm:
             starts[f["label"]] = min(m["dateKey"] for m in sm if m.get("dateKey"))
     coverage_note = ""
-    if len(set(starts.values())) > 1:
+    if False:
         # Shallowest first: those are the histories actually constraining what
         # can be seen, and a pair is limited by the later of its two dates.
         listed = " &middot; ".join(
@@ -3084,26 +3092,6 @@ def render_duo_synergy_panel(friends):
     # An empty size reads as a broken table unless the table says so. Nobody
     # here has queued as an exact trio, and without this line that looks like
     # trios are not being counted rather than that there are none.
-    sizes_found = {r["size"] for r in parties}
-    missing_note = ""
-    absent = [name for size, name in ((3, "trio"), (5, "five man")) if size not in sizes_found]
-    if absent:
-        missing_note = (
-            f'<p class="muted small" style="margin:2px 0 8px;">No {" or ".join(absent)} '
-            f'is listed because none has been played: every game where three or more of them shared '
-            f'a team was a different size. Four of them on one team is counted as a five man whose '
-            f'fifth player is not one of you, not as a stack of four, because Flex has no four '
-            f'player party.</p>'
-        )
-    fives_note = ""
-    if not has_fives:
-        fives_note = (
-            '<p class="muted small" style="margin:2px 0 8px;">The 5s column is Ranked 5s, the old '
-            'team queue. Riot removed it from the game in 2016 and it returns nothing, so the '
-            'column is empty; it is still requested on every fetch and will fill in on its own if '
-            'the queue ever comes back.</p>'
-        )
-
     # Every Flex and 5s game each of them played, and which bucket it fell in.
     # Rory playing 28 Flex games and appearing in rows worth 18 of them is not
     # a gap in the table, and this is where that is shown rather than asserted.
@@ -3119,10 +3107,7 @@ def render_duo_synergy_panel(friends):
             for r in cov
         )
         coverage_table = (
-            '<p class="muted small" style="margin:14px 0 4px;">Where everyone&#39;s Flex and '
-            'Ranked 5s games went. The three numbers add up to the total, so a player appearing '
-            'in fewer games than they played is accounted for rather than missing.</p>'
-            '<table class="matches-table duo-table"><thead><tr><th>Player</th>'
+            '<table class="matches-table duo-table" style="margin-top:14px;"><thead><tr><th>Player</th>'
             '<th class="num">Flex &amp; 5s games</th><th class="num">In a trio or five man</th>'
             '<th class="num">Four of you (a five man, fifth outside the group)</th>'
             '<th class="num">One or two of you on the side</th></tr></thead>'
@@ -3134,11 +3119,7 @@ def render_duo_synergy_panel(friends):
         party_table = f'''
       <details class="matches-details duo-table-details" style="margin-top:12px;">
         <summary>Trios and five mans</summary>
-        <p class="muted small" style="margin:8px 0 4px;">Lineups on the same team, counted whole
-        rather than as every pair inside them. Flex can be queued as one, two, three or five but
-        never four, and Solo/Duo caps at two, so everything here is Flex. Click a heading to
-        sort.</p>
-        {missing_note}{fives_note}
+
         <table class="matches-table duo-table" data-sortable>
           <thead><tr><th class="num">#</th><th class="sortable" data-key="lineup">Lineup</th>
           <th class="sortable" data-key="size" data-numeric>Party</th>
@@ -3156,12 +3137,8 @@ def render_duo_synergy_panel(friends):
     return f'''
     <div class="panel">
       <h2 style="margin-bottom:4px;">Duo synergy</h2>
-      <p class="panel-hint" style="margin:6px 0 14px;">Every pair who played <b>Ranked Solo/Duo</b>
-      on the same team this season. A duo is a Solo/Duo idea, so that is all this counts: two names
-      on the same Flex team usually means a trio or a five man, and those are counted whole further
-      down. The number in a cell is their winrate together and the colour is how far that beats the
-      winrate those two average apart, so green means the pairing helps. The diagonal is each player
-      across all their own Solo/Duo games, coloured against an even 50%.</p>
+      <p class="panel-hint" style="margin:6px 0 14px;">Ranked Solo/Duo. Winrate together, coloured
+      by how far it beats the winrate those two average apart.</p>
       <div class="duo-controls">
         <div class="duo-scale" aria-hidden="true">
           <span>worse together</span>
@@ -3182,17 +3159,7 @@ def render_duo_synergy_panel(friends):
       <div class="duo-detail" data-duo-detail hidden></div>
       <details class="matches-details duo-table-details" style="margin-top:12px;">
         <summary>Every pair</summary>
-        <p class="muted small" style="margin:8px 0 4px;">Every pair who played together, listed
-        alphabetically, and listed under both names so either player can be found in the first
-        column. Ranked Solo/Duo only, like the grid above. Click a heading to sort by it.</p>
-        <p class="muted small" style="margin:2px 0 8px;"><b>Synergy</b> is their winrate together
-        minus the winrate those two average when they are not together: <b>+5%</b> means the pair
-        wins five games in a hundred more often than the two of them usually do, so it is worth
-        queueing. <b>Booster</b> is whichever of the two holds the higher KDA across the games they
-        played together, compared inside those same games so the map, the opponents and the result
-        are identical for both. The dot is the pairing&#39;s own colour, the same one their shared
-        games are tinted with on the Rank progress tab. Pairs with fewer than {DUO_THIN_GAMES} games
-        are marked, since a handful of games can produce any number.</p>
+
         <table class="matches-table duo-table" data-sortable>
           <thead><tr><th class="num">#</th>
           <th class="sortable sorted" data-key="pair" data-dir="asc">Pair</th>
@@ -4817,7 +4784,8 @@ def build_html(data):
      one column on a narrow screen rather than shrinking to illegibility. */
   .card-id {{ min-width: 0; }}
   .card-trend {{ display: flex; flex-direction: column; gap: 3px; margin-left: 18px; }}
-  .tr-row {{ display: flex; gap: 7px; font-size: 15px; line-height: 1; }}
+  .tr-row {{ display: flex; gap: 9px; font-size: 14px; line-height: 1; }}
+  .tr-group {{ display: inline-flex; gap: 1px; }}
   .tr-up {{ color: var(--good); }}
   .tr-down {{ color: var(--critical); }}
   .tr-flat {{ color: var(--muted); }}
@@ -4843,7 +4811,7 @@ def build_html(data):
   .form-net.down {{ color: var(--critical); }}
 
   .card-rings {{ display: flex; gap: 18px; flex-wrap: wrap; justify-content: flex-end; }}
-  .donut {{ width: 190px; }}
+  .donut {{ width: 168px; }}
   .donut-svg {{ width: 152px; height: 152px; display: block; margin: 0 auto; }}
   .donut-centre {{
     fill: var(--text-secondary); font-size: 15px; font-weight: 700;
@@ -4855,28 +4823,25 @@ def build_html(data):
     align-items: center; justify-content: center; text-align: center; gap: 3px;
     color: var(--text-secondary); font-size: 13px;
   }}
-  .donut-legend {{ list-style: none; margin: 10px 0 0; padding: 0; font-size: 11.5px; }}
-  .donut-legend li {{
-    display: flex; align-items: center; gap: 6px; padding: 2px 0;
-    color: var(--text-secondary);
-  }}
-  .donut-legend .sw {{
-    width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto;
-  }}
-  .donut-legend .dl-name {{ flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  .donut-legend .dl-val {{ font-variant-numeric: tabular-nums; white-space: nowrap; }}
-  .donut-note {{ margin: 8px 0 0; }}
+  .donut-arc {{ transition: opacity .12s ease, stroke-width .12s ease; cursor: default; }}
+  .donut:hover .donut-arc {{ opacity: .35; }}
+  .donut .donut-arc:hover, .donut .donut-arc:focus {{ opacity: 1; outline: none; }}
+  .donut-centre tspan.dc-value {{ font-size: 19px; fill: var(--text-primary); }}
+  .donut-centre tspan.dc-small {{ font-size: 11px; fill: var(--muted); }}
 
   /* Three blocks that wrap: the weighted table, the mastery table, the tiles. */
   /* The two champion tables want more room than the tiles, and the tiles read
      better two across than in a single tall column. */
+  /* Two tables, and the wider one gets the room: the weighted table carries
+     five columns where mastery carries three. */
   .card-lower {{
-    display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
-    gap: 18px; margin-bottom: 6px;
+    display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+    gap: 22px; margin-bottom: 6px;
   }}
-  @media (max-width: 1080px) {{
-    .card-lower {{ grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }}
+  @media (max-width: 900px) {{
+    .card-lower {{ grid-template-columns: minmax(0, 1fr); }}
   }}
+  .season-stats-row {{ margin: 4px 0 18px; }}
   .cl-block {{ min-width: 0; overflow-x: auto; }}
   .cl-block .season-stats {{
     margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6014,6 +5979,35 @@ def build_html(data):
     (function () {{
       // Zoom toggle: both ranges are already in the DOM, so this only swaps
       // which one is shown.
+      // A ring answers in its own hole: hovering a segment replaces the title
+      // with that segment's share, and leaving puts the title back.
+      document.querySelectorAll('[data-donut]').forEach(function (d) {{
+        var centre = d.querySelector('[data-donut-centre]');
+        if (!centre) return;
+        var original = centre.innerHTML;
+        var x = centre.getAttribute('x');
+        function show(arc) {{
+          var name = arc.getAttribute('data-label');
+          var parts = name.split(', ');
+          var head = parts.shift();
+          var tail = parts.join(', ');
+          centre.innerHTML =
+            '<tspan x="' + x + '" dy="-0.85em" class="dc-value">' +
+              arc.getAttribute('data-value') + '</tspan>' +
+            '<tspan x="' + x + '" dy="1.15em" class="dc-value">' +
+              arc.getAttribute('data-pct') + '</tspan>' +
+            '<tspan x="' + x + '" dy="1.5em" class="dc-small">' + head + '</tspan>' +
+            (tail ? '<tspan x="' + x + '" dy="1.15em" class="dc-small">' + tail + '</tspan>' : '');
+        }}
+        function reset() {{ centre.innerHTML = original; }}
+        d.querySelectorAll('.donut-arc').forEach(function (arc) {{
+          arc.addEventListener('mouseenter', function () {{ show(arc); }});
+          arc.addEventListener('focus', function () {{ show(arc); }});
+          arc.addEventListener('blur', reset);
+        }});
+        d.addEventListener('mouseleave', reset);
+      }});
+
       document.querySelectorAll('.range-btn[data-proj]').forEach(function (b) {{
         b.addEventListener('click', function () {{
           var host = document.querySelector('[data-lp-charts]');
@@ -6532,9 +6526,10 @@ def build_html(data):
         card.style.setProperty('--card-tier', 'var(' + v + ')');
         var now = card.querySelector('[data-cr-now]');
         if (now) {{
-          now.innerHTML = rankIconHtml(entry, 34) +
+          now.innerHTML =
             '<div><b class="cr-tier" style="color:var(' + v + ');">' + rankShort(entry) +
-            '</b><span class="cr-lp">' + ((entry && entry.leaguePoints) || 0) + ' LP</span></div>';
+            '</b><span class="cr-lp">' + ((entry && entry.leaguePoints) || 0) + ' LP</span></div>' +
+            rankIconHtml(entry, 38);
         }}
         // A live reading above anything on record is the new peak. Leaving
         // it alone printed "Diamond IV" with "Peak Emerald II" underneath.
@@ -6545,8 +6540,9 @@ def build_html(data):
             peakEl.setAttribute('data-peak-lp', live);
             peakEl.hidden = false;
             peakEl.innerHTML = '<span class="cr-peak-label">Peak</span>' +
-              rankIconHtml(entry, 16) + '<span>' + rankShort(entry) + '</span>' +
-              '<span class="cr-lp">' + (entry.leaguePoints || 0) + ' LP</span>';
+              '<span>' + rankShort(entry) + '</span>' +
+              '<span class="cr-lp">' + (entry.leaguePoints || 0) + ' LP</span>' +
+              rankIconHtml(entry, 20);
           }}
         }}
         var soloRow = card.querySelector('[data-rank-row="solo"]');

@@ -1,6 +1,40 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Ranked 5s found, and the cards lose their footnotes",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Ranked 5s is queue 710. Of the three unnamed queue ids sitting in the match cache it is the only one played on Summoner's Rift at all, with a real CS per minute on all 34 of its games where every game under 1740 and 1750 has none. All 34 fall on a Friday, Saturday or Sunday and all 34 start between 19:00 and 23:59. It is back on the fetch list, so those games will import on the next run."
+      },
+      {
+        "type": "improved",
+        "text": "The ring charts have no key underneath. Hovering a segment puts its count, its share and its name in the middle of the ring instead."
+      },
+      {
+        "type": "improved",
+        "text": "The 7 day trend is one to three arrows: one up to 50 LP, two to 100, three beyond, green up or red down, one group per queue."
+      },
+      {
+        "type": "improved",
+        "text": "Rank emblems sit outside the text in the card's top corner, so the current and peak crests line up down the edge."
+      },
+      {
+        "type": "improved",
+        "text": "The four season figures run in a line above the champion tables, which gives the weighted table room enough to read without sliding it sideways."
+      },
+      {
+        "type": "improved",
+        "text": "Every champion, most played first now splits its games by queue, so a total can be checked against a site that counts a different set of them."
+      },
+      {
+        "type": "improved",
+        "text": "The paragraphs explaining how each number was worked out are gone from the page."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Friend cards rebuilt, and 64 remakes stop counting as games",
     "items": [
       {
