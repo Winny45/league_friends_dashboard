@@ -1,5 +1,31 @@
 [
   {
+    "date": "2026-09-01",
+    "title": "Season highlights, week tiles and duo cards",
+    "items": [
+      {
+        "type": "added",
+        "text": "A Season highlights panel: MVP, KDA king, Farm god, Marathon day, Season grinder, Unemployed, Chicken dinner, If at first you don't succeed, Sisyphus, The DPS, Tickle monster, Dirty KSer, On a mission, Int alert, Passenger, Keep coming up short, Speedrunner, Lights were too bright and Just this once. Each names a winner, the number behind it, and enough detail to see why."
+      },
+      {
+        "type": "added",
+        "text": "This week at a glance is rebuilt: games and hours this week, most active player, games played together, biggest climber with winrate and LP, hottest streak, animal of the week, most loved champion, adaptable and grasshopper. A tile about the group needs two or more players in it, so a champion one person spammed cannot be the group's most loved."
+      },
+      {
+        "type": "added",
+        "text": "Six cards under the duo grid: Lovers, Perfect couple, Vegas wedding, Healthy relationship, Exes and Sneaky link."
+      },
+      {
+        "type": "added",
+        "text": "A table of the ten highest rated champion performances anywhere in the group, with the player, the rating, the games and the winrate."
+      },
+      {
+        "type": "improved",
+        "text": "fetch_data.py now records damage taken, vision score, the lane opponent's own KDA, the surrender flag, and the champions of everyone else on the team. Four highlights are waiting on those and stay hidden until a --refetch-details pass fills them in, rather than showing a number they cannot support."
+      }
+    ]
+  },
+  {
     "date": "2026-08-30",
     "title": "Real champion names, tier bands, and a schedule that publishes itself",
     "items": [

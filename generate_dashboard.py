@@ -3083,6 +3083,328 @@ def party_coverage(friends):
     return [dict(r, label=k) for k, r in rows.items() if r["games"]]
 
 
+# ---------------------------------------------------------------------------
+# Season highlights.
+#
+# Each of these is a superlative across the whole group: one winner, the
+# number behind it, and enough of the runner-up's number to show it was close.
+# They all take the same shape so the renderer does not care which is which.
+#
+# A few need fields that were only added to the extractor recently, so they
+# return None until fetch_data.py has been through with --refetch-details.
+# Returning None is the point: a highlight that cannot be computed should be
+# absent, not wrong.
+# ---------------------------------------------------------------------------
+
+HL_MIN_GAMES = 20          # below this a season average is one bad week
+SUPPORT_JUNGLE = {"Support", "Jungle"}
+
+
+def _played(f, queue=None):
+    return [m for m in f.get("seasonMatches", [])
+            if not m.get("remake") and (queue is None or m.get("queue") == queue)]
+
+
+def _has(matches, field):
+    return any(field in m for m in matches)
+
+
+def _best(friends, value, fmt, min_games=HL_MIN_GAMES, lowest=False):
+    """Pick the friend with the highest (or lowest) `value`, and describe it.
+
+    `value` returns None for anyone the measure cannot be taken on, so a
+    missing field or a thin sample drops that player rather than the award.
+    """
+    scored = []
+    for f in friends:
+        games = _played(f)
+        if len(games) < min_games:
+            continue
+        v = value(f, games)
+        if v is not None:
+            scored.append((v, f, games))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=not lowest)
+    v, f, games = scored[0]
+    runner = scored[1][0] if len(scored) > 1 else None
+    return {"who": f["label"], "text": fmt(f, games, v, runner)}
+
+
+def streaks(results):
+    """Longest run of wins, of losses, and of strict alternation."""
+    best_w = best_l = best_alt = 0
+    run_w = run_l = 0
+    alt = 0
+    prev = None
+    for won in results:
+        run_w = run_w + 1 if won else 0
+        run_l = 0 if won else run_l + 1
+        best_w, best_l = max(best_w, run_w), max(best_l, run_l)
+        alt = alt + 1 if (prev is not None and won != prev) else 1
+        best_alt = max(best_alt, alt)
+        prev = won
+    return best_w, best_l, best_alt
+
+
+def longest_daily_run(dates):
+    """Most consecutive days with at least one game, and the dates of it."""
+    days = sorted({datetime.strptime(d, "%Y-%m-%d").date() for d in dates if d})
+    if not days:
+        return 0, None, None
+    best = run = 1
+    start = best_start = best_end = days[0]
+    for prev, cur in zip(days, days[1:]):
+        if (cur - prev).days == 1:
+            run += 1
+        else:
+            run, start = 1, cur
+        if run > best:
+            best, best_start, best_end = run, start, cur
+    return best, best_start, best_end
+
+
+def season_highlights(friends, now):
+    """Every superlative that can be taken from what is stored."""
+    out = []
+
+    def add(card):
+        if card:
+            out.append(card)
+
+    # ---- performance -------------------------------------------------------
+    add(_wrap(_best(friends, lambda f, g: 100 * sum(1 for m in g if match_kda(m) >= 5.0) / len(g),
+                    lambda f, g, v, r: (f'ended <strong>{v:.0f}%</strong> of {len(g)} games on a '
+                                        f'KDA of 5 or better.')),
+              "\U0001f3c6", "MVP"))
+
+    add(_wrap(_best(friends, lambda f, g: sum(match_kda(m) for m in g) / len(g),
+                    lambda f, g, v, r: f'averages <strong>{v:.2f}</strong> KDA across {len(g)} games.'),
+              "\U0001f451", "KDA king"))
+
+    add(_wrap(_best(friends,
+                    lambda f, g: _mean([m["csPerMin"] for m in g
+                                        if POSITION_LABELS.get(m.get("position") or "")
+                                        not in SUPPORT_JUNGLE and m.get("csPerMin")]),
+                    lambda f, g, v, r: f'farms <strong>{v:.1f}</strong> CS a minute outside support and jungle.'),
+              "\U0001f33e", "Farm god"))
+
+    # ---- volume ------------------------------------------------------------
+    def busiest(f, g):
+        _d, n = busiest_day(g)
+        return n
+
+    add(_wrap(_best(friends, busiest,
+                    lambda f, g, v, r: (lambda d, n: f'played <strong>{n}</strong> games on '
+                                        f'{format_day_label(d)}, {format_minutes(sum(m.get("durationMin", 0) for m in g if m.get("dateKey") == d))} of League.')
+                    (*busiest_day(g))),
+              "\U0001f4c5", "Marathon day"))
+
+    add(_wrap(_best(friends, lambda f, g: len(g),
+                    lambda f, g, v, r: (f'has played <strong>{v}</strong> ranked games, '
+                                        f'{format_minutes(sum(m.get("durationMin", 0) for m in g))} in all.')),
+              "\U0001f3ae", "Season grinder"))
+
+    def run_days(f, g):
+        n, _a, _b = longest_daily_run([m.get("dateKey") for m in g])
+        return n
+
+    add(_wrap(_best(friends, run_days,
+                    lambda f, g, v, r: (lambda n, a, b: f'played <strong>{n}</strong> days running, '
+                                        f'{a.strftime("%b %d")} to {b.strftime("%b %d")}.')
+                    (*longest_daily_run([m.get("dateKey") for m in g]))),
+              "\U0001f6cb", "Unemployed"))
+
+    # ---- streaks -----------------------------------------------------------
+    def ordered(g):
+        return [bool(m["win"]) for m in sorted(g, key=lambda m: m.get("gameStartMs") or 0)]
+
+    add(_wrap(_best(friends, lambda f, g: streaks(ordered(g))[0],
+                    lambda f, g, v, r: f'won <strong>{v}</strong> in a row.'),
+              "\U0001f357", "Chicken dinner"))
+    add(_wrap(_best(friends, lambda f, g: streaks(ordered(g))[1],
+                    lambda f, g, v, r: f'lost <strong>{v}</strong> in a row.'),
+              "\U0001f4c9", "If at first you don't succeed"))
+    add(_wrap(_best(friends, lambda f, g: streaks(ordered(g))[2],
+                    lambda f, g, v, r: f'alternated win, loss, win for <strong>{v}</strong> games.'),
+              "\U0001faa8", "Sisyphus"))
+
+    # ---- damage ------------------------------------------------------------
+    add(_wrap(_best(friends, lambda f, g: _mean([m.get("damageDealt", 0) for m in g]),
+                    lambda f, g, v, r: f'deals <strong>{v:,.0f}</strong> damage to champions a game.'),
+              "\U0001f4a5", "The DPS"))
+
+    def dmg_per_kill(f, g):
+        kills = sum(m["kills"] for m in g)
+        return (sum(m.get("damageDealt", 0) for m in g) / kills) if kills else None
+
+    add(_wrap(_best(friends, dmg_per_kill,
+                    lambda f, g, v, r: f'spends <strong>{v:,.0f}</strong> damage on every kill.'),
+              "\U0001faf3", "Tickle monster"))
+    add(_wrap(_best(friends, dmg_per_kill, lowest=True,
+                    fmt=lambda f, g, v, r: f'needs only <strong>{v:,.0f}</strong> damage a kill.'),
+              "\U0001f9f9", "Dirty KSer"))
+
+    # ---- pace --------------------------------------------------------------
+    def per_min(field):
+        def inner(f, g):
+            mins = sum(m.get("durationMin", 0) for m in g)
+            return (sum(m[field] for m in g) / mins) if mins else None
+        return inner
+
+    def between_deaths(g):
+        deaths = sum(m["deaths"] for m in g)
+        mins = sum(m.get("durationMin", 0) for m in g)
+        return (mins / deaths) if deaths else None
+
+    add(_wrap(_best(friends, per_min("kills"),
+                    lambda f, g, v, r: (f'takes <strong>{v * 10:.1f}</strong> kills every 10 minutes, '
+                                        f'and dies every {between_deaths(g):.1f}.')),
+              "\U0001f3af", "On a mission"))
+    add(_wrap(_best(friends, per_min("deaths"),
+                    lambda f, g, v, r: (f'dies <strong>{v * 10:.1f}</strong> times every 10 minutes, '
+                                        f'one every {between_deaths(g):.1f}.')),
+              "\U0001f480", "Int alert"))
+
+    # ---- losses ------------------------------------------------------------
+    def losing_kda(f, g):
+        lost = [m for m in g if not m["win"]]
+        return _mean([match_kda(m) for m in lost]) if lost else None
+
+    add(_wrap(_best(friends, losing_kda, lowest=True,
+                    fmt=lambda f, g, v, r: f'averages <strong>{v:.2f}</strong> KDA in the games they lose.'),
+              "\U0001f6cc", "Passenger"))
+
+    def long_losses(f, g):
+        lost = [m.get("durationMin", 0) for m in g if not m["win"]]
+        return _mean(lost) if lost else None
+
+    add(_wrap(_best(friends, long_losses,
+                    lambda f, g, v, r: f'takes <strong>{v:.0f}</strong> minutes to lose one.'),
+              "\u23f3", "Keep coming up short"))
+
+    # ---- oddities ----------------------------------------------------------
+    def quick_wins(f, g):
+        fast = [m for m in g if m["win"] and m.get("durationMin", 99) < 16]
+        return 100 * len(fast) / len(g)
+
+    add(_wrap(_best(friends, quick_wins,
+                    lambda f, g, v, r: f'wins <strong>{v:.1f}%</strong> of games inside 16 minutes.'),
+              "\u26a1", "Speedrunner"))
+
+    def after_a_win(f, g):
+        seq = sorted(g, key=lambda m: m.get("gameStartMs") or 0)
+        nxt = [b for a, b in zip(seq, seq[1:]) if a["win"]]
+        if len(nxt) < 10:
+            return None
+        return 100 * sum(1 for m in nxt if m["win"]) / len(nxt)
+
+    add(_wrap(_best(friends, after_a_win, lowest=True,
+                    fmt=lambda f, g, v, r: (f'wins only <strong>{v:.0f}%</strong> of the games that '
+                                            f'follow a win.')),
+              "\U0001f4a1", "Lights were too bright"))
+
+    def one_off(f, g):
+        by_champ = {}
+        for m in g:
+            by_champ.setdefault(m["champion"], []).append(m)
+        best = None
+        for champ, ms in by_champ.items():
+            if len(ms) < 10:
+                continue
+            kdas = [match_kda(m) for m in ms]
+            gap = max(kdas) - (sum(kdas) / len(kdas))
+            if best is None or gap > best[0]:
+                best = (gap, champ, max(kdas))
+        return best[0] if best else None
+
+    add(_wrap(_best(friends, one_off,
+                    lambda f, g, v, r: (lambda b: f'once went <strong>{b[2]:.1f}</strong> KDA on '
+                                        f'{champion_display(b[1])}, {v:.1f} above their average on it.')
+                    (_one_off_detail(g))),
+              "\u2728", "Just this once"))
+
+    # ---- these need fields the extractor only records since the last change --
+    add(_wrap(_best(friends,
+                    lambda f, g: (sum(m.get("damageTaken", 0) for m in g) / sum(m["deaths"] for m in g))
+                    if _has(g, "damageTaken") and sum(m["deaths"] for m in g) else None,
+                    lambda f, g, v, r: f'soaks <strong>{v:,.0f}</strong> damage for every death.'),
+              "\U0001f9f1", "The wall"))
+
+    add(_wrap(_best(friends,
+                    lambda f, g: _mean([m["visionScore"] for m in g if "visionScore" in m])
+                    if _has(g, "visionScore") else None,
+                    lowest=True,
+                    fmt=lambda f, g, v, r: (f'averages <strong>{v:.0f}</strong> vision score, '
+                                            f'{v / max(_mean([m.get("durationMin", 1) for m in g]), 1):.2f} a minute.')),
+              "\U0001f576", "I cannot see, I'm legally blind"))
+
+    def diffed(f, g):
+        pool = [m for m in g if m.get("opponentKda") is not None]
+        if len(pool) < HL_MIN_GAMES:
+            return None
+        return 100 * sum(1 for m in pool if match_kda(m) < m["opponentKda"]) / len(pool)
+
+    add(_wrap(_best(friends, diffed,
+                    lambda f, g, v, r: (f'came out behind their lane opponent&#39;s KDA in '
+                                        f'<strong>{v:.0f}%</strong> of games.')),
+              "\U0001f4c9", "Diffed"))
+
+    def besto(f, g):
+        pool = [m for m in g if m.get("allies")]
+        if not pool:
+            return None
+        stats = {}
+        for m in pool:
+            for ally in m["allies"]:
+                st = stats.setdefault(ally, [0, 0])
+                st[0] += 1
+                st[1] += 1 if m["win"] else 0
+        rated = [(100 * w / n, c, n) for c, (n, w) in stats.items() if n >= 10]
+        return max(rated)[0] if rated else None
+
+    add(_wrap(_best(friends, besto,
+                    lambda f, g, v, r: (lambda b: f'wins <strong>{v:.0f}%</strong> of games with a '
+                                        f'{champion_display(b[1])} on the team ({b[2]} of them).')
+                    (_besto_detail(g))),
+              "\U0001f465", "Besto Friendo"))
+
+    return out
+
+
+def _wrap(card, icon, title):
+    if not card:
+        return None
+    return {"icon": icon, "title": title,
+            "text": f'{esc(card["who"])} {card["text"]}', "who": card["who"]}
+
+
+def _one_off_detail(g):
+    by_champ = {}
+    for m in g:
+        by_champ.setdefault(m["champion"], []).append(m)
+    best = None
+    for champ, ms in by_champ.items():
+        if len(ms) < 10:
+            continue
+        kdas = [match_kda(m) for m in ms]
+        gap = max(kdas) - (sum(kdas) / len(kdas))
+        if best is None or gap > best[0]:
+            best = (gap, champ, max(kdas))
+    return best
+
+
+def _besto_detail(g):
+    stats = {}
+    for m in g:
+        for ally in (m.get("allies") or []):
+            st = stats.setdefault(ally, [0, 0])
+            st[0] += 1
+            st[1] += 1 if m["win"] else 0
+    rated = [(100 * w / n, c, n) for c, (n, w) in stats.items() if n >= 10]
+    return max(rated) if rated else (0, "", 0)
+
+
 def render_duo_synergy_panel(friends):
     """A matrix, not a list of cards.
 
@@ -3331,6 +3653,7 @@ def render_duo_synergy_panel(friends):
           <span>better</span>
         </div>
       </div>
+      <div class="awards duo-cards">{render_award_tiles(duo_cards(friends, rows, datetime.now()), friends)}</div>
       <div class="duo-matrix-wrap">
         <table class="duo-matrix">
           <thead><tr><td></td>{head}</tr></thead>
@@ -3357,105 +3680,278 @@ def render_duo_synergy_panel(friends):
       {party_table}</div>'''
 
 
-def render_week_glance_panel(friends_sorted, awards, rank_history, now):
+def week_tiles(friends_sorted, rank_history, now):
+    """Nine readings on the last seven days, in a fixed order."""
+    cut = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    week = {f["label"]: [m for m in f.get("seasonMatches", [])
+                         if not m.get("remake") and (m.get("dateKey") or "") >= cut]
+            for f in friends_sorted}
     tiles = []
 
-    # The group's own week, which belongs here rather than among the season
-    # totals: everything else in this panel is about the last seven days.
-    week_min = week_games = 0
-    for f in friends_sorted:
-        mins, games = weekly_playtime(f.get("seasonMatches", []), now)
-        week_min += mins
-        week_games += games
-    if week_games:
-        tiles.append(("\U0001f3ae", "Games this week",
-                      f"Everyone played <strong>{week_games}</strong> ranked games together "
-                      f"this week, {format_minutes(week_min)} of League."))
+    def mins(ms):
+        return format_minutes(sum(m.get("durationMin", 0) for m in ms))
 
-    if awards:
-        top = awards[0]
-        tiles.append((top["icon"], top["title"], top["text"]))
+    everyone = [m for ms in week.values() for m in ms]
+    if everyone:
+        tiles.append(("\U0001f4c8", "Games this week",
+                      f'<strong>{len(everyone)}</strong> ranked games, {mins(everyone)} of League.'))
 
-    best_week = None
-    for f in friends_sorted:
-        season_matches = f.get("seasonMatches", f.get("recentMatches", []))
-        mins, games = weekly_playtime(season_matches, now)
-        if games and (best_week is None or mins > best_week[1]):
-            best_week = (f, mins, games)
-    if best_week:
-        f, mins, games = best_week
-        tiles.append(("⏱️", "Most active", f"{esc(f['label'])} played {format_minutes(mins)} across {games} games this week."))
+    busiest = max(week.items(), key=lambda kv: len(kv[1]), default=None)
+    if busiest and busiest[1]:
+        tiles.append(("\u23f1\ufe0f", "Most active",
+                      f'{esc(busiest[0])} played <strong>{len(busiest[1])}</strong> games, '
+                      f'{mins(busiest[1])}.'))
 
-    # Who is on the best run right now, and how much of the week was spent
-    # queuing together rather than alone.
-    week_cut = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    best_form = None
-    together = 0
-    seen_shared = set()
-    for f in friends_sorted:
-        wk = [m for m in f.get("seasonMatches", [])
-              if not m.get("remake") and (m.get("dateKey") or "") >= week_cut]
-        for m in wk:
-            if party_size(m.get("matchId"), f["label"]) > 1:
-                seen_shared.add(m.get("matchId"))
-        if len(wk) >= 5:
-            wins = sum(1 for m in wk if m["win"])
-            rate = 100 * wins / len(wk)
-            if best_form is None or rate > best_form[1]:
-                best_form = (f["label"], rate, wins, len(wk) - wins)
-    if best_form:
-        tiles.append(("\U0001f525", "Hottest streak",
-                      f"{esc(best_form[0])} is winning <strong>{best_form[1]:.0f}%</strong> "
-                      f"this week, {best_form[2]}W {best_form[3]}L."))
-    if seen_shared:
+    # A shared game counted once, not once per player who was in it.
+    shared = {}
+    for label, ms in week.items():
+        for m in ms:
+            if _DUO_CTX["map"].get((m.get("matchId"), label)):
+                shared[m["matchId"]] = m
+    if shared:
         tiles.append(("\U0001f465", "Played together",
-                      f"<strong>{len(seen_shared)}</strong> of this week's games had two or more "
-                      f"of them on the same team."))
+                      f'<strong>{len(shared)}</strong> games had two or more of them on the '
+                      f'same team, {mins(shared.values())}.'))
 
     climber = weekly_rank_leader(rank_history, now)
     if climber and climber.get("text"):
-        # Across a promotion the text reads "Platinum I → Emerald IV", which
-        # says how far but not how much. The LP is only added there — in the
-        # same-division case the text already is an LP number.
-        gain = ""
+        ms = week.get(climber["label"]) or []
+        wr = (f'{100 * sum(1 for m in ms if m["win"]) / len(ms):.0f}% ' if ms else "")
+        lp = ""
         if climber.get("moved") and climber.get("lp"):
-            lp = climber["lp"]
-            gain = (f' <span class="lp-gain">{"+" if lp >= 0 else "\u2212"}{abs(lp)} LP</span>')
-        tiles.append(("📈", "Biggest climber",
-                      f"{esc(climber['label'])} · {esc(climber['text'])}{gain} this week."))
+            lp = f' <span class="lp-gain">{"+" if climber["lp"] >= 0 else "−"}{abs(climber["lp"])} LP</span>'
+        tiles.append(("\U0001f4c8", "Biggest climber",
+                      f'{esc(climber["label"])} {wr}this week &middot; '
+                      f'{esc(climber["text"])}{lp}.'))
 
+    form = [(100 * sum(1 for m in ms if m["win"]) / len(ms), label, ms)
+            for label, ms in week.items() if len(ms) >= 5]
+    if form:
+        rate, label, ms = max(form)
+        wins = sum(1 for m in ms if m["win"])
+        tiles.append(("\U0001f525", "Hottest streak",
+                      f'{esc(label)} is winning <strong>{rate:.0f}%</strong> this week, '
+                      f'{wins}W {len(ms) - wins}L.'))
+
+    # A champion two or more of them picked up this week, ranked by how the
+    # group did on it rather than by how any one of them did.
+    shared_champs = {}
+    for label, ms in week.items():
+        for m in ms:
+            st = shared_champs.setdefault(m["champion"], {"players": set(), "games": 0, "wins": 0})
+            st["players"].add(label)
+            st["games"] += 1
+            st["wins"] += 1 if m["win"] else 0
+    herd = [(100 * v["wins"] / v["games"], c, v) for c, v in shared_champs.items()
+            if len(v["players"]) >= 2 and v["games"] >= 4]
+    if herd:
+        rate, champ, v = max(herd)
+        tiles.append(("\U0001f43e", "Animal of the week",
+                      f'{esc(champion_display(champ))} went <strong>{rate:.0f}%</strong> across '
+                      f'{len(v["players"])} of them, {v["games"]} games.'))
+
+    # Pick rate averaged over the players who played at all, so a champion one
+    # person spams does not beat one everybody reaches for.
+    loved = {}
+    for label, ms in week.items():
+        if not ms:
+            continue
+        for champ in {m["champion"] for m in ms}:
+            n = sum(1 for m in ms if m["champion"] == champ)
+            loved.setdefault(champ, []).append(100 * n / len(ms))
+    active = sum(1 for ms in week.values() if ms)
+    rated = [(sum(v) / active, c, len(v)) for c, v in loved.items()
+             if active and len(v) >= 2]
+    if rated:
+        rate, champ, players = max(rated)
+        tiles.append(("\u2764\ufe0f", "Most loved champion",
+                      f'{esc(champion_display(champ))} is <strong>{rate:.0f}%</strong> of the '
+                      f'group&#39;s picks this week, across {players} of them.'))
+
+    pool = [(len({m["champion"] for m in ms}), label, len(ms))
+            for label, ms in week.items() if ms]
+    if pool:
+        n, label, games = max(pool)
+        tiles.append(("\U0001f9ec", "Adaptable",
+                      f'{esc(label)} played <strong>{n}</strong> different champions in '
+                      f'{games} games.'))
+
+    # New meaning new: not touched at any point earlier in the season.
+    fresh = []
+    for f in friends_sorted:
+        before = {m["champion"] for m in f.get("seasonMatches", [])
+                  if not m.get("remake") and (m.get("dateKey") or "") < cut}
+        counts = {}
+        for m in week.get(f["label"], []):
+            if m["champion"] not in before:
+                counts[m["champion"]] = counts.get(m["champion"], 0) + 1
+        if counts:
+            champ = max(sorted(counts), key=lambda c: counts[c])
+            if counts[champ] >= 2:
+                fresh.append((counts[champ], f["label"], champ))
+    if fresh:
+        n, label, champ = max(fresh)
+        tiles.append(("\U0001f997", "Grasshopper",
+                      f'{esc(label)} picked up {esc(champion_display(champ))} and played it '
+                      f'<strong>{n}</strong> time{"s" if n != 1 else ""} already.'))
+
+    return tiles
+
+
+def duo_cards(friends, rows, now):
+    """Six readings on the pairs, from the same numbers the grid is built on."""
+    listed = [r for r in rows if r["total"]["games"] >= 2]
+    if not listed:
+        return []
+    cards = []
+
+    def name(r):
+        return f'{esc(r["a"])} &amp; {esc(r["b"])}'
+
+    most = max(listed, key=lambda r: r["total"]["games"])
+    cards.append(("\U0001f496", "Lovers",
+                  f'{name(most)} have played <strong>{most["total"]["games"]}</strong> games '
+                  f'together.'))
+
+    rated = [r for r in listed if r["total"]["games"] >= DUO_THIN_GAMES]
+    if rated:
+        best = max(rated, key=lambda r: r["total"]["winrate"])
+        cards.append(("\U0001f48d", "Perfect couple",
+                      f'{name(best)} win <strong>{best["total"]["winrate"]}%</strong> of '
+                      f'{best["total"]["games"]} games together.'))
+        worst = min(rated, key=lambda r: r["total"]["winrate"])
+        cards.append(("\U0001f3b0", "Vegas wedding",
+                      f'{name(worst)} win <strong>{worst["total"]["winrate"]}%</strong> of '
+                      f'{worst["total"]["games"]}. It happened; nobody planned it.'))
+        lifted = [r for r in rated if r["total"]["lift"] is not None]
+        if lifted:
+            top = max(lifted, key=lambda r: r["total"]["lift"])
+            cards.append(("\U0001f331", "Healthy relationship",
+                          f'{name(top)} beat their own winrates by '
+                          f'<strong>{top["total"]["lift"]:+.1f}%</strong> when they queue together.'))
+
+    # When each pair last shared a game, so the ones who have drifted show up.
+    last_seen = {}
+    for f in friends:
+        for m in f.get("seasonMatches", []):
+            if m.get("remake"):
+                continue
+            for mate, _v in (_DUO_CTX["map"].get((m.get("matchId"), f["label"])) or []):
+                key = tuple(sorted([f["label"], mate]))
+                ms = m.get("gameStartMs") or 0
+                if ms > last_seen.get(key, 0):
+                    last_seen[key] = ms
+    stale = [(ms, k) for k, ms in last_seen.items() if ms]
+    if stale:
+        ms, key = min(stale)
+        days = (now - datetime.fromtimestamp(ms / 1000)).days
+        cards.append(("\U0001f494", "Exes",
+                      f'{esc(key[0])} &amp; {esc(key[1])} have not queued together in '
+                      f'<strong>{days}</strong> days.'))
+
+    # A pair who do better together than either does with their usual partner.
+    by_player = {}
+    for r in listed:
+        for who, other in ((r["a"], r["b"]), (r["b"], r["a"])):
+            by_player.setdefault(who, []).append(r)
+    sneaky = None
+    for who, rs in by_player.items():
+        usual = max(rs, key=lambda r: r["total"]["games"])
+        for r in rs:
+            if r is usual or r["total"]["games"] < DUO_THIN_GAMES:
+                continue
+            if r["total"]["winrate"] <= usual["total"]["winrate"]:
+                continue
+            gap = r["total"]["winrate"] - usual["total"]["winrate"]
+            if sneaky is None or gap > sneaky[0]:
+                sneaky = (gap, who, r, usual)
+    if sneaky:
+        gap, who, r, usual = sneaky
+        other = r["b"] if r["a"] == who else r["a"]
+        cards.append(("\U0001f92b", "Sneaky link",
+                      f'{esc(who)} wins <strong>{r["total"]["winrate"]}%</strong> with '
+                      f'{esc(other)}, {gap:.1f} points better than with their usual partner.'))
+
+    return cards
+
+
+def group_top_champions(friends, limit=10):
+    """The highest rated champion performances anywhere in the group."""
+    out = []
+    for f in friends:
+        played = [m for m in f.get("seasonMatches", []) if not m.get("remake")]
+        if not played:
+            continue
+        for r in top_champions(played, champion_matchups(played), limit=limit):
+            out.append(dict(r, player=f["label"]))
+    out.sort(key=lambda r: (-r["rating"], -r["games"]))
+    return out[:limit]
+
+
+def render_week_glance_panel(friends_sorted, awards, rank_history, now):
+    tiles = week_tiles(friends_sorted, rank_history, now)
     if not tiles:
         return ""
-
-    # Same rule as the highlight cards below: the strip is the colour of
-    # whoever the tile is about. A tile about the group ("Played together")
-    # keeps the house accent, which is the honest answer for it.
-    labels = sorted((f["label"] for f in friends_sorted), key=len, reverse=True)
-
-    def tile_style(text):
-        who = next((l for l in labels if l in text), None)
-        return f' style="--award-colour: var({friend_colour(who)});"' if who else ""
-
-    tiles_html = "".join(
-        f'<div class="award"{tile_style(text)}><div class="award-icon">{icon}</div><div>'
-        f'<div class="award-title">{esc(title)}</div><div class="award-text">{text}</div></div></div>'
-        for icon, title, text in tiles
-    )
     return f'''
     <div class="panel">
       <h2 style="margin-bottom:14px;">This week at a glance</h2>
-      <div class="awards">{tiles_html}</div>
+      <div class="awards">{render_award_tiles(tiles, friends_sorted)}</div>
     </div>'''
 
 
-# ---------------------------------------------------------------------------
-# Brand assets
-#
-# The page had no favicon, no theme colour and no Open Graph tags, which for a
-# link whose entire job is to be pasted into a group chat meant a generic globe
-# in the tab and a bare unfurled URL in Discord. The mark is a double chevron
-# (climbing the ladder) on the same accent gradient the UI already uses.
-# ---------------------------------------------------------------------------
+def render_award_tiles(tiles, friends_sorted):
+    """Award cards, each striped in the colour of whoever it names."""
+    labels = sorted((f["label"] for f in friends_sorted), key=len, reverse=True)
+
+    def style(text):
+        who = next((l for l in labels if l in text), None)
+        return f' style="--award-colour: var({friend_colour(who)});"' if who else ""
+
+    return "".join(
+        f'<div class="award"{style(text)}><div class="award-icon">{icon}</div><div>'
+        f'<div class="award-title">{esc(title)}</div><div class="award-text">{text}</div>'
+        f'</div></div>'
+        for icon, title, text in tiles
+    )
+
+
+def render_season_highlights_panel(friends_sorted, now):
+    cards = season_highlights(friends_sorted, now)
+    if not cards:
+        return ""
+    tiles = [(c["icon"], c["title"], c["text"]) for c in cards]
+    return f'''
+    <div class="panel">
+      <h2 style="margin-bottom:14px;">Season highlights</h2>
+      <div class="awards">{render_award_tiles(tiles, friends_sorted)}</div>
+    </div>'''
+
+
+def render_group_top_champions(friends_sorted):
+    rows = group_top_champions(friends_sorted)
+    if not rows:
+        return ""
+    body = "".join(
+        f'<tr><td class="num muted small">{n}</td>'
+        f'<td class="champ-cell"><span class="cc">'
+        f'{render_champion_icon(r["champion"], size=20)}'
+        f'{esc(champion_display(r["champion"]))}</span></td>'
+        f'<td class="nowrap"><b style="color:var({friend_colour(r["player"])});">'
+        f'{esc(r["player"])}</b></td>'
+        f'<td class="num"><b>{r["rating"]}</b></td>'
+        f'<td class="num">{r["games"]}</td>'
+        f'<td class="num">{r["winrate"]}%</td></tr>'
+        for n, r in enumerate(rows, start=1)
+    )
+    return f'''
+      <div class="muted small" style="margin:18px 0 8px;">Top champions across everyone</div>
+      <table class="matches-table">
+        <thead><tr><th class="num">#</th><th>Champion</th><th>Player</th>
+        <th class="num">Rating</th><th class="num">Games</th>
+        <th class="num">Winrate</th></tr></thead>
+        <tbody>{body}</tbody>
+      </table>'''
+
 
 BRAND_ACCENT = ("#4c8dff", "#17d3c1")
 
@@ -4578,16 +5074,9 @@ def build_html(data):
     )
 
     awards = compute_awards(friends_sorted, now)
-    awards_panel = ""
-    if awards:
-        awards_html = "".join(render_award(a) for a in awards)
-        awards_panel = f'''
-    <div class="panel">
-      <h2 style="margin-bottom:14px;">Highlights</h2>
-      <div class="awards">{awards_html}</div>
-    </div>'''
-
+    awards_panel = render_season_highlights_panel(friends_sorted, now)
     week_glance_panel = render_week_glance_panel(friends_sorted, awards, rank_history, now)
+    group_top_html = render_group_top_champions(friends_sorted)
     duo_synergy_panel = render_duo_synergy_panel(friends_sorted)
 
     notes_html, notes_latest = render_patch_notes(load_patch_notes())
@@ -5445,6 +5934,7 @@ def build_html(data):
   .duo-detail-names {{ font-weight: 700; font-size: 14px; margin-bottom: 6px; }}
   .duo-detail-line {{ font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }}
   .duo-thin {{ color: var(--critical); opacity: .8; font-weight: 600; }}
+  .duo-cards {{ margin: 4px 0 16px; }}
   .duo-carry-key {{ display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }}
   .duo-carry-key i {{
     width: 0; height: 0; display: inline-block;
@@ -6066,6 +6556,7 @@ def build_html(data):
         </div>
         <div class="muted small" style="margin:16px 0 8px;">Across everyone</div>
         {group_stats}
+        {group_top_html}
       </div>
 
       {week_glance_panel}
