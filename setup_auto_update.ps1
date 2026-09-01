@@ -40,9 +40,20 @@ switch ($choice) {
     default { $sched = @("/SC", "HOURLY", "/MO", "1", "/ST", "00:00");  $label = "every hour, on the hour" }
 }
 
+# Started through run_hidden.vbs rather than powershell.exe directly. A task
+# that launches PowerShell draws a console on the logged-in desktop every time
+# it fires, and -WindowStyle Hidden does not help: the console exists before
+# PowerShell reads its arguments, so it still flashes up. WScript with a window
+# style of 0 never creates one. The output goes to auto_update.log instead.
+$launcher = Join-Path $folder "run_hidden.vbs"
+if (-not (Test-Path $launcher)) {
+    Write-Host "Could not find run_hidden.vbs in $folder" -ForegroundColor Red
+    exit 1
+}
+
 # The inner quotes have to survive schtasks parsing the whole thing as one
 # command line, which is why the path is wrapped in escaped quotes.
-$run = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \`"$script\`""
+$run = "wscript.exe \`"$launcher\`""
 
 schtasks /Create /TN $taskName /TR $run @sched /F | Out-Null
 
@@ -62,6 +73,7 @@ Write-Host ""
 Write-Host "Done. '$taskName' will run $label." -ForegroundColor Green
 Write-Host "Verified: the task exists and is $($task.State)."
 Write-Host "Each run fetches, rebuilds and publishes, so the live site moves on its own."
+Write-Host "It runs with no window. Read $(Join-Path $folder 'auto_update.log') to see how a run went."
 Write-Host ""
 Write-Host "One thing will stop it: a free Riot development key expires 24 hours" -ForegroundColor Yellow
 Write-Host "after it is issued, so an unattended schedule fails every day until the" -ForegroundColor Yellow
