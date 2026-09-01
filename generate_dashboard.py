@@ -63,11 +63,13 @@ FRIEND_PALETTE = [
     {"light": "#0e8ea6", "dark": "#2ec4de"},  # cyan
     {"light": "#b83a68", "dark": "#e0699a"},  # pink
     {"light": "#2a78d6", "dark": "#3987e5"},  # blue
-    {"light": "#b35c17", "dark": "#f08a2e"},  # orange
+    # Slot 3 sits next to slot 4 in every legend, so it cannot be orange while
+    # slot 4 is copper: the two read as the same colour at a glance.
+    {"light": "#4f7a95", "dark": "#8bb0c9"},  # steel
     {"light": "#96522a", "dark": "#c4753c"},  # copper
     {"light": "#5a49b8", "dark": "#9085e9"},  # violet
     {"light": "#8a4fb0", "dark": "#b884d8"},  # orchid
-    {"light": "#4f7a95", "dark": "#8bb0c9"},  # steel
+    {"light": "#b35c17", "dark": "#f08a2e"},  # orange
 ]
 
 
