@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-09-01",
+    "title": "Publishing on the hour, and two-colour duo cards",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The scheduled publish now runs on the hour rather than on whatever minute the task happened to be created. Every run fetches from Riot, rebuilds and deploys, so the whole page is at most an hour old, cards and totals included."
+      },
+      {
+        "type": "fixed",
+        "text": "The tier bands were missing from the Rank progress chart. The two charts do not plot the same scale: the LP chart plots ladder position, four divisions of a hundred LP, while this one plots a tier score of a thousand a tier. The bands were being drawn on the LP chart's scale and landed nowhere near the right ranks."
+      },
+      {
+        "type": "improved",
+        "text": "The duo cards sit below the grid, and each one carries both players' colours: the first named at the top, the second at the bottom, blended through the middle."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-01",
     "title": "Rory is steel blue",
     "items": [
       {

@@ -1922,14 +1922,20 @@ def project_scores(start, n, p_win, gain, drop, seed):
 TIER_BAND_ALPHA = 9   # percent of the tier colour mixed into the plot
 
 
-def tier_bands(y_min, y_max, x0, x1, to_y):
+def tier_bands(y_min, y_max, x0, x1, to_y, span=None):
     """A wash of each tier's own colour behind the plot.
 
     A grid of identical lines says where a division is but not which one, so
     reading a chart meant tracking back to the axis. A band per tier gives the
     plot a background that is already the answer.
+
+    `span` is how much of the y axis one tier covers, and the two charts do
+    not agree on it: the LP chart plots ladder position, four divisions of a
+    hundred LP, while the daily chart plots tier_score, which is a thousand a
+    tier. Assuming the first put the daily chart's bands in the wrong places
+    entirely.
     """
-    span = DIVISIONS_PER_TIER * LP_PER_DIVISION
+    span = span or (DIVISIONS_PER_TIER * LP_PER_DIVISION)
     out = []
     first = int(y_min // span)
     last = int(y_max // span)
@@ -2594,8 +2600,10 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
 
     label_groups = []
 
+    # tier_score() is 1000 a tier, not the 400 the LP chart works in.
     bands_svg = tier_bands(y_min, y_max, PAD_L, W - PAD_R,
-                           lambda v: xy(start_date.strftime("%Y-%m-%d"), v)[1])
+                           lambda v: xy(start_date.strftime("%Y-%m-%d"), v)[1],
+                           span=1000)
     grid_svg = "".join(
         f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
         f'<text x="{PAD_L - 8}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
@@ -3655,7 +3663,6 @@ def render_duo_synergy_panel(friends):
           <span>better</span>
         </div>
       </div>
-      <div class="awards duo-cards">{render_award_tiles(duo_cards(friends, rows, datetime.now()), friends)}</div>
       <div class="duo-matrix-wrap">
         <table class="duo-matrix">
           <thead><tr><td></td>{head}</tr></thead>
@@ -3663,6 +3670,7 @@ def render_duo_synergy_panel(friends):
         </table>
       </div>
       <div class="duo-highlights" data-duo-highlights></div>
+      <div class="awards duo-cards">{render_award_tiles(duo_cards(friends, rows, datetime.now()), friends)}</div>
       {coverage_note}
       <div class="duo-detail" data-duo-detail hidden></div>
       <details class="matches-details duo-table-details" style="margin-top:12px;">
@@ -3902,12 +3910,33 @@ def render_week_glance_panel(friends_sorted, awards, rank_history, now):
 
 
 def render_award_tiles(tiles, friends_sorted):
-    """Award cards, each striped in the colour of whoever it names."""
+    """Award cards, each striped in the colour of whoever it names.
+
+    A card about two people gets both: the first named at the top, the second
+    at the bottom, blended through the middle. Longest name first so "Shas2nd"
+    is not read as "Shas", and each match is masked out of the text so the
+    shorter name cannot then match inside it.
+    """
     labels = sorted((f["label"] for f in friends_sorted), key=len, reverse=True)
 
+    def named_in(text):
+        masked, found = text, []
+        for l in labels:
+            i = masked.find(l)
+            if i >= 0:
+                found.append((i, l))
+                masked = masked[:i] + ("\x00" * len(l)) + masked[i + len(l):]
+        return [l for _i, l in sorted(found)]
+
     def style(text):
-        who = next((l for l in labels if l in text), None)
-        return f' style="--award-colour: var({friend_colour(who)});"' if who else ""
+        who = named_in(text)
+        if not who:
+            return ""
+        if len(who) == 1:
+            return f' style="--award-colour: var({friend_colour(who[0])});"'
+        a, b = friend_colour(who[0]), friend_colour(who[1])
+        return (f' style="--award-colour: linear-gradient(180deg, var({a}) 0%, '
+                f'var({a}) 20%, var({b}) 80%, var({b}) 100%);"')
 
     return "".join(
         f'<div class="award"{style(text)}><div class="award-icon">{icon}</div><div>'

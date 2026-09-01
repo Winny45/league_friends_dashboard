@@ -31,11 +31,13 @@ if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "2" }
 # schtasks.exe rather than Register-ScheduledTask. The cmdlet needs an explicit
 # repetition duration and rejects the usual "forever" value as out of range,
 # where /SC MINUTE and /SC HOURLY repeat indefinitely by definition.
+# /ST anchors the repetition, so setting it to a whole hour lands every run on
+# the hour rather than on whatever minute the task happened to be created.
 switch ($choice) {
-    "1"     { $sched = @("/SC", "MINUTE", "/MO", "30"); $label = "every 30 minutes" }
-    "3"     { $sched = @("/SC", "HOURLY", "/MO", "3");  $label = "every 3 hours" }
-    "4"     { $sched = @("/SC", "DAILY", "/ST", "09:00"); $label = "once a day at 09:00" }
-    default { $sched = @("/SC", "HOURLY", "/MO", "1");  $label = "every hour" }
+    "1"     { $sched = @("/SC", "MINUTE", "/MO", "30", "/ST", "00:00"); $label = "every 30 minutes, on the hour and the half hour" }
+    "3"     { $sched = @("/SC", "HOURLY", "/MO", "3", "/ST", "00:00");  $label = "every 3 hours, on the hour" }
+    "4"     { $sched = @("/SC", "DAILY", "/ST", "09:00");               $label = "once a day at 09:00" }
+    default { $sched = @("/SC", "HOURLY", "/MO", "1", "/ST", "00:00");  $label = "every hour, on the hour" }
 }
 
 # The inner quotes have to survive schtasks parsing the whole thing as one
