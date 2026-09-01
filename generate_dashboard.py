@@ -57,14 +57,17 @@ FRIEND_PALETTE = [
     # everywhere else on the page, so a player whose identity colour was green
     # sat in a table row beside a green "+22 LP" and the colour stopped saying
     # which of the two it meant.
-    {"light": "#2a78d6", "dark": "#3987e5"},  # blue
-    {"light": "#a8730a", "dark": "#e0a030"},  # amber
+    #
+    # Assigned by the order friends appear in config.json, not by rank, so a
+    # player keeps their colour when the ladder moves under them.
     {"light": "#0e8ea6", "dark": "#2ec4de"},  # cyan
     {"light": "#b83a68", "dark": "#e0699a"},  # pink
-    {"light": "#5a49b8", "dark": "#9085e9"},  # violet
+    {"light": "#2a78d6", "dark": "#3987e5"},  # blue
+    {"light": "#b35c17", "dark": "#f08a2e"},  # orange
     {"light": "#96522a", "dark": "#c4753c"},  # copper
-    {"light": "#4f7a95", "dark": "#8bb0c9"},  # steel
+    {"light": "#5a49b8", "dark": "#9085e9"},  # violet
     {"light": "#8a4fb0", "dark": "#b884d8"},  # orchid
+    {"light": "#4f7a95", "dark": "#8bb0c9"},  # steel
 ]
 
 
@@ -184,6 +187,23 @@ def set_icon_context(version, icon_map):
     _ICON_CTX["map"] = icon_map or {}
     _ICON_CTX["slugs"] = set((icon_map or {}).values())
     _ICON_CTX["fold"] = {v.lower(): v for v in (icon_map or {}).values()}
+    # Match data reports Data Dragon's key, so the page was printing
+    # "MissFortune", "TahmKench" and "KSante". The icon map is keyed by the
+    # real name, so inverting it gives the spelling a person would write.
+    _ICON_CTX["display"] = {v: k for k, v in (icon_map or {}).items()}
+    _ICON_CTX["displayFold"] = {v.lower(): k for k, v in (icon_map or {}).items()}
+
+
+def champion_display(champion_name):
+    """The champion's own name, from whatever the match data called it."""
+    if not champion_name:
+        return champion_name
+    ctx = _ICON_CTX
+    if champion_name in ctx.get("map", {}):
+        return champion_name
+    return (ctx.get("display", {}).get(champion_name)
+            or ctx.get("displayFold", {}).get(champion_name.lower())
+            or champion_name)
 
 
 def champion_icon_url(champion_name):
@@ -312,9 +332,18 @@ def mark_legacy_remakes(friends):
     return fixed
 
 
-def set_duo_context(friends_sorted):
+def set_duo_context(friends_sorted, colour_order=None):
+    """Duo lookups, and the one place a player's colour is decided.
+
+    `colour_order` is the stable order colours are handed out in · the order
+    the friends are listed in config.json. Handing them out by rank meant a
+    promotion swapped two people's colours on every chart, table and tint.
+    """
+    order = colour_order or [f["label"] for f in friends_sorted]
+    slot = {label: i for i, label in enumerate(order)}
     by_match = {}
-    for i, f in enumerate(friends_sorted):
+    for f in friends_sorted:
+        i = slot.get(f["label"], len(order))
         var = friend_var(min(i, len(FRIEND_PALETTE) - 1))
         for m in f.get("seasonMatches", []):
             if m.get("remake"):
@@ -431,9 +460,13 @@ def render_avatar(friend, size=34):
     if not url:
         return (f'<span class="avatar avatar-fallback" style="width:{size}px;height:{size}px;"'
                 f' aria-hidden="true">{initial}</span>')
-    return (f'<img class="avatar" src="{esc(url)}" alt="" width="{size}" height="{size}" '
-            f'loading="lazy" title="{esc(champ)}" '
-            f'onerror="this.classList.add(&#39;broken&#39;)">')
+    # The picture is scaled past its frame and the frame clips it, so the
+    # border Data Dragon draws inside every champion square is cropped away
+    # rather than sitting there looking like a square in a circle.
+    return (f'<span class="avatar-wrap" style="width:{size}px;height:{size}px;">'
+            f'<img class="avatar" src="{esc(url)}" alt="" '
+            f'loading="lazy" title="{esc(champion_display(champ))}" '
+            f'onerror="this.classList.add(&#39;broken&#39;)"></span>')
 
 
 def champion_splash_url(champion_name):
@@ -575,20 +608,23 @@ QUEUE_COLUMNS = (("Ranked Solo/Duo", "solo"), ("Ranked Flex", "flex"), ("Ranked 
 
 
 def champion_breakdown(season_matches):
-    """Per-champion games/wins/winrate for one friend's season, most-played
+    """Per-champion games/wins/winrate/KDA for one friend's season, most-played
     first, split by queue so a total can be checked against a site that counts
     a different set of queues."""
     stats = {}
     for m in season_matches:
-        s = stats.setdefault(m["champion"], {"games": 0, "wins": 0, "solo": 0, "flex": 0, "fives": 0})
+        s = stats.setdefault(m["champion"],
+                             {"games": 0, "wins": 0, "solo": 0, "flex": 0, "fives": 0, "kdaSum": 0.0})
         s["games"] += 1
+        s["kdaSum"] += match_kda(m)
         if m["win"]:
             s["wins"] += 1
         for name, key in QUEUE_COLUMNS:
             if m.get("queue") == name:
                 s[key] += 1
     rows = [
-        dict(s, champion=c, winrate=round(100 * s["wins"] / s["games"], 1))
+        dict(s, champion=c, winrate=round(100 * s["wins"] / s["games"], 1),
+             kda=round(s["kdaSum"] / s["games"], 2))
         for c, s in stats.items()
     ]
     rows.sort(key=lambda r: (-r["games"], -r["winrate"]))
@@ -771,7 +807,7 @@ def winrate_bar(pct, color):
 def render_match_dot(m):
     cls = "win" if m["win"] else "loss"
     when = format_match_when(m)
-    title = f"{when} · {m['champion']} · {'Win' if m['win'] else 'Loss'} · {m['kills']}/{m['deaths']}/{m['assists']} KDA {m['kda']}"
+    title = f"{when} · {champion_display(m['champion'])} · {'Win' if m['win'] else 'Loss'} · {m['kills']}/{m['deaths']}/{m['assists']} KDA {m['kda']}"
     return f'<span class="dot {cls}" title="{esc(title)}"></span>'
 
 
@@ -802,7 +838,7 @@ def render_match_row(m, friend_label=""):
     return f'''<tr{row_attrs}>
       <td class="muted small">{esc(format_match_when(m))}</td>
       <td><span class="tag {cls}">{label}</span></td>
-      <td class="champ-cell"><span class="cc">{render_champion_icon(m["champion"])}{esc(m["champion"])}</span></td>
+      <td class="champ-cell"><span class="cc">{render_champion_icon(m["champion"])}{esc(champion_display(m["champion"]))}</span></td>
       <td class="with-cell">{render_duo_mates(m.get("matchId"), friend_label)}</td>
       <td class="num">{esc(m["kills"])}/{esc(m["deaths"])}/{esc(m["assists"])}</td>
       <td class="num">{esc(m["kda"])}</td>
@@ -842,19 +878,20 @@ def render_champion_breakdown(rows):
         return '<div class="muted small">No ranked games this season.</div>'
     body = "".join(
         f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"])}'
-        f'{esc(r["champion"])}</span></td>'
+        f'{esc(champion_display(r["champion"]))}</span></td>'
         f'<td class="num">{r["games"]}</td>'
         f'<td class="num muted">{r["solo"] or "&ndash;"}</td>'
         f'<td class="num muted">{r["flex"] or "&ndash;"}</td>'
         f'<td class="num muted">{r["fives"] or "&ndash;"}</td>'
         f'<td class="num">{r["wins"]}W {r["games"] - r["wins"]}L</td>'
-        f'<td class="num">{r["winrate"]}%</td></tr>'
+        f'<td class="num">{r["winrate"]}%</td>'
+        f'<td class="num muted">{r["kda"]}</td></tr>'
         for r in rows
     )
     return f'''<table class="matches-table">
       <thead><tr><th>Champion</th><th class="num">Games</th><th class="num">Solo</th>
       <th class="num">Flex</th><th class="num">5s</th><th class="num">Record</th>
-      <th class="num">Winrate</th></tr></thead>
+      <th class="num">Winrate</th><th class="num">KDA</th></tr></thead>
       <tbody>{body}</tbody>
     </table>'''
 
@@ -881,6 +918,7 @@ def render_role_breakdown(rows):
 
 MATCHUP_MIN_GAMES = 5
 CARRY_MIN_PX, CARRY_MAX_PX = 5.0, 13.0   # corner mark, smallest to widest gap
+CARRY_MIN_GAP = 0.25                     # KDA difference below this is not a carry
 # A champion somebody plays more than this often is not a counter pick, it is
 # their champion: they were on it before the enemy locked in.
 COUNTER_MAX_PICK_RATE = 10.0
@@ -892,6 +930,7 @@ COUNTER_MIN_WINRATE = 60.0
 # result the rating exists to avoid.
 TOP_CHAMPION_PRIOR = 15
 TOP_CHAMPION_VOLUME = 16.0  # most a champion can gain from being played a lot
+TOP_CHAMPION_KDA = 6.0      # most it can gain or lose on KDA against their own average
 COUNTER_DISCOUNT = 0.5      # share of a counter pick's lift that is not credited
 
 
@@ -1013,6 +1052,10 @@ def top_champions(season_matches, matchups, limit=5):
         kda_total[m["champion"]] = kda_total.get(m["champion"], 0.0) + match_kda(m)
         kda_count[m["champion"]] = kda_count.get(m["champion"], 0) + 1
 
+    # The account's own KDA, so a champion is judged against how this player
+    # normally does rather than against an absolute.
+    own_kda = (sum(kda_total.values()) / sum(kda_count.values())) if kda_count else 0.0
+
     out = []
     for r in rows:
         games, wr = r["games"], r["winrate"]
@@ -1020,13 +1063,22 @@ def top_champions(season_matches, matchups, limit=5):
         counter_share = min(counter_games.get(r["champion"], 0) / games, 1.0)
         lift = (wr - base) * confidence * (1 - COUNTER_DISCOUNT * counter_share)
         volume = TOP_CHAMPION_VOLUME * math.log1p(games) / math.log1p(max_games)
+        champ_kda = kda_total[r["champion"]] / kda_count[r["champion"]]
+        # A champion they play better than they play in general is worth more
+        # than one they merely win on. Shrunk by the same confidence as the
+        # winrate lift, and capped so it can nudge an order rather than set it.
+        kda_edge = 0.0
+        if own_kda > 0:
+            ratio = (champ_kda - own_kda) / own_kda
+            kda_edge = max(-1.0, min(1.0, ratio)) * TOP_CHAMPION_KDA * confidence
         out.append(dict(
             r,
-            rating=round(base + lift + volume, 1),
+            rating=round(base + lift + volume + kda_edge, 1),
             lift=round(lift, 1),
             volume=round(volume, 1),
+            kdaEdge=round(kda_edge, 1),
             counterShare=round(counter_share, 2),
-            kda=round(kda_total[r["champion"]] / kda_count[r["champion"]], 2),
+            kda=round(champ_kda, 2),
         ))
     # A single game says nothing at all, and letting one through pushes out a
     # champion that has something to say. Only enforced while there is enough
@@ -1178,7 +1230,7 @@ def render_mastery_table(mastery):
         return '<div class="muted small">No mastery data.</div>'
     body = "".join(
         f'<tr><td class="champ-cell"><span class="cc">'
-        f'{render_champion_icon(m["championName"], size=20)}{esc(m["championName"])}</span></td>'
+        f'{render_champion_icon(m["championName"], size=20)}{esc(champion_display(m["championName"]))}</span></td>'
         f'<td class="num">{m["points"]:,}</td>'
         f'<td class="num muted">M{esc(m["level"])}</td></tr>'
         for m in mastery
@@ -1298,7 +1350,7 @@ def render_top_champions(rows):
     body = "".join(
         f'<tr><td class="num muted small">{n}</td>'
         f'<td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=20)}'
-        f'{esc(r["champion"])}</span></td>'
+        f'{esc(champion_display(r["champion"]))}</span></td>'
         f'<td class="num"><b>{r["rating"]}</b></td>'
         f'<td class="num">{r["games"]}</td>'
         f'<td class="num">{r["winrate"]}%</td>'
@@ -1319,8 +1371,8 @@ def render_matchups(rows, covered, total):
         return (f'<div class="muted small">Nothing yet with {MATCHUP_MIN_GAMES} or more games. '
                 f'Lane opponents are recorded on {covered} of {total} games.</div>')
     body = "".join(
-        f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=20)}{esc(r["champion"])}'
-        f'<span class="muted"> vs </span>{render_champion_icon(r["opponent"], size=20)}{esc(r["opponent"])}'
+        f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(r["champion"], size=20)}{esc(champion_display(r["champion"]))}'
+        f'<span class="muted"> vs </span>{render_champion_icon(r["opponent"], size=20)}{esc(champion_display(r["opponent"]))}'
         f'{" <span class=\'counter-tag\'>counter pick</span>" if r["counter"] else ""}</span></td>'
         f'<td class="num">{r["games"]}</td>'
         f'<td class="num muted">{r["wins"]}W {r["losses"]}L</td>'
@@ -1756,7 +1808,9 @@ def lp_step_label(prev_value, value, delta, exact):
     League Points themselves reset. Saying only "promoted" left out the one
     number the column exists to show.
     """
-    amount = f"{'+' if delta >= 0 else '−'}{abs(delta):.0f} LP{'' if exact else ' (est.)'}"
+    # Every step between two snapshots is reconstructed, so tagging almost all
+    # of them "(est.)" said nothing and cluttered the column.
+    amount = f"{'+' if delta >= 0 else '−'}{abs(delta):.0f} LP"
     if ladder_decompose(prev_value)[:2] != ladder_decompose(value)[:2]:
         return f"{'Promoted' if delta >= 0 else 'Demoted'} {amount}"
     return amount
@@ -1861,6 +1915,36 @@ def project_scores(start, n, p_win, gain, drop, seed):
         score = max(score, 0.0)
         out.append(score)
     return out
+
+
+TIER_BAND_ALPHA = 9   # percent of the tier colour mixed into the plot
+
+
+def tier_bands(y_min, y_max, x0, x1, to_y):
+    """A wash of each tier's own colour behind the plot.
+
+    A grid of identical lines says where a division is but not which one, so
+    reading a chart meant tracking back to the axis. A band per tier gives the
+    plot a background that is already the answer.
+    """
+    span = DIVISIONS_PER_TIER * LP_PER_DIVISION
+    out = []
+    first = int(y_min // span)
+    last = int(y_max // span)
+    for ti in range(max(first, 0), last + 1):
+        if ti >= len(TIER_ORDER):
+            break
+        lo = max(ti * span, y_min)
+        hi = min((ti + 1) * span, y_max)
+        if hi <= lo:
+            continue
+        top, bottom = to_y(hi), to_y(lo)
+        out.append(
+            f'<rect class="tier-band" x="{x0:.1f}" y="{top:.1f}" width="{x1 - x0:.1f}" '
+            f'height="{bottom - top:.1f}" fill="color-mix(in srgb, '
+            f'var({tier_var(TIER_ORDER[ti])}) {TIER_BAND_ALPHA}%, transparent)" />'
+        )
+    return "".join(out)
 
 
 def render_chart_stats(standings):
@@ -2045,7 +2129,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
 
         series_groups, label_entries = [], []
         for i, f in enumerate(chart_friends):
-            var = friend_var(i)
+            var = friend_colour(f["label"])
             tl = view[f["label"]]
             coords = [xy(p["idx"], p["score"]) for p in tl]
             parts = []
@@ -2058,7 +2142,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                 m = p["match"]
                 if m:
                     move = lp_step_label(p["prevScore"], p["score"], p["delta"], p["exact"])
-                    title = (f"{f['label']} · game {p.get('origIdx', p['idx'])} · {'Win' if m['win'] else 'Loss'} on {m['champion']} · "
+                    title = (f"{f['label']} · game {p.get('origIdx', p['idx'])} · {'Win' if m['win'] else 'Loss'} on {champion_display(m['champion'])} · "
                              f"{move} → {score_to_rank_label(p['score'])}").replace("&middot;", "·")
                 else:
                     title = (f"{f['label']} · tracking started · "
@@ -2126,6 +2210,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         # Tier boundaries carry weight; the divisions between them are
         # reference, not structure. Drawing all of them at the same strength
         # put ten equal lines behind the data.
+        bands_svg = tier_bands(y_min, y_max, PAD_L, W - PAD_R, lambda v: xy(0, v)[1])
         grid_svg = "".join(
             f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" '
             f'class="chart-grid{"" if tier else " faint"}" />'
@@ -2140,7 +2225,8 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         cls = "rank-chart chart-compact" if compact else "rank-chart chart-wide"
         return (f'<svg viewBox="0 0 {W} {H}" class="{cls}" role="img" '
                 f'aria-label="Ranked Solo/Duo LP game by game">'
-                f'{grid_svg}{xticks_svg}{"".join(series_groups)}{"".join(label_groups)}</svg>')
+                f'{bands_svg}{grid_svg}{xticks_svg}'
+                f'{"".join(series_groups)}{"".join(label_groups)}</svg>')
 
     # Per-friend summary text, computed once and shared by both renders.
     net_labels, tiers = [], []
@@ -2173,7 +2259,8 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         # which is a different question from which line is whose. The key
         # beside the plot answers that one and carries nothing else, so its
         # rows can be spaced evenly instead of sized by their longest text.
-        standings.append({"var": friend_var(i), "label": f["label"], "tier": hist[-1].get("tier"),
+        standings.append({"var": friend_colour(f["label"]), "label": f["label"],
+                          "tier": hist[-1].get("tier"),
                           "rankLabel": rank_label(hist[-1]), "games": games,
                           "lp": net_lp, "winrate": round(100 * wins / games) if games else 0,
                           "record": record})
@@ -2182,8 +2269,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             # full and zoomed views. Absent ids are skipped harmlessly, so this
             # stays correct whether or not the zoom variant was built.
             f'<span class="legend-item" data-chart="lp lpm lpt lpmt" data-idx="{i}">'
-            f'<span class="sw" style="background:var({friend_var(i)})"></span>'
-            f'<span class="legend-name" style="color:var({friend_var(i)});">{esc(f["label"])}</span>'
+            f'<span class="sw" style="background:var({friend_colour(f["label"])})"></span>'
+            f'<span class="legend-name" style="color:var({friend_colour(f["label"])});">'
+            f'{esc(f["label"])}</span>'
             f'</span>'
         )
 
@@ -2253,6 +2341,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         "lpPerDivision": LP_PER_DIVISION,
         "divisionsPerTier": DIVISIONS_PER_TIER,
         "nominalLp": NOMINAL_LP,
+        "tierBandAlpha": TIER_BAND_ALPHA,
         "tailGames": TAIL_GAMES,
         "rankIconBase": RANK_ICON_BASE,
         "friends": [
@@ -2279,8 +2368,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         # every other match resolves to "no mates" without being named.
         "champIcons": _ICON_CTX["map"],
         "ddragonVersion": _ICON_CTX["version"],
-        "varByLabel": {f["label"]: friend_var(min(i, len(FRIEND_PALETTE) - 1))
-                       for i, f in enumerate(friends_sorted)},
+        "varByLabel": {f["label"]: friend_colour(f["label"]) for f in friends_sorted},
         "duoSides": duo_sides,
     }, ensure_ascii=False)
 
@@ -2292,7 +2380,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     # rows of somebody else's season.
     lp_events = sorted(
         (
-            {"label": f["label"], "var": friend_var(i), "idx": p["idx"], "point": p,
+            {"label": f["label"], "var": friend_colour(f["label"]), "idx": p["idx"], "point": p,
              "prevScore": tl[n - 1]["score"], "match": p["match"],
              "when": p["match"].get("gameStartMs") or 0}
             for i, f in enumerate(chart_friends)
@@ -2338,7 +2426,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b>'
             f'<span class="muted small"> &middot; game {esc(e["idx"])}</span></td>'
             f'<td><span class="tag {"win" if m["win"] else "loss"}">{"W" if m["win"] else "L"}</span></td>'
-            f'<td class="champ-cell"><span class="cc">{render_champion_icon(m["champion"], size=18)}{esc(m["champion"])}</span></td>'
+            f'<td class="champ-cell"><span class="cc">{render_champion_icon(m["champion"], size=18)}{esc(champion_display(m["champion"]))}</span></td>'
             f'<td class="with-cell">{render_duo_mates(m.get("matchId"), e["label"])}</td>'
             f'<td class="num lp-move {move_cls}">{esc(move)}</td>'
             f'<td class="num nowrap">{score_to_rank_label(p["score"])}</td>'
@@ -2462,7 +2550,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
     series_groups, legend_items, standings = [], [], []
     label_entries = []  # end-of-line labels, positioned after a declutter pass below
     for i, f in enumerate(chart_friends):
-        var = friend_var(i)
+        var = friend_colour(f["label"])
         pts = solo_history_by_label[f["label"]]
         coords = [
             xy(h["date"], tier_score({"tier": h["tier"], "rank": h.get("rank"), "leaguePoints": h.get("leaguePoints")}))
@@ -2504,6 +2592,8 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
 
     label_groups = []
 
+    bands_svg = tier_bands(y_min, y_max, PAD_L, W - PAD_R,
+                           lambda v: xy(start_date.strftime("%Y-%m-%d"), v)[1])
     grid_svg = "".join(
         f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
         f'<text x="{PAD_L - 8}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
@@ -2529,7 +2619,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
             if not change:
                 continue
             daily_events.append({"date": h["date"], "label": f["label"],
-                                 "var": friend_var(i), "h": h, "change": change})
+                                 "var": friend_colour(f["label"]), "h": h, "change": change})
     daily_events.sort(key=lambda e: e["date"], reverse=True)
 
     table_rows = "".join(
@@ -2580,6 +2670,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
       <div class="chart-row">
         <div class="chart-plot">
           <svg viewBox="0 0 {W} {H}" class="rank-chart chart-wide" role="img" aria-label="Ranked Solo/Duo standing over the last {header_days} days">
+            {bands_svg}
             {grid_svg}
             {xticks_svg}
             {"".join(series_groups)}
@@ -3044,7 +3135,7 @@ def render_duo_synergy_panel(friends):
             f'data-total-base="{b["baseline"] if b["baseline"] is not None else ""}"')
 
     head = "".join(
-        f'<th scope="col"><span style="color:var({friend_var(min(idx[x], len(FRIEND_PALETTE) - 1))});">'
+        f'<th scope="col"><span style="color:var({friend_colour(x)});">'
         f'{esc(x)}</span></th>' for x in players
     )
 
@@ -3082,7 +3173,7 @@ def render_duo_synergy_panel(friends):
             # of names to cross-reference.
             b = boost_by_pair.get(tuple(sorted([a, b])))
             carry = ""
-            if b and b["booster"] == a:
+            if b and b["booster"] == a and b["gap"] >= CARRY_MIN_GAP:
                 # Sized by how far ahead they are, against the widest gap in
                 # the group, so the marks rank as well as flag. A floor keeps
                 # the smallest one visible.
@@ -3096,7 +3187,7 @@ def render_duo_synergy_panel(friends):
                 f'<td class="duo-cell{" duo-carry" if carry else ""}" tabindex="0" role="button" '
                 f'data-a="{esc(r["a"])}" data-b="{esc(r["b"])}"{carry} {qattrs("", r)}>'
                 f'<span class="cell-wr"></span><span class="cell-g"></span></td>')
-        colour = friend_var(min(idx[a], len(FRIEND_PALETTE) - 1))
+        colour = friend_colour(a)
         body.append(f'<tr><th scope="row"><span style="color:var({colour});">{esc(a)}</span></th>'
                     f'{"".join(cells)}</tr>')
 
@@ -3627,6 +3718,11 @@ window.LpChart = (function () {
 
   var D = null;
 
+  // One place a player's colour is decided, matching friend_colour() on the
+  // server. Also lent to the live-refresh block so a row it adds is tinted
+  // with exactly the blend the server would have used.
+  function colourFor(label) { return (D && D.varByLabel && D.varByLabel[label]) || '--accent'; }
+
   function esc(s) {
     // Matches Python's html.escape(quote=True), including &#x27; for an
     // apostrophe, so the two renderers produce identical bytes.
@@ -3699,7 +3795,7 @@ window.LpChart = (function () {
     // delta is ladder position, linear at 100 LP per division, so it is a
     // real LP count across a promotion. See lp_step_label().
     var amount = (delta >= 0 ? '+' : '\u2212') + fixed(Math.abs(delta), 0) + ' LP' +
-                 (exact ? '' : ' (est.)');
+                 '';
     var a = ladderDecompose(prevValue), b = ladderDecompose(value);
     if (a[0] !== b[0] || a[1] !== b[1]) {
       return (delta >= 0 ? 'Promoted ' : 'Demoted ') + amount;
@@ -3844,6 +3940,26 @@ window.LpChart = (function () {
            h12 + ':' + ('0' + d.getMinutes()).slice(-2) + ' ' + (h >= 12 ? 'PM' : 'AM');
   }
 
+  // Match data reports Data Dragon's key, so "Nunu" is really "Nunu &
+  // Willump" and "MissFortune" is "Miss Fortune". The icon map is keyed by
+  // the real name, so inverting it gives the spelling a person would write.
+  // Port of champion_display(); the server prints the same, and verifySelf()
+  // is what noticed when it did not.
+  var _DISPLAY = null;
+  function champDisplay(name) {
+    if (!name) return name;
+    var icons = D.champIcons || {};
+    if (Object.prototype.hasOwnProperty.call(icons, name)) return name;
+    if (!_DISPLAY) {
+      _DISPLAY = { exact: {}, fold: {} };
+      for (var k in icons) {
+        _DISPLAY.exact[icons[k]] = k;
+        _DISPLAY.fold[String(icons[k]).toLowerCase()] = k;
+      }
+    }
+    return _DISPLAY.exact[name] || _DISPLAY.fold[String(name).toLowerCase()] || name;
+  }
+
   // Same fallbacks as champion_icon_url(): the map is keyed by display name,
   // match data reports the Data Dragon key, and Riot's own casing differs
   // between the two for at least one champion.
@@ -3900,7 +4016,7 @@ window.LpChart = (function () {
       var tl = state.timelines[f.label];
       tl.forEach(function (pt, n) {
         if (!pt.match) return;
-        events.push({ label: f.label, varName: '--series-f' + i, idx: pt.idx, point: pt,
+        events.push({ label: f.label, varName: colourFor(f.label), idx: pt.idx, point: pt,
                       prevScore: tl[n - 1].score, match: pt.match,
                       when: pt.match.gameStartMs || 0 });
       });
@@ -3950,7 +4066,7 @@ window.LpChart = (function () {
         '<td><span class="tag ' + (m.win ? 'win' : 'loss') + '">' + (m.win ? 'W' : 'L') +
         '</span></td>' +
         '<td class="champ-cell"><span class="cc">' + champIconLp(m.champion, 18) +
-        esc(m.champion) + '</span></td>' +
+        esc(champDisplay(m.champion)) + '</span></td>' +
         '<td class="with-cell">' + withCell + '</td>' +
         '<td class="num lp-move ' + moveCls + '">' + esc(move) + '</td>' +
         '<td class="num nowrap">' + scoreToRankLabel(pt.score) + '</td></tr>';
@@ -4049,7 +4165,7 @@ window.LpChart = (function () {
 
     var seriesGroups = [], labelEntries = [];
     friends.forEach(function (f, fi) {
-      var varName = '--series-f' + fi;
+      var varName = colourFor(f.label);
       var tl = view[f.label];
       var coords = tl.map(function (p) { return xy(p.idx, p.score); });
       var parts = [];
@@ -4063,7 +4179,8 @@ window.LpChart = (function () {
         if (m) {
           var move = lpStepLabel(p.prevScore, p.score, p.delta, p.exact);
           title = (f.label + ' \u00b7 game ' + (p.origIdx === undefined ? p.idx : p.origIdx) +
-                   ' \u00b7 ' + (m.win ? 'Win' : 'Loss') + ' on ' + m.champion + ' \u00b7 ' +
+                   ' \u00b7 ' + (m.win ? 'Win' : 'Loss') + ' on ' + champDisplay(m.champion) +
+                   ' \u00b7 ' +
                    move + ' \u2192 ' + scoreToRankLabel(p.score)).replace('&middot;', '\u00b7');
         } else {
           title = (f.label + ' \u00b7 tracking started \u00b7 ' +
@@ -4106,6 +4223,24 @@ window.LpChart = (function () {
 
     var labelGroups = [];
 
+    // Port of tier_bands().
+    var bandSvg = '';
+    (function () {
+      var span = D.divisionsPerTier * D.lpPerDivision;
+      var first = Math.floor(yMin / span), last = Math.floor(yMax / span), parts = [];
+      for (var ti = Math.max(first, 0); ti <= last; ti++) {
+        if (ti >= D.tierOrder.length) break;
+        var lo = Math.max(ti * span, yMin), hi = Math.min((ti + 1) * span, yMax);
+        if (hi <= lo) continue;
+        var top = xy(0, hi)[1], bottom = xy(0, lo)[1];
+        parts.push('<rect class="tier-band" x="' + fixed(PAD_L, 1) + '" y="' + fixed(top, 1) +
+          '" width="' + fixed(W - PAD_R - PAD_L, 1) + '" height="' + fixed(bottom - top, 1) +
+          '" fill="color-mix(in srgb, var(--tier-' + D.tierOrder[ti].toLowerCase() + ') ' +
+          D.tierBandAlpha + '%, transparent)" />');
+      }
+      bandSvg = parts.join('');
+    })();
+
     var gridSvg = yTicks.map(function (t) {
       var faint = t[2] ? '' : ' faint';
       return '<line x1="' + PAD_L + '" y1="' + fixed(t[0], 1) + '" x2="' + (W - PAD_R) +
@@ -4119,7 +4254,7 @@ window.LpChart = (function () {
     }).join('');
     var cls = compact ? 'rank-chart chart-compact' : 'rank-chart chart-wide';
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="' + cls + '" role="img" ' +
-      'aria-label="Ranked Solo/Duo LP game by game">' + gridSvg + xticksSvg +
+      'aria-label="Ranked Solo/Duo LP game by game">' + bandSvg + gridSvg + xticksSvg +
       seriesGroups.join('') + labelGroups.join('') + '</svg>';
   }
 
@@ -4148,7 +4283,7 @@ window.LpChart = (function () {
       }
       netLabels.push({ text: moveText, direction: netLp > 0 ? 1 : (netLp < 0 ? -1 : 0) });
       tiers.push(last.tier);
-      standings.push({ varName: '--series-f' + i, label: f.label, tier: last.tier,
+      standings.push({ varName: colourFor(f.label), label: f.label, tier: last.tier,
                        rank: last.rank, leaguePoints: last.leaguePoints || 0,
                        rankLabel: rankLabelOf(last), games: games, lp: netLp,
                        winrate: games ? Math.round(100 * wins / games) : 0,
@@ -4392,11 +4527,6 @@ window.LpChart = (function () {
     return touched;
   }
 
-  // Lent to the live-refresh block so a row it adds is tinted with exactly
-  // the blend the server would have used, rather than a second copy of the
-  // same formula drifting from this one.
-  function colourFor(label) { return (D && D.varByLabel && D.varByLabel[label]) || '--accent'; }
-
   return { init: init, verifySelf: verifySelf, rerender: rerender,
            blend: blendVars, colourFor: colourFor };
 })();
@@ -4416,7 +4546,9 @@ def build_html(data):
     mark_legacy_remakes(friends)
     set_icon_context(data.get("ddragonVersion"), data.get("championIconMap", {}))
     set_platform(data.get("platform"))
-    set_duo_context(friends_sorted)
+    # data.json keeps the friends in config order, which is stable; the
+    # dashboard sorts by rank for display only.
+    set_duo_context(friends_sorted, [f["label"] for f in friends])
 
     leaderboard_rows = "".join(
         render_leaderboard_row(f, i + 1, weekly_trend_for(rank_history, f["label"], now))
@@ -4520,6 +4652,21 @@ def build_html(data):
         "tierVars": {t: tier_var(t) for t in TIER_ORDER},
         "rankIconBase": RANK_ICON_BASE,
         "apexTiers": sorted(APEX_TIERS),
+        # The snapshot each friend's week is measured from: the last reading
+        # at or before the cutoff. Only the far end of that span changes when
+        # a rank is refreshed, so shipping the anchor is enough to redraw the
+        # arrow without shipping the whole history.
+        "weekAnchor": {
+            f["label"]: (lambda pair: {"tier": pair[0].get("tier"), "rank": pair[0].get("rank"),
+                                       "leaguePoints": pair[0].get("leaguePoints") or 0}
+                         if pair else None)(
+                week_window(
+                    sorted((h for h in rank_history
+                            if h.get("queue") == "solo" and h["label"] == f["label"]),
+                           key=lambda h: h["date"]),
+                    (now - timedelta(days=7)).strftime("%Y-%m-%d")))
+            for f in friends_sorted
+        },
         # Enough to work out a ladder position in the browser. Rows are sorted
         # server-side at build time, so without this a refresh leaves everyone
         # in their old order while showing their new LP.
@@ -4634,10 +4781,13 @@ def build_html(data):
        against Duo and Flex against 5s at a glance. Deliberately off the
        accents and off the win/loss greens and reds, which mean something
        else everywhere on this page. */
-    --q-solo:  #6f5bd0;
-    --q-duo:   #9d8ce6;
-    --q-flex:  #1f9e8f;
-    --q-fives: #5fcbbd;
+    /* Solo and Duo are the same hue, Duo the weaker of the two, because they
+       are the same queue counted two ways. Flex and 5s are separate queues, so
+       they get separate hues rather than two shades of one. */
+    --q-solo:  #4f7de8;                  /* blue */
+    --q-duo:   #93b2f2;                  /* the same blue, drained */
+    --q-flex:  #b0508f;                  /* magenta */
+    --q-fives: #d8a13c;                  /* amber */
 
     /* Roles: the hues the game uses, pulled down and desaturated so none of
        them can be mistaken for a winrate colour or a friend's identity. */
@@ -5463,6 +5613,7 @@ def build_html(data):
   /* The projected tail is a guess and reads as one: thinner, dashed, and it
      does not respond to hover so it never steals a tooltip from a real game. */
   .rank-chart path.proj {{ pointer-events: none; }}
+  .tier-band {{ pointer-events: none; }}
   .chart-plot.hide-proj .rank-chart path.proj {{ display: none; }}
   .chart-toggles {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
   footer {{
@@ -5509,16 +5660,25 @@ def build_html(data):
 
   .friend-pills {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }}
   .pill {{ display: inline-flex; align-items: center; gap: 7px; }}
-  .pill .rank-icon, .pill .rank-icon-ph, .pill .avatar {{ flex-shrink: 0; }}
+  .pill .rank-icon, .pill .rank-icon-ph, .pill .avatar-wrap {{ flex-shrink: 0; }}
   .pill-all {{ font-weight: 700; }}
 
   /* Each player's face: their most mastered champion. */
   /* The ring is a shadow, not a border. A border sits inside the box, so a
      44px avatar was drawing 42px of champion inside a 44px circle and the
      ring read as a gap between the art and the edge. */
-  .avatar {{
-    border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;
+  /* Data Dragon squares carry a border of their own inside the image, so a
+     straight circular crop still reads as a square in a circle. Scaling the
+     picture past the frame and clipping it takes that border off. */
+  .avatar-wrap {{
+    display: inline-block; border-radius: 50%; overflow: hidden;
+    line-height: 0; flex-shrink: 0; vertical-align: middle;
     background: var(--surface-2); box-shadow: 0 0 0 1px var(--border);
+  }}
+  .avatar {{
+    width: 100%; height: 100%; display: block;
+    object-fit: cover; object-position: center;
+    scale: 1.2;
   }}
   .avatar.broken {{ visibility: hidden; }}
   .avatar-fallback {{
@@ -5527,7 +5687,7 @@ def build_html(data):
     color: var(--text-secondary);
   }}
   .lb-name {{ white-space: nowrap; }}
-  .lb-name .avatar {{ margin-right: 9px; }}
+  .lb-name .avatar-wrap {{ margin-right: 9px; }}
   /* The picked friend, scrolled to and ringed. Everyone stays on screen –
      the button is a way of finding someone, not of hiding the rest. */
   .card.card-focus {{
@@ -5537,7 +5697,7 @@ def build_html(data):
   }}
   /* The player's face, with their tier emblem and standing pinned to it. */
   .rank-crest {{ position: relative; width: 44px; height: 44px; flex-shrink: 0; }}
-  .rank-crest .avatar {{ display: block; width: 44px; height: 44px; }}
+  .rank-crest .avatar-wrap {{ display: block; width: 44px; height: 44px; }}
   .rank-crest .rank-icon, .rank-crest .rank-icon-ph {{
     position: absolute; left: -8px; top: -6px; width: 26px; height: 26px;
     filter: drop-shadow(0 1px 2px rgba(0,0,0,.5));
@@ -5565,7 +5725,8 @@ def build_html(data):
 
   /* Rows updated by the client-side live-ranks refresh, so it's obvious
      which figures are live and which came from the published snapshot. */
-  .row-live td {{ background: color-mix(in srgb, var(--accent) 7%, transparent); }}
+  /* A refreshed row used to be tinted. The banner already says the reading
+     is live, and the tint fought with the shared-game colour underneath it. */
   .row-live [data-cell="rank"] {{ font-weight: 700; }}
 
   /* ---- Hosted controls: refresh + API key ---------------------------- */
@@ -6372,6 +6533,50 @@ def build_html(data):
         }});
       }}
 
+      // Same shape net_change_label() produces, so render_trend_arrows() and
+      // the leaderboard cell can be rebuilt from it.
+      function weekTrend(label, live) {{
+        var a = (CFG.weekAnchor || {{}})[label];
+        if (!a || !a.tier || !live || !live.tier) return null;
+        var from = ladderScore(a), to = ladderScore(live);
+        var moved = to - from;
+        if (!moved) return null;
+        var same = a.tier === live.tier && a.rank === live.rank;
+        return {{
+          moved: !same, lp: moved, direction: moved > 0 ? 1 : -1,
+          text: same
+            ? (moved >= 0 ? '+' : '\u2212') + Math.abs(moved) + ' LP'
+            : rankShort(a) + ' \u2192 ' + rankShort(live)
+        }};
+      }}
+
+      // Port of render_trend_arrows(): direction first, then how far.
+      function trendArrows(t, compact) {{
+        if (!t) {{
+          return compact
+            ? '<span class="tr-group" title="nothing recorded"><span class="tr-none">'
+              + '&ndash;</span></span>'
+            : '<span class="muted small">\u2013</span>';
+        }}
+        var text = t.text;
+        if (t.moved && t.lp !== null) {{
+          text = (t.lp >= 0 ? '+' : '\u2212') + Math.abs(t.lp) + ' LP, ' + text;
+        }}
+        if (!compact) {{
+          var col = t.direction > 0 ? 'var(--good)' : 'var(--critical)';
+          var gl = t.direction > 0 ? '\u25b2' : '\u25bc';
+          return '<span class="small" style="color:' + col + ';">' + gl + ' ' +
+                 escapeHtml(text) + '</span>';
+        }}
+        var lp = Math.abs(t.lp || 0);
+        var n = lp <= 50 ? 1 : (lp <= 100 ? 2 : 3);
+        var cls = t.direction > 0 ? 'tr-up' : 'tr-down';
+        var gly = t.direction > 0 ? '&#9650;' : '&#9660;';
+        var out = '<span class="tr-group" title="Ranked Solo/Duo: ' + escapeHtml(text) + '">';
+        for (var k = 0; k < n; k++) out += '<span class="' + cls + '">' + gly + '</span>';
+        return out + '</span>';
+      }}
+
       function rankText(e) {{
         if (!e || !e.tier) return 'Unranked';
         return rankShort(e) + ' · ' + (e.leaguePoints || 0) + ' LP';
@@ -6426,6 +6631,19 @@ def build_html(data):
         var h = d.getHours(), h12 = h % 12 || 12;
         return MONTHS[d.getMonth()] + ' ' + ('0' + d.getDate()).slice(-2) + ', ' +
                h12 + ':' + ('0' + d.getMinutes()).slice(-2) + ' ' + (h >= 12 ? 'PM' : 'AM');
+      }}
+
+      // Same inversion as champDisplay() in the chart module: the two blocks
+      // are separate IIFEs and neither can see the other's helpers.
+      var _display = null;
+      function champName(name) {{
+        var icons = CFG.championIcons || {{}};
+        if (!name || Object.prototype.hasOwnProperty.call(icons, name)) return name;
+        if (!_display) {{
+          _display = {{}};
+          for (var k in icons) {{ _display[String(icons[k]).toLowerCase()] = k; }}
+        }}
+        return _display[String(name).toLowerCase()] || name;
       }}
 
       function championIcon(name) {{
@@ -6495,7 +6713,7 @@ def build_html(data):
       }}
 
       function dotHtml(m) {{
-        var title = whenText(m) + ' \u00b7 ' + m.champion + ' \u00b7 ' + (m.win ? 'Win' : 'Loss') +
+        var title = whenText(m) + ' \u00b7 ' + champName(m.champion) + ' \u00b7 ' + (m.win ? 'Win' : 'Loss') +
                     ' \u00b7 ' + m.kills + '/' + m.deaths + '/' + m.assists + ' KDA ' + m.kda;
         return '<span class="dot ' + (m.win ? 'win' : 'loss') + ' dot-new" title="' +
                escapeHtml(title) + '"></span>';
@@ -6547,7 +6765,7 @@ def build_html(data):
           '<td><span class="tag ' + (m.win ? 'win' : 'loss') + '">' +
             (m.win ? 'WIN' : 'LOSS') + '</span></td>' +
           '<td class="champ-cell"><span class="cc">' + championIcon(m.champion) +
-            escapeHtml(m.champion) + '</span></td>' +
+            escapeHtml(champName(m.champion)) + '</span></td>' +
           '<td class="with-cell">' + withCell + '</td>' +
           '<td class="num">' + m.kills + '/' + m.deaths + '/' + m.assists + '</td>' +
           '<td class="num">' + m.kda + '</td>' +
@@ -6723,6 +6941,12 @@ def build_html(data):
         if (recCell) recCell.textContent = wins + 'W / ' + losses + 'L';
         row.classList.add('row-live');
 
+        // The trend column and the card's arrows both measure to the rank
+        // being shown, so a refresh moves them too.
+        var t = weekTrend(label, entry);
+        var trendCell = row.children[row.children.length - 1];
+        if (trendCell) trendCell.innerHTML = trendArrows(t, false);
+
         // The same reading, on the card. It used to stop at the leaderboard,
         // so a refresh left the rank in the card's corner and the rank row
         // underneath it showing whatever was true when the page was built ·
@@ -6751,6 +6975,8 @@ def build_html(data):
               rankIconHtml(entry, 20);
           }}
         }}
+        var trendRow = card.querySelector('.tr-row');
+        if (trendRow) trendRow.innerHTML = trendArrows(t, true);
         var soloRow = card.querySelector('[data-rank-row="solo"]');
         if (soloRow) {{
           var lbl = soloRow.querySelector('[data-cell="rank"]');

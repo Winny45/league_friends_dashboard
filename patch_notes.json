@@ -1,6 +1,52 @@
 [
   {
     "date": "2026-08-30",
+    "title": "Real champion names, tier bands, and a schedule that publishes itself",
+    "items": [
+      {
+        "type": "added",
+        "text": "update_and_publish.ps1 fetches, rebuilds and publishes in one go, and setup_auto_update.ps1 can put it on a half-hourly, hourly, three-hourly or daily schedule. This is the only thing that moves the numbers a shared link shows: the Refresh button runs in the viewer's own browser with the viewer's own key and writes nothing back, because the site is a static file with no server behind it."
+      },
+      {
+        "type": "fixed",
+        "text": "Champion names with spaces were printed as Riot's internal key: Nunu, MissFortune, KSante. They read as Nunu & Willump, Miss Fortune and K'Sante now, everywhere including tooltips and the browser's own redraws."
+      },
+      {
+        "type": "fixed",
+        "text": "The face on a card was a square in a circle. It sits in a frame that clips it now, and is scaled past that frame so the border Data Dragon draws inside every champion square is cropped away."
+      },
+      {
+        "type": "improved",
+        "text": "Both rank charts have a wash of each tier's own colour behind them, so a line's height reads as a rank without tracking back to the axis."
+      },
+      {
+        "type": "fixed",
+        "text": "The 7 day trend follows a live rank now, on the leaderboard and on each card. It measures from the last reading seven days back, which does not move, to whatever rank is being shown."
+      },
+      {
+        "type": "improved",
+        "text": "A player keeps their colour when the ladder moves under them. Colours were handed out by rank, so a promotion swapped two people's colours on every chart, table and tint; they now follow the order in the config. Rory is orange."
+      },
+      {
+        "type": "improved",
+        "text": "Solo and Duo are one hue with Duo the weaker of the two, since they are the same queue counted two ways. Flex and 5s are separate queues and now have separate hues: magenta and amber."
+      },
+      {
+        "type": "improved",
+        "text": "KDA counts toward a champion's rating, measured against that player's own average across every game rather than an absolute, so a champion they play better than they usually play is worth more than one they merely win on. The champion pool table shows KDA as a column."
+      },
+      {
+        "type": "improved",
+        "text": "A KDA gap under 0.25 is no longer marked as carrying the pair. Thirteen marks become five."
+      },
+      {
+        "type": "improved",
+        "text": "The (est.) tag is off the LP column: every step between two snapshots is reconstructed, so tagging nearly all of them said nothing. The tint on a refreshed row is gone too."
+      }
+    ]
+  },
+  {
+    "date": "2026-08-30",
     "title": "Ring seams, and a palette per queue and per role",
     "items": [
       {
