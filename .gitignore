@@ -39,3 +39,7 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# The unattended run logs whatever it fetched, which means real Riot IDs.
+auto_update.log
+auto_update.prev.log

@@ -215,7 +215,7 @@ def sync_new_match_ids_for_queue(client, puuid, start_time_epoch, queue_id, know
             break  # last page — Riot has nothing more for this queue/period
         page += 1
         if len(new_ids) >= budget_left:
-            print(f"    ! hit the match safety cap for queue {queue_id} — raise max_season_matches "
+            print(f"    ! hit the match safety cap for queue {queue_id} - raise max_season_matches "
                   f"in config.json if you actually expect more games than that")
             break
     return new_ids
@@ -314,7 +314,7 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
     print(f"Fetching {label} ({riot_id})...")
     account = client.get_account_by_riot_id(game_name, tag_line)
     if not account:
-        print(f"  ! could not find account for {riot_id} — skipping")
+        print(f"  ! could not find account for {riot_id} - skipping")
         return None
     puuid = account["puuid"]
 
@@ -714,7 +714,7 @@ def main():
         # season/split start date if you want true season-to-date stats.
         season_start_epoch = (datetime.now() - timedelta(days=90)).timestamp()
         season_start_key = datetime.fromtimestamp(season_start_epoch).strftime("%Y-%m-%d")
-        print(f"No 'season_start' set in config.json — defaulting to the last 90 days "
+        print(f"No 'season_start' set in config.json - defaulting to the last 90 days "
               f"(since {season_start_key}). "
               f"Add \"season_start\": \"YYYY-MM-DD\" to config.json for true season-to-date stats.\n")
 
@@ -756,7 +756,7 @@ def main():
             # of spending six more requests to learn the same thing.
             if "401" in str(e) or "403" in str(e):
                 auth_failed = True
-                print("  ! Riot rejected the API key — stopping. "
+                print("  ! Riot rejected the API key - stopping. "
                       "Development keys expire 24 hours after they are issued.")
                 break
         finally:
@@ -842,7 +842,7 @@ def main():
             post_discord.post(webhook_url, out)
             print("Posted highlights to Discord.")
         except Exception as e:
-            print(f"  ! could not post to Discord ({e}) — check discord_webhook_url in config.json")
+            print(f"  ! could not post to Discord ({e}) - check discord_webhook_url in config.json")
 
 
 if __name__ == "__main__":
