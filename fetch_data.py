@@ -254,6 +254,7 @@ def extract_match_entry(m, puuid, match_id):
     # blank in some edge cases (e.g. autofill oddities), in which case we
     # just leave it unset rather than guess.
     opponent_champion = None
+    opponent_kda = None
     if position:
         opponent = next(
             (p for p in participants if p.get("teamPosition") == position and p.get("teamId") != team_id),
@@ -261,6 +262,17 @@ def extract_match_entry(m, puuid, match_id):
         )
         if opponent:
             opponent_champion = opponent.get("championName")
+            # The opponent's own line, so a game can be judged against the
+            # player who was actually standing opposite rather than against
+            # an average.
+            ok, od, oa = (opponent.get("kills", 0), opponent.get("deaths", 0),
+                          opponent.get("assists", 0))
+            opponent_kda = round((ok + oa) / max(od, 1), 2)
+
+    # Everyone else who was on this team, by champion. Enough to ask which
+    # champions a player wins alongside without needing those players tracked.
+    allies = [x.get("championName") for x in participants
+              if x.get("teamId") == team_id and x.get("puuid") != puuid]
 
     return {
         "matchId": match_id,
@@ -281,6 +293,13 @@ def extract_match_entry(m, puuid, match_id):
         "teamId": team_id,
         "position": position,
         "opponentChampion": opponent_champion,
+        "opponentKda": opponent_kda,
+        "allies": allies,
+        "damageTaken": participant.get("totalDamageTaken", 0),
+        "visionScore": participant.get("visionScore", 0),
+        # Riot flags a surrendered game, so "won before 16 minutes" can be
+        # told apart from "closed the game out fast".
+        "surrender": bool(participant.get("gameEndedInSurrender", False)),
     }
 
 
@@ -367,7 +386,7 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
         # looks for. An entry where the lane opponent could not be identified
         # stores None under that key, so it counts as filled in and is never
         # fetched again.
-        stale = refetch_details and "opponentChampion" not in (cached or {})
+        stale = refetch_details and "visionScore" not in (cached or {})
         if cached and not stale:
             entry = cached
             cache_hits += 1
@@ -710,8 +729,8 @@ def main():
     results = []
     auth_failed = False
     if refetch_details:
-        missing = sum(1 for e in match_cache.values() if "opponentChampion" not in e)
-        print(f"Re-fetching {missing} cached matches that have no lane opponent recorded. "
+        missing = sum(1 for e in match_cache.values() if "visionScore" not in e)
+        print(f"Re-fetching {missing} cached matches that are missing the newer fields. "
               f"At roughly one request every {client.pause}s that is about "
               f"{missing * client.pause / 60:.0f} minutes. Progress is saved as it goes, so "
               f"stopping and re-running picks up where it left off.\n")
