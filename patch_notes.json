@@ -22,6 +22,10 @@
       {
         "type": "fixed",
         "text": "New icons for Sisyphus, Total games this week, Unemployed, Tickle monster, Passenger, Resilient and Diffed. The two that were broken, a rock and a palm-down hand, were both recent Unicode additions, which is exactly when a glyph turns into an empty box on somebody's phone."
+      },
+      {
+        "type": "changed",
+        "text": "Rory is steel again and Brett is back on copper. They sit next to each other in every legend, so only one of the two can be a warm colour without the pair reading as one."
       }
     ]
   },

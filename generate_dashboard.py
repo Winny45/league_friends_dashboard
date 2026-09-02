@@ -64,10 +64,10 @@ FRIEND_PALETTE = [
     {"light": "#b83a68", "dark": "#e0699a"},  # 1 Shas     pink
     {"light": "#2a78d6", "dark": "#3987e5"},  # 2 Kirish   blue
     # Slot 3 sits next to slot 4 in every legend, so the two cannot both be
-    # warm: orange beside copper reads as one colour at a glance. Rory has
-    # the orange, so Brett takes the steel rather than the copper.
-    {"light": "#b35c17", "dark": "#f08a2e"},  # 3 Rory     orange
-    {"light": "#4f7a95", "dark": "#8bb0c9"},  # 4 Brett    steel
+    # warm: orange beside copper reads as one colour at a glance. Rory is not
+    # orange, so the warm slot is Brett's and slot 3 stays cool.
+    {"light": "#4f7a95", "dark": "#8bb0c9"},  # 3 Rory     steel
+    {"light": "#96522a", "dark": "#c4753c"},  # 4 Brett    copper
     {"light": "#5a49b8", "dark": "#9085e9"},  # 5 Neel     violet
     # Two accounts belonging to one person, so they are deliberately the same
     # hue: the pair should read as related rather than as two strangers who
