@@ -102,7 +102,12 @@ jobs:
         run: |
           npm install --global vercel@latest
           cd deploy
-          vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
+          # A token, and CI set, so the CLI can never decide it wants an
+          # interactive login. A scheduled Windows run of the same deploy hit
+          # exactly that and sat on a device-code prompt forever, with no
+          # console to show it. Actions would time out rather than hang, but
+          # an hour of a runner is still an hour.
+          CI=1 vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
 
       # Last, so a failed fetch or a failed deploy leaves the stored history
       # exactly as it was.
