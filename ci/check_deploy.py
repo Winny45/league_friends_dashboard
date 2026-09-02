@@ -28,9 +28,13 @@ if len(html) < 500_000:
 if "<title>" not in html:
     problems.append("no <title>, so the build probably failed part way")
 
-for asset in ("og.png", "icon-180.png", "vercel.json"):
+# vercel.json decides caching and clean URLs, so its absence is a real
+# problem. The share images are decoration: say so and carry on.
+if not pathlib.Path("deploy", "vercel.json").exists():
+    problems.append("deploy/vercel.json is missing")
+for asset in ("og.png", "icon-180.png"):
     if not pathlib.Path("deploy", asset).exists():
-        problems.append(f"deploy/{asset} is missing")
+        print(f"note: deploy/{asset} was not built, so the link preview will be plain.")
 
 if problems:
     for p in problems:

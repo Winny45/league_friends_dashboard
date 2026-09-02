@@ -92,8 +92,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Both scripts import nothing outside the standard library, so there is
-      # no install step to get wrong.
+      # fetch_data.py is pure standard library. generate_dashboard.py is too
+      # for the page itself, but it draws the Open Graph link-preview card
+      # with Pillow, behind a try/except: without it the page builds fine and
+      # og.png simply is not written, which is how the first run got as far as
+      # copying a file that did not exist.
+      - name: Install Pillow, for the link preview card
+        run: python -m pip install --quiet Pillow
 
       # A branch in the state repo rather than the Actions cache. The Actions
       # cache only writes in a post step, and a post step is skipped when a
@@ -131,7 +136,12 @@ jobs:
       - name: Assemble the deploy directory
         run: |
           cp dashboard.html deploy/index.html
-          cp og.png icon-180.png deploy/
+          # Tolerant on purpose: the share images are decoration, and a
+          # missing link preview is not a reason to stop publishing a page
+          # that is otherwise correct.
+          for f in og.png icon-180.png; do
+            if [ -f "$f" ]; then cp "$f" deploy/; else echo "note: $f was not built"; fi
+          done
           ls -l deploy
 
       - name: Check the page before it goes public
