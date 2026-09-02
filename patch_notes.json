@@ -1,6 +1,32 @@
 [
   {
     "date": "2026-09-02",
+    "title": "Cards in a declared order, and a KDA term that finally counts",
+    "items": [
+      {
+        "type": "changed",
+        "text": "Every card panel now reads in a fixed order, three to a row, rather than in whatever order the code happened to build them. The grid is pinned to three columns too: it used to fit two, three or four across depending on the window, so the rows the cards were grouped into were only sometimes the rows on screen."
+      },
+      {
+        "type": "fixed",
+        "text": "Top champions weighted a champion's KDA against the account's own average, but the term only reached its full six points at double or half that average, which nobody manages. In practice a six point term never moved past one. A third above or below now scores full value, so KDA changes the order instead of decorating it."
+      },
+      {
+        "type": "changed",
+        "text": "A champion needs 10 games to be a top champion. The old floor was three, and it was dropped entirely whenever it could not otherwise fill five rows, which was exactly when the thin records deserved least trust. Some players will show fewer than five champions now; that is the honest answer rather than a padded one."
+      },
+      {
+        "type": "changed",
+        "text": "Games this week is Total games this week, Most active is Most active player, and Played together is Games played together. Animal of the week counts people rather than of them."
+      },
+      {
+        "type": "fixed",
+        "text": "New icons for Sisyphus, Total games this week, Unemployed, Tickle monster, Passenger, Resilient and Diffed. The two that were broken, a rock and a palm-down hand, were both recent Unicode additions, which is exactly when a glyph turns into an empty box on somebody's phone."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-02",
     "title": "Highlight cards reworded, and two of them were lying",
     "items": [
       {
