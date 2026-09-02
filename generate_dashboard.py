@@ -1265,10 +1265,12 @@ def render_rate_strip(rows):
         f'<tr><td class="nowrap">{esc(q)}</td>{pair(season)}{pair(recent)}</tr>'
         for q, season, recent in rows
     )
-    return (f'<table class="matches-table rate-table">'
+    # Five columns, two of them a "+22.0 / -18.3" pair, in a card that is a
+    # single phone-width column. It has to be able to scroll in place.
+    return (f'<div class="table-scroll"><table class="matches-table rate-table">'
             f'<thead><tr><th>Queue</th><th class="num">Season LP</th><th class="num">MMR</th>'
             f'<th class="num">Last {LP_RATE_RECENT} LP</th><th class="num">MMR</th>'
-            f'</tr></thead><tbody>{body}</tbody></table>')
+            f'</tr></thead><tbody>{body}</tbody></table></div>')
 
 
 def render_card_rank(entry, peak):
@@ -2523,96 +2525,118 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
     # vertical room, which is what actually made a big group feel
     # cluttered rather than the line chart itself. Capped so a huge group
     # doesn't produce an absurdly tall panel.
-    W = 900
-    H = max(280, min(640, 34 * len(chart_friends) + 120))
-    # Same as the LP chart: the key is the legend underneath.
-    PAD_L, PAD_R, PAD_T, PAD_B = 64, 24, 16, 30
-    plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
+    # Rendered twice, wide and compact, exactly as the LP chart is. This
+    # panel used to be hidden outright on a phone, which is why the Rank
+    # progress tab showed only the chart above it there.
+    def build_svg(compact):
+        if compact:
+            # Phone build. The wide chart is 900 units across, and squeezing
+            # that into a 350px screen scales its 11px labels to about 4px.
+            W = 360
+            H = max(230, min(420, 20 * len(chart_friends) + 150))
+            PAD_L, PAD_R, PAD_T, PAD_B = 40, 10, 12, 26
+        else:
+            W = 900
+            H = max(280, min(640, 34 * len(chart_friends) + 120))
+            # Same as the LP chart: the key is the legend underneath.
+            PAD_L, PAD_R, PAD_T, PAD_B = 64, 24, 16, 30
+        plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
 
-    def xy(date_key, score):
-        x = PAD_L + x_frac(date_key) * plot_w
-        y = PAD_T + (1 - (score - y_min) / (y_max - y_min)) * plot_h
-        return x, y
+        def xy(date_key, score):
+            x = PAD_L + x_frac(date_key) * plot_w
+            y = PAD_T + (1 - (score - y_min) / (y_max - y_min)) * plot_h
+            return x, y
 
-    # Y gridlines at whole-tier boundaries within the visible score range.
-    lo_ti, hi_ti = int(y_min // 1000), int(y_max // 1000) + 1
-    y_ticks = []
-    for ti in range(max(lo_ti, 0), min(hi_ti + 1, len(TIER_ORDER))):
-        tick_score = ti * 1000
-        if y_min <= tick_score <= y_max:
-            _, y = xy(start_date.strftime("%Y-%m-%d"), tick_score)
-            y_ticks.append((y, TIER_ORDER[ti].capitalize()))
+        # Y gridlines at whole-tier boundaries within the visible score range.
+        lo_ti, hi_ti = int(y_min // 1000), int(y_max // 1000) + 1
+        y_ticks = []
+        for ti in range(max(lo_ti, 0), min(hi_ti + 1, len(TIER_ORDER))):
+            tick_score = ti * 1000
+            if y_min <= tick_score <= y_max:
+                _, y = xy(start_date.strftime("%Y-%m-%d"), tick_score)
+                y_ticks.append((y, TIER_ORDER[ti].capitalize()))
 
-    # X ticks roughly weekly, plus today — drop the last weekly tick if it'd
-    # land close enough to "Today" for the labels to overlap.
-    x_ticks = []
-    for i in range(0, span_days, 7):
-        if span_days - i < 4:
-            continue
-        d = start_date + timedelta(days=i)
-        x, _ = xy(d.strftime("%Y-%m-%d"), y_min)
-        x_ticks.append((x, d.strftime("%b %d")))
-    x_today, _ = xy(end_date.strftime("%Y-%m-%d"), y_min)
-    x_ticks.append((x_today, "Today"))
+        # X ticks roughly weekly, plus today — drop the last weekly tick if it'd
+        # land close enough to "Today" for the labels to overlap.
+        x_ticks = []
+        for i in range(0, span_days, 14 if compact else 7):
+            if span_days - i < (8 if compact else 4):
+                continue
+            d = start_date + timedelta(days=i)
+            x, _ = xy(d.strftime("%Y-%m-%d"), y_min)
+            x_ticks.append((x, d.strftime("%b %d")))
+        x_today, _ = xy(end_date.strftime("%Y-%m-%d"), y_min)
+        x_ticks.append((x_today, "Today"))
 
-    series_groups, legend_items, standings = [], [], []
-    label_entries = []  # end-of-line labels, positioned after a declutter pass below
-    for i, f in enumerate(chart_friends):
-        var = friend_colour(f["label"])
-        pts = solo_history_by_label[f["label"]]
-        coords = [
-            xy(h["date"], tier_score({"tier": h["tier"], "rank": h.get("rank"), "leaguePoints": h.get("leaguePoints")}))
-            for h in pts
-        ]
-        series_parts = []
-        if len(coords) >= 2:
-            path_d = " ".join(f"{'M' if idx == 0 else 'L'}{x:.1f},{y:.1f}" for idx, (x, y) in enumerate(coords))
-            series_parts.append(
-                f'<path d="{path_d}" fill="none" stroke="var({var})" stroke-width="2" '
-                f'stroke-linecap="round" stroke-linejoin="round" />'
+        prefix = "dailym" if compact else "daily"
+        series_groups, legend_items, standings = [], [], []
+        label_entries = []  # end-of-line labels, positioned after a declutter pass below
+        for i, f in enumerate(chart_friends):
+            var = friend_colour(f["label"])
+            pts = solo_history_by_label[f["label"]]
+            coords = [
+                xy(h["date"], tier_score({"tier": h["tier"], "rank": h.get("rank"), "leaguePoints": h.get("leaguePoints")}))
+                for h in pts
+            ]
+            series_parts = []
+            if len(coords) >= 2:
+                path_d = " ".join(f"{'M' if idx == 0 else 'L'}{x:.1f},{y:.1f}" for idx, (x, y) in enumerate(coords))
+                series_parts.append(
+                    f'<path d="{path_d}" fill="none" stroke="var({var})" stroke-width="2" '
+                    f'stroke-linecap="round" stroke-linejoin="round" />'
+                )
+            for idx, ((x, y), h) in enumerate(zip(coords, pts)):
+                change = snapshot_change_label(pts[idx - 1] if idx > 0 else None, h)
+                title = f"{f['label']} · {h['date']} · {rank_label(h)}".replace("&middot;", "·")
+                if change:
+                    title += f" ({change})"
+                series_parts.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{3 if compact else 4}" fill="var({var})" '
+                    f'stroke="var(--surface-1)" stroke-width="1.5"><title>{esc(title)}</title></circle>'
+                )
+            series_groups.append(f'<g id="{prefix}-series-{i}">{"".join(series_parts)}</g>')
+            if coords:
+                lx, ly = coords[-1]
+                # Measured across the window the chart actually draws. Reading
+                # from pts[0] took in snapshots left of the axis, so the table and
+                # the line it sits under could disagree.
+                in_window = [h for h in pts if h["date"] >= start_date.strftime("%Y-%m-%d")]
+                net = net_change_label(in_window[0], in_window[-1]) if len(in_window) >= 2 else None
+                label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly, "net": net, "tier": pts[-1].get("tier")})
+                standings.append({"var": var, "label": f["label"], "tier": pts[-1].get("tier"),
+                                  "rankLabel": rank_label(pts[-1]), "net": net,
+                                  "snapshots": len(pts)})
+            legend_items.append(
+                f'<span class="legend-item" data-chart="daily dailym" data-idx="{i}">'
+                f'<span class="sw" style="background:var({var})"></span>'
+                f'<span class="legend-name" style="color:var({var});">{esc(f["label"])}</span></span>'
             )
-        for idx, ((x, y), h) in enumerate(zip(coords, pts)):
-            change = snapshot_change_label(pts[idx - 1] if idx > 0 else None, h)
-            title = f"{f['label']} · {h['date']} · {rank_label(h)}".replace("&middot;", "·")
-            if change:
-                title += f" ({change})"
-            series_parts.append(
-                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="var({var})" '
-                f'stroke="var(--surface-1)" stroke-width="1.5"><title>{esc(title)}</title></circle>'
-            )
-        series_groups.append(f'<g id="daily-series-{i}">{"".join(series_parts)}</g>')
-        if coords:
-            lx, ly = coords[-1]
-            # Measured across the window the chart actually draws. Reading
-            # from pts[0] took in snapshots left of the axis, so the table and
-            # the line it sits under could disagree.
-            in_window = [h for h in pts if h["date"] >= start_date.strftime("%Y-%m-%d")]
-            net = net_change_label(in_window[0], in_window[-1]) if len(in_window) >= 2 else None
-            label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly, "net": net, "tier": pts[-1].get("tier")})
-            standings.append({"var": var, "label": f["label"], "tier": pts[-1].get("tier"),
-                              "rankLabel": rank_label(pts[-1]), "net": net,
-                              "snapshots": len(pts)})
-        legend_items.append(
-            f'<span class="legend-item" data-chart="daily" data-idx="{i}">'
-            f'<span class="sw" style="background:var({var})"></span>'
-            f'<span class="legend-name" style="color:var({var});">{esc(f["label"])}</span></span>'
+
+        label_groups = []
+
+        # tier_score() is 1000 a tier, not the 400 the LP chart works in.
+        bands_svg = tier_bands(y_min, y_max, PAD_L, W - PAD_R,
+                               lambda v: xy(start_date.strftime("%Y-%m-%d"), v)[1],
+                               span=1000)
+        grid_svg = "".join(
+            f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
+            f'<text x="{PAD_L - 6}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
+            for y, label in y_ticks
         )
+        xticks_svg = "".join(
+            f'<text x="{x:.1f}" y="{H - PAD_B + (15 if compact else 18)}" text-anchor="middle" class="chart-tick">{esc(label)}</text>'
+            for x, label in x_ticks
+        )
+        cls = "rank-chart chart-compact" if compact else "rank-chart chart-wide"
+        svg = (f'<svg viewBox="0 0 {W} {H}" class="{cls}" role="img" '
+               f'aria-label="Ranked Solo/Duo standing over the last {span_days + 1} days">'
+               f'{bands_svg}{grid_svg}{xticks_svg}'
+               f'{"".join(series_groups)}{"".join(label_groups)}</svg>')
+        return svg, legend_items, standings
 
-    label_groups = []
+    wide_svg, legend_items, standings = build_svg(False)
+    compact_svg, _lg, _st = build_svg(True)
 
-    # tier_score() is 1000 a tier, not the 400 the LP chart works in.
-    bands_svg = tier_bands(y_min, y_max, PAD_L, W - PAD_R,
-                           lambda v: xy(start_date.strftime("%Y-%m-%d"), v)[1],
-                           span=1000)
-    grid_svg = "".join(
-        f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
-        f'<text x="{PAD_L - 8}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
-        for y, label in y_ticks
-    )
-    xticks_svg = "".join(
-        f'<text x="{x:.1f}" y="{H - PAD_B + 18}" text-anchor="middle" class="chart-tick">{esc(label)}</text>'
-        for x, label in x_ticks
-    )
 
     omitted_note = ""
     if omitted:
@@ -2678,15 +2702,7 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
       <h2 style="margin-bottom:4px;">Rank progress (last {header_days} day{"s" if header_days != 1 else ""})</h2>
       <div class="muted small" style="margin-bottom:14px;">Ranked Solo/Duo &middot; tracking since {esc(tracking_since)}</div>
       <div class="chart-row">
-        <div class="chart-plot">
-          <svg viewBox="0 0 {W} {H}" class="rank-chart chart-wide" role="img" aria-label="Ranked Solo/Duo standing over the last {header_days} days">
-            {bands_svg}
-            {grid_svg}
-            {xticks_svg}
-            {"".join(series_groups)}
-            {"".join(label_groups)}
-          </svg>
-        </div>
+        <div class="chart-plot">{wide_svg}{compact_svg}</div>
         <div class="chart-key" role="group" aria-label="Players on this chart">{"".join(legend_items)}</div>
       </div>
       {omitted_note}
@@ -3976,12 +3992,14 @@ def render_group_top_champions(friends_sorted):
     )
     return f'''
       <div class="muted small" style="margin:18px 0 8px;">Top champions across everyone</div>
-      <table class="matches-table">
-        <thead><tr><th class="num">#</th><th>Champion</th><th>Player</th>
-        <th class="num">Rating</th><th class="num">Games</th>
-        <th class="num">Winrate</th></tr></thead>
-        <tbody>{body}</tbody>
-      </table>'''
+      <div class="table-scroll">
+        <table class="matches-table group-top">
+          <thead><tr><th class="num">#</th><th>Champion</th><th>Player</th>
+          <th class="num">Rating</th><th class="num">Games</th>
+          <th class="num">Winrate</th></tr></thead>
+          <tbody>{body}</tbody>
+        </table>
+      </div>'''
 
 
 BRAND_ACCENT = ("#4c8dff", "#17d3c1")
@@ -5141,11 +5159,6 @@ def build_html(data):
     # chart alone until that exists.
     lp_chart_panel = render_lp_chart(friends_sorted, rank_history, now, tracking_since)
     daily_chart_panel = render_rank_chart(friends_sorted, rank_history, now, tracking_since)
-    if lp_chart_panel:
-        # The 30-day chart has no phone-sized build, and on a small screen it
-        # says less than the per-game chart directly above it. Hide it there
-        # rather than render one that can't be read.
-        daily_chart_panel = f'<div class="wide-screen-only">{daily_chart_panel}</div>'
     rank_chart_panel = (lp_chart_panel or "") + daily_chart_panel
 
     # Flat export of every friend's season matches, embedded once as JSON so
@@ -5483,6 +5496,12 @@ def build_html(data):
      IV") forces a min-width wider than a phone panel, so let it scroll in
      place rather than spill past the panel's rounded edge. */
   .table-scroll {{ overflow-x: auto; }}
+  /* A table will happily crush its columns down to fit rather than overflow,
+     which is why these read as broken rather than scrollable: the header wraps
+     to three lines and nothing moves. A min-width makes the box scroll. */
+  .table-scroll .rate-table {{ min-width: 420px; }}
+  .table-scroll .group-top {{ min-width: 460px; }}
+  .table-scroll .rate-table th, .table-scroll .group-top th {{ white-space: nowrap; }}
   .leaderboard {{ table-layout: fixed; min-width: 100%; }}
   /* Rank needs the most room of the text columns · "Platinum III · 91 LP"
      plus an emblem · and previously got 17%, leaving ~3px of slack, so a
@@ -6448,7 +6467,20 @@ def build_html(data):
     .chart-wide {{ display: none; }}
     .chart-compact {{ display: block; }}
     .card-mid {{ grid-template-columns: minmax(0, 1fr); }}
-    .card-rings {{ justify-content: flex-start; }}
+    /* Two fixed 168px rings plus their gap want 354px, which is wider than
+       the inside of a card on a 375px phone, so they wrapped and sat one on
+       top of the other. Sharing the row and scaling to fit keeps both rings
+       in one glance, which is the whole point of putting them next to each
+       other. */
+    .card-rings {{ justify-content: space-between; flex-wrap: nowrap; gap: 10px; }}
+    .card-rings .donut {{ width: auto; flex: 1 1 0; min-width: 0; }}
+    .card-rings .donut-svg {{ width: 100%; height: auto; max-width: 152px; }}
+    /* The empty state is a bordered circle, not an svg, so it needs telling
+       to be square at whatever width it ends up. */
+    .card-rings .donut-empty {{
+      width: 100%; max-width: 152px; height: auto; aspect-ratio: 1;
+      box-sizing: border-box; border-width: 20px;
+    }}
     .card-trend {{ margin-left: 0; }}
     .q-row {{ grid-template-columns: minmax(0, 1fr) auto; }}
     .q-row .wr-track {{ grid-column: 1 / -1; }}
@@ -6459,7 +6491,6 @@ def build_html(data):
     }}
     .chart-stats {{ font-size: 12px; }}
     .chart-stats th, .chart-stats td {{ padding-left: 6px; padding-right: 6px; }}
-    .wide-screen-only {{ display: none; }}
 
     .rank-row {{ grid-template-columns: 1fr auto; gap: 6px 10px; }}
     .rank-row .wr-track {{ grid-column: 1 / -1; }}
