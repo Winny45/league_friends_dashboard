@@ -45,6 +45,33 @@ jobs:
       - name: Check out the generator
         uses: actions/checkout@v4
 
+      # First, so an unconfigured repo says so plainly. Without this the run
+      # dies in the checkout below with "Input required and not supplied:
+      # token", which does not tell you that the answer is a repository
+      # secret, let alone which one.
+      - name: Check the secrets are set
+        env:
+          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+          STATE_REPO: ${{ secrets.STATE_REPO }}
+          STATE_REPO_TOKEN: ${{ secrets.STATE_REPO_TOKEN }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          missing=""
+          for name in RIOT_API_KEY STATE_REPO STATE_REPO_TOKEN                       VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            eval "value=\$$name"
+            if [ -z "$value" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not set up yet. Missing repository secrets:$missing"
+            echo "ci/README.md has the steps. Every hourly run will fail here"
+            echo "until these exist; disable this workflow meanwhile if the"
+            echo "failure mail is a nuisance."
+            exit 1
+          fi
+          echo "All six secrets are present."
+
       - name: Check out the private state
         uses: actions/checkout@v4
         with:
