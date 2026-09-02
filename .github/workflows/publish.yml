@@ -1,0 +1,123 @@
+# Fetches from Riot, rebuilds the page and publishes it, once an hour, with
+# nothing running on anybody's PC.
+#
+# Two kinds of state have to survive between runs, and they are kept in
+# different places on purpose:
+#
+#   rank_history.json is irreplaceable. Riot does not expose past ranks, so
+#   the whole Rank progress tab is built from snapshots this job has taken.
+#   It goes in a private repo, with real history, and it is tiny.
+#
+#   matches_cache.json, scrape_log.json and champions_cache.json are only
+#   there to avoid re-fetching. They are ~1.4MB that changes every hour, so
+#   committing them hourly would add gigabytes a year to a repo whose history
+#   nobody will ever read. They live in the Actions cache instead: if that is
+#   ever evicted the next run is slow, and nothing is lost.
+#
+# The repo this runs in is public, so no fetched data is ever committed here.
+# data.json, dashboard.html and og.png exist only inside the runner and go
+# straight to Vercel.
+
+name: Publish dashboard
+
+on:
+  schedule:
+    # Hourly. GitHub's scheduler is a queue rather than a clock, so runs
+    # commonly land a few minutes late and can be dropped under load.
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  # A slow run must never overlap the next one: two fetches sharing a cache
+  # and a rank history would race to write both.
+  group: publish-dashboard
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the generator
+        uses: actions/checkout@v4
+
+      - name: Check out the private state
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.STATE_REPO }}
+          token: ${{ secrets.STATE_REPO_TOKEN }}
+          path: .state
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Both scripts import nothing outside the standard library, so there is
+      # no install step to get wrong.
+
+      - name: Restore the fetch caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            matches_cache.json
+            scrape_log.json
+            champions_cache.json
+          # A new key every run, restoring from the newest previous one:
+          # Actions cache entries are immutable, so a fixed key would pin the
+          # first run's cache forever and every later run would refetch.
+          key: fetch-cache-${{ github.run_id }}
+          restore-keys: fetch-cache-
+
+      - name: Bring the rank history into the working copy
+        run: cp .state/rank_history.json ./rank_history.json
+
+      - name: Assemble config.json
+        env:
+          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+        run: python ci/make_config.py
+
+      - name: Fetch from Riot
+        run: python fetch_data.py
+
+      - name: Rebuild the page
+        run: python generate_dashboard.py
+
+      - name: Assemble the deploy directory
+        run: |
+          cp dashboard.html deploy/index.html
+          cp og.png icon-180.png deploy/
+          ls -l deploy
+
+      - name: Check the page before it goes public
+        run: python ci/check_deploy.py
+
+      - name: Publish to Vercel
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          npm install --global vercel@latest
+          cd deploy
+          vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
+
+      # Last, so a failed fetch or a failed deploy leaves the stored history
+      # exactly as it was.
+      - name: Save the rank history
+        run: |
+          cp rank_history.json .state/rank_history.json
+          cd .state
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Only this one file, by name. A bare `git add -A` here would be the
+          # one line that could commit fetched player data by accident.
+          git add rank_history.json
+          if git diff --cached --quiet; then
+            echo "No new rank snapshots."
+          else
+            git commit -m "Rank snapshots $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
