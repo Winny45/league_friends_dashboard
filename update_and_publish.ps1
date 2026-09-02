@@ -81,13 +81,28 @@ try {
     $deployArgs = @("deploy", "--prod", "--yes")
     if ($token) { $deployArgs += @("--token", $token) }
 
-    # Start-Process rather than calling it directly: a plain call gives no way
-    # to walk away from a process that will not finish.
-    $outFile = Join-Path $env:TEMP "vercel_deploy_out.txt"
-    $errFile = Join-Path $env:TEMP "vercel_deploy_err.txt"
-    $proc = Start-Process -FilePath "vercel.cmd" -ArgumentList $deployArgs `
-                          -NoNewWindow -PassThru `
-                          -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    # Built by hand rather than with Start-Process, which is the obvious way
+    # and the wrong one: in Windows PowerShell its -PassThru object never
+    # populates ExitCode, so it reads as $null. "$null -ne 0" is true, so a
+    # deploy that had just finished in six seconds was reported as failed.
+    # A Process started this way returns the real code.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "vercel.cmd"
+    $psi.Arguments = ($deployArgs | ForEach-Object {
+        if ($_ -match '\s') { '"' + $_ + '"' } else { $_ }
+    }) -join " "
+    $psi.WorkingDirectory = $static
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    $null = $proc.Start()
+    # Read both pipes asynchronously. Reading one to the end before the other
+    # deadlocks as soon as the CLI fills the pipe it is not being read from.
+    $stdout = $proc.StandardOutput.ReadToEndAsync()
+    $stderr = $proc.StandardError.ReadToEndAsync()
 
     $timedOut = -not $proc.WaitForExit(420000)   # seven minutes
     if ($timedOut) {
@@ -95,8 +110,8 @@ try {
         # its own leaves node running and still waiting.
         & taskkill /PID $proc.Id /T /F | Out-Null
     }
-    foreach ($f in @($outFile, $errFile)) {
-        if (Test-Path $f) { Get-Content $f | Where-Object { $_ -ne "" } }
+    foreach ($task in @($stdout, $stderr)) {
+        try { $task.Result -split "`n" | Where-Object { $_.Trim() -ne "" } } catch {}
     }
 
     if ($timedOut) {
@@ -108,8 +123,9 @@ try {
         exit 1
     }
     if ($proc.ExitCode -ne 0) {
-        Write-Host "The deploy failed. The rebuilt page is in $static and can be" -ForegroundColor Red
-        Write-Host "published by hand with: vercel.cmd deploy --prod --yes" -ForegroundColor Red
+        Write-Host "The deploy failed (exit $($proc.ExitCode)). The rebuilt page is in" -ForegroundColor Red
+        Write-Host "$static and can be published by hand with:" -ForegroundColor Red
+        Write-Host "  vercel.cmd deploy --prod --yes" -ForegroundColor Red
         exit 1
     }
 } finally {
