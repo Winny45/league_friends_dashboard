@@ -61,10 +61,12 @@ if ($SkipDeploy) {
 Write-Host "Publishing..." -ForegroundColor Cyan
 Push-Location $static
 try {
-    vercel.cmd deploy --prod
+    # --yes so the CLI can never stop on a confirmation. A scheduled run has
+    # no console to answer from, and it would hang rather than fail.
+    vercel.cmd deploy --prod --yes
     if ($LASTEXITCODE -ne 0) {
         Write-Host "The deploy failed. The rebuilt page is in $static and can be" -ForegroundColor Red
-        Write-Host "published by hand with: vercel.cmd deploy --prod" -ForegroundColor Red
+        Write-Host "published by hand with: vercel.cmd deploy --prod --yes" -ForegroundColor Red
         exit 1
     }
 } finally {
