@@ -963,6 +963,13 @@ COUNTER_MIN_WINRATE = 60.0
 TOP_CHAMPION_PRIOR = 15
 TOP_CHAMPION_VOLUME = 16.0  # most a champion can gain from being played a lot
 TOP_CHAMPION_KDA = 6.0      # most it can gain or lose on KDA against their own average
+# How far above or below their own average a champion's KDA has to be before
+# that term is worth its full six points. The term used to reach full value
+# only at double or half the account average, which nobody ever manages, so a
+# six point term never moved past one point and the KDA barely counted. A
+# third above average is a real difference and now scores like one.
+TOP_CHAMPION_KDA_SPAN = 0.33
+TOP_CHAMPION_MIN_GAMES = 10  # below this a champion is not a top champion
 COUNTER_DISCOUNT = 0.5      # share of a counter pick's lift that is not credited
 
 
@@ -1101,7 +1108,7 @@ def top_champions(season_matches, matchups, limit=5):
         # winrate lift, and capped so it can nudge an order rather than set it.
         kda_edge = 0.0
         if own_kda > 0:
-            ratio = (champ_kda - own_kda) / own_kda
+            ratio = (champ_kda - own_kda) / own_kda / TOP_CHAMPION_KDA_SPAN
             kda_edge = max(-1.0, min(1.0, ratio)) * TOP_CHAMPION_KDA * confidence
         out.append(dict(
             r,
@@ -1112,12 +1119,11 @@ def top_champions(season_matches, matchups, limit=5):
             counterShare=round(counter_share, 2),
             kda=round(champ_kda, 2),
         ))
-    # A single game says nothing at all, and letting one through pushes out a
-    # champion that has something to say. Only enforced while there is enough
-    # to fill the list without it.
-    solid = [r for r in out if r["games"] >= 3]
-    if len(solid) >= limit:
-        out = solid
+    # A hard floor rather than a preference. Under ten games a winrate is a
+    # story about one evening, and this used to relax the rule whenever it
+    # could not fill five rows, which is exactly when the thin records were
+    # least trustworthy. A short table is the honest answer.
+    out = [r for r in out if r["games"] >= TOP_CHAMPION_MIN_GAMES]
     out.sort(key=lambda r: (-r["rating"], -r["games"]))
     return out[:limit]
 
@@ -1609,7 +1615,7 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       <div class="card-lower">
         <div class="cl-block cl-wide">
           <div class="section-label">Top champions
-            <span class="label-note" title="Rating = {esc(f["label"])}&#39;s winrate across every game ({(overall_winrate(season_matches) or 0):.1f}%), plus how far this champion beats it, plus up to {TOP_CHAMPION_VOLUME:.0f} points for volume.&#10;&#10;The lift is multiplied by games / (games + {TOP_CHAMPION_PRIOR}), so a 3 game 100% counts for a fraction of what a 300 game record does, and halved again for the share of its games played in matchups it already wins more often than usual.&#10;&#10;Volume = {TOP_CHAMPION_VOLUME:.0f} x log(1 + games) / log(1 + most played).">weighted</span></div>
+            <span class="label-note" title="Rating = {esc(f["label"])}&#39;s winrate across every game ({(overall_winrate(season_matches) or 0):.1f}%), plus how far this champion beats it, plus up to {TOP_CHAMPION_VOLUME:.0f} points for volume, plus or minus up to {TOP_CHAMPION_KDA:.0f} for KDA.&#10;&#10;The lift is multiplied by games / (games + {TOP_CHAMPION_PRIOR}), so a 3 game 100% counts for a fraction of what a 300 game record does, and halved again for the share of its games played in matchups it already wins more often than usual.&#10;&#10;KDA compares this champion&#39;s average against {esc(f["label"])}&#39;s own across every game; {TOP_CHAMPION_KDA_SPAN * 100:.0f}% above or below scores the full {TOP_CHAMPION_KDA:.0f} points, shrunk by the same confidence as the lift.&#10;&#10;Volume = {TOP_CHAMPION_VOLUME:.0f} x log(1 + games) / log(1 + most played).&#10;&#10;Champions with fewer than {TOP_CHAMPION_MIN_GAMES} games are not eligible.">weighted</span></div>
           {render_top_champions(top_champs)}
         </div>
         <div class="cl-block">
@@ -3223,6 +3229,40 @@ def longest_daily_run(dates):
     return best, best_start, best_end
 
 
+# The order cards appear in, read left to right, three to a row. Kept as a
+# list rather than as the order the add() calls happen to run in: the code
+# groups them by what they measure, which is the right way to read the code
+# and the wrong way to read the page. Anything not named here sorts to the
+# end rather than disappearing, so adding a card cannot silently lose it.
+WEEK_TILE_ORDER = [
+    "Total games this week", "Most active player", "Games played together",
+    "Biggest climber", "Hottest streak", "Animal of the week",
+    "Most loved champion", "Adaptable", "Grasshopper",
+]
+
+SEASON_HIGHLIGHT_ORDER = [
+    "MVP", "KDA king", "Farm god",
+    "Marathon day", "Season grinder", "Unemployed",
+    "Chicken dinner", "If at first you don't succeed", "Sisyphus",
+    "The assassin", "The wall", "The DPS",
+    "On a mission", "Int alert", "I cannot see, I'm legally blind",
+    "Tickle monster", "Dirty KSer", "Passenger",
+    "Speedrunner", "Besto Friendo", "Just this once",
+    "Diffed", "Lights were too bright", "Resilient",
+]
+
+DUO_CARD_ORDER = [
+    "Lovers", "Perfect couple", "Healthy relationship",
+    "Exes", "Vegas wedding", "Sneaky link",
+]
+
+
+def in_declared_order(items, order, title_of):
+    """Sort to `order`, keeping anything unlisted at the end in its own order."""
+    rank = {title: i for i, title in enumerate(order)}
+    return sorted(items, key=lambda x: rank.get(title_of(x), len(order)))
+
+
 def season_highlights(friends, now):
     """Every superlative that can be taken from what is stored."""
     out = []
@@ -3272,7 +3312,7 @@ def season_highlights(friends, now):
                     lambda f, g, v, r: (lambda n, a, b: f'played <strong>{n}</strong> days running, '
                                         f'{a.strftime("%b %d")} to {b.strftime("%b %d")}.')
                     (*longest_daily_run([m.get("dateKey") for m in g]))),
-              "\U0001f6cb", "Unemployed"))
+              "\U0001f6cf\ufe0f", "Unemployed"))
 
     # ---- streaks -----------------------------------------------------------
     def ordered(g):
@@ -3286,7 +3326,7 @@ def season_highlights(friends, now):
               "\U0001f4c9", "If at first you don't succeed"))
     add(_wrap(_best(friends, lambda f, g: streaks(ordered(g))[2],
                     lambda f, g, v, r: f'alternated win, loss, win for <strong>{v}</strong> games.'),
-              "\u267b\ufe0f", "Sisyphus"))
+              "\u26f0\ufe0f", "Sisyphus"))
 
     # ---- damage ------------------------------------------------------------
     add(_wrap(_best(friends, lambda f, g: _mean([m.get("damageDealt", 0) for m in g]),
@@ -3301,7 +3341,7 @@ def season_highlights(friends, now):
     add(_wrap(_best(friends, dmg_per_kill,
                     lambda f, g, v, r: (f'It takes {esc(f["label"])} <strong>{v:,.0f}</strong> '
                                         f'damage to get a kill.')),
-              "\U0001faf3", "Tickle monster", whole=True))
+              "\U0001f54a\ufe0f", "Tickle monster", whole=True))
     add(_wrap(_best(friends, dmg_per_kill, lowest=True,
                     fmt=lambda f, g, v, r: (f'{esc(f["label"])} only needs <strong>{v:,.0f}</strong> '
                                             f'damage to get a kill, suspicious if you ask me.')),
@@ -3352,7 +3392,7 @@ def season_highlights(friends, now):
     add(_wrap(_best(friends, winning_kda, lowest=True,
                     fmt=lambda f, g, v, r: (f'averages <strong>{v:.2f}</strong> KDA in the games '
                                             f'they win.')),
-              "\U0001f6cc", "Passenger"))
+              "\U0001f697", "Passenger"))
 
     def long_losses(f, g):
         lost = [m.get("durationMin", 0) for m in g if not m["win"]]
@@ -3361,7 +3401,7 @@ def season_highlights(friends, now):
     add(_wrap(_best(friends, long_losses,
                     lambda f, g, v, r: (f'averages <strong>{v:.0f}</strong> minutes during losses, '
                                         f'truly a fighter until the end.')),
-              "\u23f3", "Resilient"))
+              "\U0001f6e1\ufe0f", "Resilient"))
 
     # ---- oddities ----------------------------------------------------------
     def besto(f, g):
@@ -3458,10 +3498,9 @@ def season_highlights(friends, now):
     add(_wrap(_best(friends, diffed,
                     lambda f, g, v, r: (f'had a lower KDA than their lane opponent in '
                                         f'<strong>{v:.0f}%</strong> of games.')),
-              "\U0001f4c9", "Diffed"))
+              "\U0001f44e", "Diffed"))
 
-
-    return out
+    return in_declared_order(out, SEASON_HIGHLIGHT_ORDER, lambda c: c["title"])
 
 
 def _wrap(card, icon, title, whole=False):
@@ -3792,12 +3831,12 @@ def week_tiles(friends_sorted, rank_history, now):
 
     everyone = [m for ms in week.values() for m in ms]
     if everyone:
-        tiles.append(("\U0001f4c8", "Games this week",
+        tiles.append(("\U0001f4bb", "Total games this week",
                       f'<strong>{len(everyone)}</strong> ranked games, {mins(everyone)} of League.'))
 
     busiest = max(week.items(), key=lambda kv: len(kv[1]), default=None)
     if busiest and busiest[1]:
-        tiles.append(("\u23f1\ufe0f", "Most active",
+        tiles.append(("\u23f1\ufe0f", "Most active player",
                       f'{esc(busiest[0])} played <strong>{len(busiest[1])}</strong> games, '
                       f'{mins(busiest[1])}.'))
 
@@ -3808,7 +3847,7 @@ def week_tiles(friends_sorted, rank_history, now):
             if _DUO_CTX["map"].get((m.get("matchId"), label)):
                 shared[m["matchId"]] = m
     if shared:
-        tiles.append(("\U0001f465", "Played together",
+        tiles.append(("\U0001f465", "Games played together",
                       f'<strong>{len(shared)}</strong> games were played together, '
                       f'{mins(shared.values())} of League.'))
 
@@ -3848,7 +3887,7 @@ def week_tiles(friends_sorted, rank_history, now):
         n_players = len(v["players"])
         tiles.append(("\U0001f43e", "Animal of the week",
                       f'{esc(champion_display(champ))} was played by <strong>{n_players}</strong> '
-                      f'of them and had a winrate of {rate:.0f}% across {v["games"]} games.'))
+                      f'people and had a winrate of {rate:.0f}% across {v["games"]} games.'))
 
     # Pick rate averaged over the players who played at all, so a champion one
     # person spams does not beat one everybody reaches for.
@@ -3904,7 +3943,7 @@ def week_tiles(friends_sorted, rank_history, now):
                       f'{esc(label)} picked up {esc(champion_display(champ))} and played it '
                       f'<strong>{n}</strong> time{"s" if n != 1 else ""} already.'))
 
-    return tiles
+    return in_declared_order(tiles, WEEK_TILE_ORDER, lambda t: t[1])
 
 
 def duo_cards(friends, rows, now):
@@ -3980,7 +4019,7 @@ def duo_cards(friends, rows, now):
                       f'{name(r)} win <strong>{r["total"]["winrate"]}%</strong> together, '
                       f'{gap:.1f}% better than with their usual partners.'))
 
-    return cards
+    return in_declared_order(cards, DUO_CARD_ORDER, lambda c: c[1])
 
 
 def group_top_champions(friends, limit=10):
@@ -5626,7 +5665,13 @@ def build_html(data):
   .pos-3 {{ background: color-mix(in srgb, var(--bronze) 20%, transparent); color: var(--bronze); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bronze) 45%, transparent); }}
 
   /* ---- Award / highlight cards -------------------------------------- */
-  .awards {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 12px; }}
+  /* Three to a row, declared rather than fitted. auto-fill gave two, three or
+     four across depending on how wide the window happened to be, so the rows
+     the cards are grouped into were only sometimes the rows on screen. Below
+     900px it drops to two and then one, since three columns of a card that
+     wants 258px does not fit a phone. */
+  .awards {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }}
+  @media (max-width: 900px) {{ .awards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
   .award {{
     display: flex; gap: 12px; align-items: flex-start; background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 12px; padding: 13px 14px;
