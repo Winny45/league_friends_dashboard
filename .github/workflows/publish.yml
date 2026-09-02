@@ -39,7 +39,12 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # A warm run takes a couple of minutes. A cold one has to fetch the
+    # detail of every match of the season, about 2,800 of them, and a
+    # development key's rate limit puts that near an hour. The cache makes
+    # this a first-run cost only, but the first run has to be allowed to
+    # finish or it never gets a cache to reuse.
+    timeout-minutes: 180
 
     steps:
       - name: Check out the generator
