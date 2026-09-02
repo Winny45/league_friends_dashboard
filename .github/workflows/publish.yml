@@ -95,21 +95,27 @@ jobs:
       # Both scripts import nothing outside the standard library, so there is
       # no install step to get wrong.
 
+      # A branch in the state repo rather than the Actions cache. The Actions
+      # cache only writes in a post step, and a post step is skipped when a
+      # job is cancelled: the first cold run hit the job timeout, so an hour
+      # of fetching was thrown away and the next run would have started from
+      # nothing again, forever. This branch is written by an ordinary step
+      # that runs even when the job is cancelled.
       - name: Restore the fetch caches
-        uses: actions/cache@v4
+        uses: actions/checkout@v4
         with:
-          path: |
-            matches_cache.json
-            scrape_log.json
-            champions_cache.json
-          # A new key every run, restoring from the newest previous one:
-          # Actions cache entries are immutable, so a fixed key would pin the
-          # first run's cache forever and every later run would refetch.
-          key: fetch-cache-${{ github.run_id }}
-          restore-keys: fetch-cache-
+          repository: ${{ secrets.STATE_REPO }}
+          ref: cache
+          ssh-key: ${{ secrets.STATE_REPO_SSH_KEY }}
+          path: .cache
 
-      - name: Bring the rank history into the working copy
-        run: cp .state/rank_history.json ./rank_history.json
+      - name: Bring the stored state into the working copy
+        run: |
+          cp .state/rank_history.json ./rank_history.json
+          for f in matches_cache.json scrape_log.json champions_cache.json; do
+            if [ -f ".cache/$f" ]; then cp ".cache/$f" "./$f"; fi
+          done
+          ls -l *.json
 
       - name: Assemble config.json
         env:
@@ -144,6 +150,32 @@ jobs:
           # console to show it. Actions would time out rather than hang, but
           # an hour of a runner is still an hour.
           CI=1 vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
+
+      # always(), so a run killed by the job timeout still keeps whatever it
+      # managed to fetch. fetch_data.py writes the cache incrementally, so
+      # partial progress is real progress and the next run carries on.
+      - name: Save the fetch caches
+        if: always()
+        run: |
+          for f in matches_cache.json scrape_log.json champions_cache.json; do
+            if [ -f "$f" ]; then cp "$f" ".cache/$f"; fi
+          done
+          cd .cache
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Caches unchanged."
+          else
+            # An orphan commit every time, force-pushed. There is no value in
+            # the history of a rebuildable cache, and keeping one would add
+            # gigabytes a year for nobody to read.
+            git checkout -q --orphan snapshot
+            git add -A
+            git commit -q -m "Cache snapshot $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push -q --force origin snapshot:cache
+            echo "Caches saved."
+          fi
 
       # Last, so a failed fetch or a failed deploy leaves the stored history
       # exactly as it was.
