@@ -57,6 +57,19 @@ $run = "wscript.exe \`"$launcher\`""
 
 schtasks /Create /TN $taskName /TR $run @sched /F | Out-Null
 
+# schtasks has no switch for either of these. A laptop that sleeps through
+# an hour skips that run entirely and waits for the next one, and by default
+# Windows will not start the task at all on battery.
+try {
+    $settings = (Get-ScheduledTask -TaskName $taskName).Settings
+    $settings.StartWhenAvailable = $true           # run a missed slot on wake
+    $settings.DisallowStartIfOnBatteries = $false
+    $settings.StopIfGoingOnBatteries = $false
+    Set-ScheduledTask -TaskName $taskName -Settings $settings | Out-Null
+} catch {
+    Write-Host "Could not set the catch-up options: $_" -ForegroundColor Yellow
+}
+
 # Registering can fail while still printing something reassuring, so the task
 # is read back rather than assumed. This script used to claim success after a
 # failed registration.
