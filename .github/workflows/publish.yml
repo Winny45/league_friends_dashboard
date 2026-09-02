@@ -53,13 +53,13 @@ jobs:
         env:
           RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
           STATE_REPO: ${{ secrets.STATE_REPO }}
-          STATE_REPO_TOKEN: ${{ secrets.STATE_REPO_TOKEN }}
+          STATE_REPO_SSH_KEY: ${{ secrets.STATE_REPO_SSH_KEY }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           missing=""
-          for name in RIOT_API_KEY STATE_REPO STATE_REPO_TOKEN                       VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+          for name in RIOT_API_KEY STATE_REPO STATE_REPO_SSH_KEY                       VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
             eval "value=\$$name"
             if [ -z "$value" ]; then missing="$missing $name"; fi
           done
@@ -72,11 +72,15 @@ jobs:
           fi
           echo "All six secrets are present."
 
+      # An SSH deploy key rather than a personal access token. A PAT is
+      # attached to the account and, unless it is a fine-grained one scoped by
+      # hand, reaches every repo the account owns. This key can write to the
+      # state repo and nothing else, and revoking it is deleting one key.
       - name: Check out the private state
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.STATE_REPO }}
-          token: ${{ secrets.STATE_REPO_TOKEN }}
+          ssh-key: ${{ secrets.STATE_REPO_SSH_KEY }}
           path: .state
 
       - uses: actions/setup-python@v5

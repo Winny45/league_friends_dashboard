@@ -51,10 +51,25 @@ In this repo, under Settings, Secrets and variables, Actions:
 |---|---|
 | `RIOT_API_KEY` | your Personal API Key |
 | `STATE_REPO` | `yourname/your-private-state-repo` |
-| `STATE_REPO_TOKEN` | a fine-grained PAT with Contents: read and write on that repo only |
+| `STATE_REPO_SSH_KEY` | the private half of an SSH deploy key with write access on that repo (see below) |
 | `VERCEL_TOKEN` | the token from step 3 |
 | `VERCEL_ORG_ID` | `orgId` from `project.json` |
 | `VERCEL_PROJECT_ID` | `projectId` from `project.json` |
+
+### Why a deploy key and not a token
+
+A personal access token belongs to the account, and unless it is a
+fine-grained one scoped by hand it can reach every repo the account owns. An
+SSH deploy key is attached to one repository:
+
+```bash
+ssh-keygen -t ed25519 -N "" -C "league-dashboard-actions" -f state_key
+gh repo deploy-key add state_key.pub --repo <you>/<state repo>     --title "GitHub Actions hourly publish" --allow-write
+gh secret set STATE_REPO_SSH_KEY --repo <you>/league_friends_dashboard < state_key
+rm state_key state_key.pub
+```
+
+Revoking it is deleting that one key, and it can write to nothing else.
 
 ## 5. Run it once by hand
 
