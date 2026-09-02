@@ -26,8 +26,18 @@ already prepared in `.state/`:
 
 ## 3. A Vercel token
 
-Create one at vercel.com/account/tokens. The org and project ids are in the
-static folder's `.vercel/project.json`:
+Create one at vercel.com/account/tokens. A **project-scoped** token (they
+start `vcp_`) is enough and is the better choice: it can deploy this project
+and nothing else. It cannot read `/v2/user` or list teams, so do not be
+alarmed if a token checker written against those endpoints calls it invalid.
+
+The same token is what `update_and_publish.ps1` reads from `config.json` as
+`vercel_token`, so one token covers both the local task and this workflow.
+Without it the CLI falls back to its saved interactive login, which expires
+and then blocks forever on a device-code prompt that no scheduled run can
+answer.
+
+The org and project ids are in the static folder's `.vercel/project.json`:
 
 ```bash
 cat ../league_dashboard_static/.vercel/project.json
