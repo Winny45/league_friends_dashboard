@@ -1,5 +1,51 @@
 [
   {
+    "date": "2026-09-02",
+    "title": "Highlight cards reworded, and two of them were lying",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The wall and The assassin were reporting nonsense: 239 damage soaked per death, 53 damage per takedown. Damage taken is only recorded on matches fetched since that field was added, about 3% of the season, but the totals were being divided by every match's deaths. A partial numerator over a complete denominator. Both now measure across the same matches, and read 4,376 and 1,289."
+      },
+      {
+        "type": "added",
+        "text": "The assassin: whoever takes the least damage for each kill or assist they get. Dealing death without being hit."
+      },
+      {
+        "type": "changed",
+        "text": "Rank progress (last 30 days) is now Daily rank progress, and its reading is taken at midnight GMT rather than whenever the machine happened to be on. Every point on that chart is now a comparable time of day. Rank now beside it reads the live standing, so it does not go stale between midnights."
+      },
+      {
+        "type": "fixed",
+        "text": "Data from now names the moment the run started asking Riot rather than the moment it finished writing. The fetch takes about seventy seconds, so an hourly job firing at 15:00:02 was reporting its data as 15:01:14, which read like it had missed the hour."
+      },
+      {
+        "type": "changed",
+        "text": "Grasshopper asked for a champion never played this season, which ruled out anyone coming back to something after a long gap. It now wants one untouched in the previous seven days that was under 5% of their picks before that."
+      },
+      {
+        "type": "changed",
+        "text": "Passenger measures the lowest KDA in games won, not games lost. A low KDA in a game you lost is just losing; a low KDA in a game your team won anyway is being carried."
+      },
+      {
+        "type": "changed",
+        "text": "Rory takes the orange and Brett the steel. They sit next to each other in every legend, so orange beside copper read as one colour. Shas and Shas2nd are now two shades of the same pink, being two accounts belonging to one person."
+      },
+      {
+        "type": "changed",
+        "text": "Keep coming up short is now Resilient. Sisyphus had a boulder emoji that rendered as an empty box on Windows. Biggest climber names the LP and both ranks and drops the winrate. Played together, Animal of the week, Most loved champion, The DPS, Tickle monster, Dirty KSer, On a mission, Int alert, Speedrunner, Diffed, Vegas wedding and Sneaky link have all been reworded."
+      },
+      {
+        "type": "changed",
+        "text": "The assassin and The wall now sit together, the vision card follows Int alert, Besto Friendo follows Speedrunner, and Healthy relationship follows Perfect couple."
+      },
+      {
+        "type": "removed",
+        "text": "The Hot streak badge is gone from the friend cards. The busiest day tile now reads as a sentence: the number, then games played on that day."
+      }
+    ]
+  },
+  {
     "date": "2026-09-01",
     "title": "Publishing on the hour, and two-colour duo cards",
     "items": [

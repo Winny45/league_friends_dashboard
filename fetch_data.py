@@ -616,8 +616,19 @@ def load_rank_history():
 
 
 def record_rank_snapshots(history, results, today_key):
-    """Upsert one snapshot per (friend, queue) per day — re-running multiple
-    times in a day overwrites today's snapshot rather than duplicating it."""
+    """One snapshot per (friend, queue) per day, taken as near midnight as the
+    schedule allows.
+
+    This used to overwrite, so on an hourly schedule a day's stored reading
+    was whatever the 23:00 run saw and the daily chart's points were taken at
+    a different time every day depending on when the machine happened to be
+    on. Keeping the first reading of each UTC day means every point on that
+    chart is a midnight reading, and the days are comparable.
+
+    If the midnight run fails, the first run that does succeed becomes the
+    day's anchor, which is the right fallback: a reading a few hours late
+    beats no reading.
+    """
     by_key = {(h["label"], h["queue"], h["date"]): h for h in history}
     now_ms = datetime.now().timestamp() * 1000
     for r in results:
@@ -639,7 +650,8 @@ def record_rank_snapshots(history, results, today_key):
                 "rank": entry.get("rank"),
                 "leaguePoints": entry.get("leaguePoints", 0),
             }
-            by_key[(r["label"], queue_key, today_key)] = snap
+            # setdefault, not assignment: the first reading of the day stands.
+            by_key.setdefault((r["label"], queue_key, today_key), snap)
     merged = list(by_key.values())
     cutoff = (datetime.now() - timedelta(days=RANK_HISTORY_KEEP_DAYS)).strftime("%Y-%m-%d")
     merged = [h for h in merged if h["date"] >= cutoff]
@@ -687,6 +699,10 @@ def parse_args(argv):
 
 
 def main():
+    # Taken before anything is fetched: this is what the dashboard shows as
+    # "Data from", and it should name the moment the reading was taken.
+    run_started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
     config_path, resync, allow_partial, refetch_details, prune_cache = parse_args(sys.argv[1:])
     if not config_path.exists():
         print(f"Config file not found: {config_path}\n"
@@ -765,7 +781,11 @@ def main():
             save_match_cache(match_cache)
             save_scrape_log(scrape_log)
 
-    today_key = datetime.now().strftime("%Y-%m-%d")
+    # The day boundary for rank snapshots is UTC, so "one reading a day" means
+    # one reading since midnight GMT rather than since midnight wherever this
+    # happens to run. The hourly schedule is also in UTC, so the first run of
+    # each day is the midnight one.
+    today_key = datetime.utcnow().strftime("%Y-%m-%d")
     rank_history = load_rank_history()
     rank_history = record_rank_snapshots(rank_history, results, today_key)
     save_rank_history(rank_history)
@@ -791,7 +811,11 @@ def main():
     champ_data = get_champion_data()
 
     out = {
-        "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        # When the run started, not when it finished writing. The fetch takes
+        # about seventy seconds, so stamping the end made an hourly job that
+        # fires at 15:00:02 report its data as "15:01:14", which reads like it
+        # missed the hour. The snapshot is of the moment it began asking Riot.
+        "generatedAt": run_started,
         "platform": config["platform"],
         "seasonStart": datetime.fromtimestamp(season_start_epoch).strftime("%Y-%m-%d"),
         "friends": results,
