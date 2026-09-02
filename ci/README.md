@@ -98,9 +98,17 @@ the next run is slow and nothing is lost.
 `og.png` exist only inside the runner and go straight to Vercel. The one step
 that commits names its single file explicitly rather than using `git add -A`.
 
-**The old Windows task still exists.** Once the workflow is green, remove it
-so the two are not publishing over each other:
+**The Windows task is disabled, not deleted.** Leaving both running is worse
+than it sounds: they keep separate rank histories, the task writing the local
+`rank_history.json` and the workflow writing the state repo's. They would
+drift apart and then take turns overwriting the published page with their own
+version of the past.
 
 ```powershell
-Unregister-ScheduledTask -TaskName "LeagueFriendsDashboard-AutoUpdate" -Confirm:$false
+Enable-ScheduledTask  -TaskName "LeagueFriendsDashboard-AutoUpdate"   # back to the PC
+Disable-ScheduledTask -TaskName "LeagueFriendsDashboard-AutoUpdate"   # back to Actions
 ```
+
+If you do switch back, copy `rank_history.json` out of the state repo first,
+or the local copy resumes from wherever it left off and the gap is permanent:
+Riot cannot tell you what rank anybody was last Tuesday.
