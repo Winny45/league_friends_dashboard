@@ -529,6 +529,18 @@ def render_champion_icon(champion_name, size=20):
 LIVE_RANKED_QUEUES = [420, 440, 710]
 LIVE_QUEUE_NAMES = {"420": "Ranked Solo/Duo", "440": "Ranked Flex", "710": "Ranked 5s"}
 
+# The only queues allowed to reach a stat, a chart or a highlight. fetch_data
+# filters on this already, both server-side in the id listing and again on the
+# way out, so this is the third gate rather than the first. It is here because
+# a wrong number on the page is the thing anyone actually notices, and because
+# "is this counting something it should not?" is a question worth being able
+# to answer by reading one line rather than by trusting three.
+#
+# Note what is not in it and cannot be: Teamfight Tactics is a separate game
+# on a separate API (/tft/match/v1). Nothing in this project calls it, so a
+# TFT game has no route into the data at all.
+ALLOWED_QUEUES = frozenset(LIVE_QUEUE_NAMES.values())
+
 # ranked-emblems-latest/ was removed from Community Dragon and every tier
 # under it now 404s, which is why no card had an emblem. The mini crests are
 # the supported path, and being SVG they are under 2 KB each rather than the
@@ -8339,6 +8351,34 @@ def load_site_url():
         return ""
 
 
+def report_and_filter_queues(data):
+    """Drop anything outside ALLOWED_QUEUES, and say what was counted.
+
+    Printed on every build so the queue mix is visible rather than assumed.
+    Anything dropped here is a bug upstream, so it is reported loudly rather
+    than silently discarded.
+    """
+    counts, dropped = {}, {}
+    for f in data.get("friends", []):
+        keep = []
+        for m in f.get("seasonMatches", []):
+            q = m.get("queue")
+            if q in ALLOWED_QUEUES:
+                counts[q] = counts.get(q, 0) + 1
+                keep.append(m)
+            else:
+                dropped[q] = dropped.get(q, 0) + 1
+        f["seasonMatches"] = keep
+
+    total = sum(counts.values())
+    mix = ", ".join(f"{q} {n}" for q, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+    print(f"Counting {total} ranked games: {mix}")
+    if dropped:
+        detail = ", ".join(f"{q!r} {n}" for q, n in sorted(dropped.items()))
+        print(f"  ! dropped {sum(dropped.values())} game(s) from queues that should not be "
+              f"here: {detail}")
+
+
 def main():
     data_path = Path(sys.argv[1] if len(sys.argv) > 1 else "data.json")
     out_path = Path(sys.argv[2] if len(sys.argv) > 2 else "dashboard.html")
@@ -8347,6 +8387,7 @@ def main():
         sys.exit(1)
     data = json.loads(data_path.read_text(encoding="utf-8"))
     data.setdefault("siteUrl", load_site_url())
+    report_and_filter_queues(data)
     out_path.write_text(build_html(data), encoding="utf-8")
     print(f"Wrote {out_path}")
 

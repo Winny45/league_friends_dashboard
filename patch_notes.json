@@ -42,6 +42,10 @@
       {
         "type": "removed",
         "text": "The Hot streak badge is gone from the friend cards. The busiest day tile now reads as a sentence: the number, then games played on that day."
+      },
+      {
+        "type": "changed",
+        "text": "Only Ranked Solo/Duo, Flex and 5s can reach a stat, and the build now prints the count of each so the mix is visible rather than assumed. Anything else is dropped and reported loudly. Teamfight Tactics is a separate game on a separate API that nothing here calls, so it has no route into the data in the first place; this is the third gate rather than the first."
       }
     ]
   },
