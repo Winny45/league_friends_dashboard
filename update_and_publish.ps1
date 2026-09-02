@@ -61,10 +61,53 @@ if ($SkipDeploy) {
 Write-Host "Publishing..." -ForegroundColor Cyan
 Push-Location $static
 try {
-    # --yes so the CLI can never stop on a confirmation. A scheduled run has
-    # no console to answer from, and it would hang rather than fail.
-    vercel.cmd deploy --prod --yes
-    if ($LASTEXITCODE -ne 0) {
+    # The deploy is run under a hard timeout, because it has already hung once
+    # in a way nothing could see. The CLI decided its saved login needed
+    # refreshing, printed a device code, and sat on "Waiting for
+    # authentication..." forever. Under the scheduled task there is no console
+    # showing that, so the hour's run simply never ended. Neither --yes nor
+    # CI=1 prevents it: --yes only answers confirmations, and this build asks
+    # anyway.
+    #
+    # A token removes the question entirely. Put "vercel_token" in config.json
+    # (which is gitignored) from vercel.com/account/tokens, and an unattended
+    # run stops depending on a refreshable interactive session.
+    $env:CI = "1"
+    $token = $null
+    if (Test-Path (Join-Path $PSScriptRoot "config.json")) {
+        $token = (Get-Content (Join-Path $PSScriptRoot "config.json") -Raw |
+                  ConvertFrom-Json).vercel_token
+    }
+    $deployArgs = @("deploy", "--prod", "--yes")
+    if ($token) { $deployArgs += @("--token", $token) }
+
+    # Start-Process rather than calling it directly: a plain call gives no way
+    # to walk away from a process that will not finish.
+    $outFile = Join-Path $env:TEMP "vercel_deploy_out.txt"
+    $errFile = Join-Path $env:TEMP "vercel_deploy_err.txt"
+    $proc = Start-Process -FilePath "vercel.cmd" -ArgumentList $deployArgs `
+                          -NoNewWindow -PassThru `
+                          -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+
+    $timedOut = -not $proc.WaitForExit(420000)   # seven minutes
+    if ($timedOut) {
+        # /T because the CLI is a .cmd wrapping node: killing the wrapper on
+        # its own leaves node running and still waiting.
+        & taskkill /PID $proc.Id /T /F | Out-Null
+    }
+    foreach ($f in @($outFile, $errFile)) {
+        if (Test-Path $f) { Get-Content $f | Where-Object { $_ -ne "" } }
+    }
+
+    if ($timedOut) {
+        Write-Host "The deploy did not finish within seven minutes and was killed." -ForegroundColor Red
+        Write-Host "If the output above asks you to visit a vercel.com/oauth/device link," -ForegroundColor Red
+        Write-Host "the CLI wants an interactive login that a scheduled run cannot give it." -ForegroundColor Red
+        Write-Host "Add a token from vercel.com/account/tokens to config.json as" -ForegroundColor Red
+        Write-Host "'vercel_token' and this stops happening." -ForegroundColor Red
+        exit 1
+    }
+    if ($proc.ExitCode -ne 0) {
         Write-Host "The deploy failed. The rebuilt page is in $static and can be" -ForegroundColor Red
         Write-Host "published by hand with: vercel.cmd deploy --prod --yes" -ForegroundColor Red
         exit 1
