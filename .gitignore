@@ -43,3 +43,9 @@ Thumbs.db
 # The unattended run logs whatever it fetched, which means real Riot IDs.
 auto_update.log
 auto_update.prev.log
+
+# Built inside the runner (and locally by a rehearsal), never committed.
+deploy/index.html
+deploy/og.png
+deploy/icon-180.png
+.state/
