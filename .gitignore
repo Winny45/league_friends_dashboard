@@ -52,3 +52,7 @@ deploy/icon-180.png
 
 # Derived: a hash of the current key and when it was installed.
 key_state.json
+
+nudge_publish.log
+nudge_publish.prev.log
+run_hidden_error.log
