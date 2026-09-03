@@ -88,7 +88,31 @@ cfg_path.with_name("key_state.json").write_text(
     json.dumps(state, indent=2), encoding="utf-8")
 
 print(f"Riot accepts it. Written to config.json (ends {key[-4:]}).")
+
+# The published site is built on GitHub, which reads the key from a repository
+# secret and never sees config.json. Updating only the local file leaves the
+# website failing exactly as it was, which is a miserable thing to discover an
+# hour later, so this pushes the secret too when the GitHub CLI is available.
+import shutil
+import subprocess
+REPO = "Winny45/league_friends_dashboard"
+if shutil.which("gh"):
+    r = subprocess.run(["gh", "secret", "set", "RIOT_API_KEY", "--repo", REPO],
+                       input=key, text=True, capture_output=True)
+    if r.returncode == 0:
+        print(f"Also updated the RIOT_API_KEY secret on {REPO}, so the website "
+              f"picks it up on its next run.")
+    else:
+        print(f"! Could not update the GitHub secret: {r.stderr.strip()[:200]}")
+        print(f"! The website will keep failing until you set it. Either run:")
+        print(f"!   gh secret set RIOT_API_KEY --repo {REPO}")
+        print(f"! or paste it at github.com/{REPO}/settings/secrets/actions")
+else:
+    print("! The GitHub CLI is not installed, so only the local copy changed.")
+    print(f"! The website reads its key from a repository secret; set it at")
+    print(f"! github.com/{REPO}/settings/secrets/actions or it will keep failing.")
 print("A development key lasts 24 hours from when Riot issued it, so the "
       "dashboard will now count down from about now.")
-print("\nThe hourly task will pick it up on its own at the top of the hour.")
-print(r"To publish right now instead:  .\update_and_publish.ps1")
+print("\nThe website picks it up on its next run, within about fifteen minutes.")
+print('To publish immediately:  gh workflow run "Publish dashboard" '
+      f'--repo {REPO} --field force=true')
