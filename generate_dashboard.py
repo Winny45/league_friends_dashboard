@@ -1326,13 +1326,18 @@ def render_key_age(info):
         return ""
     if info.get("permanent"):
         return '<span class="meta-chip">API key <b>does not expire</b></span>'
-    added = datetime.fromtimestamp(info["firstSeenMs"] / 1000)
-    expires = added + timedelta(hours=DEV_KEY_HOURS)
-    return (f'<span class="meta-chip key-age" data-key-expires="{int(expires.timestamp() * 1000)}" '
+    added_ms = int(info["firstSeenMs"])
+    expires_ms = added_ms + DEV_KEY_HOURS * 3600 * 1000
+    # Both times are written as epochs and formatted in the browser. Baking a
+    # formatted time in meant the builder's clock decided what the reader saw,
+    # and the builder is a GitHub runner on UTC while the readers are on UK
+    # time: a key added at 13:00 was printed as 12:00 to everybody.
+    return (f'<span class="meta-chip key-age" data-key-added="{added_ms}" '
+            f'data-key-expires="{expires_ms}" '
             f'title="Riot development keys last {DEV_KEY_HOURS} hours from when they were issued. '
-            f'This counts from when the key first worked here, which is usually a few minutes later, '
+            f'This counts from when the key was installed, which is usually a few minutes later, '
             f'so treat it as an estimate.">'
-            f'API key added <b>{added:%b %d, %H:%M}</b>, <b data-key-left>expires {expires:%H:%M}</b></span>')
+            f'API key added <b data-key-added-text>&ndash;</b>, <b data-key-left>&ndash;</b></span>')
 
 
 def render_card_rank(entry, peak):
@@ -7114,6 +7119,17 @@ def build_html(data):
         var left = chip.querySelector('[data-key-left]');
         var expires = parseInt(chip.getAttribute('data-key-expires'), 10);
         if (!left || !expires) return;
+
+        // Formatted here, in the reader's own timezone, from the epochs the
+        // page carries.
+        var addedAt = parseInt(chip.getAttribute('data-key-added'), 10);
+        var addedText = chip.querySelector('[data-key-added-text]');
+        if (addedText && addedAt) {{
+          var d = new Date(addedAt);
+          addedText.textContent = d.toLocaleString(undefined, {{
+            month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+          }});
+        }}
 
         function tick() {{
           var ms = expires - Date.now();

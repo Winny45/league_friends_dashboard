@@ -14,6 +14,10 @@
       {
         "type": "changed",
         "text": "set_key.py stamps the key's clock when the key is installed rather than leaving it to the next fetch. A key pasted in the evening would otherwise be dated to whenever the schedule next ran, and a countdown wrong in the optimistic direction is worse than no countdown."
+      },
+      {
+        "type": "fixed",
+        "text": "The key chip printed its times in the builder's timezone rather than the reader's. The page is built by a GitHub runner on UTC and read from the UK, so a key added at 13:00 was shown to everybody as 12:00. Both times are now carried as timestamps and formatted in the browser."
       }
     ]
   },
