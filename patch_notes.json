@@ -18,6 +18,10 @@
       {
         "type": "fixed",
         "text": "The key chip printed its times in the builder's timezone rather than the reader's. The page is built by a GitHub runner on UTC and read from the UK, so a key added at 13:00 was shown to everybody as 12:00. Both times are now carried as timestamps and formatted in the browser."
+      },
+      {
+        "type": "fixed",
+        "text": "Data from is shown in your own timezone, with how long ago that was. The page is built by a GitHub runner on UTC, so through British Summer Time a reader in the UK was shown a time an hour behind their own clock and the page looked an hour more stale than it was. It sat next to a key countdown that had just been fixed to use local time, so the header was quietly running two clocks."
       }
     ]
   },

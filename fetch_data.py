@@ -733,6 +733,11 @@ def main():
     # Taken before anything is fetched: this is what the dashboard shows as
     # "Data from", and it should name the moment the reading was taken.
     run_started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    # Also as an epoch, because "local" is the builder's local, and the
+    # builder is a GitHub runner on UTC while the readers are in the UK. The
+    # page formats this one in the reader's own timezone; the string above is
+    # only the fallback for a browser with scripting off.
+    run_started_ms = int(time.time() * 1000)
 
     config_path, resync, allow_partial, refetch_details, prune_cache = parse_args(sys.argv[1:])
     if not config_path.exists():
@@ -847,6 +852,7 @@ def main():
         # fires at 15:00:02 report its data as "15:01:14", which reads like it
         # missed the hour. The snapshot is of the moment it began asking Riot.
         "generatedAt": run_started,
+        "generatedAtMs": run_started_ms,
         "apiKey": track_api_key(config["api_key"],
                                 config.get("api_key_permanent", False)),
         "platform": config["platform"],
