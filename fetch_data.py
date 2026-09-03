@@ -16,6 +16,7 @@ details are cached on disk in matches_cache.json — re-running this script
 only fetches games that weren't already cached, so a daily refresh after the
 first big pull is fast.
 """
+import hashlib
 import json
 import sys
 import time
@@ -75,6 +76,7 @@ RANKED_QUEUE_NAMES = {QUEUE_ID_NAMES[qid] for qid in RANKED_QUEUE_IDS}
 MATCH_CACHE_PATH = Path("matches_cache.json")
 SCRAPE_LOG_PATH = Path("scrape_log.json")
 RANK_HISTORY_PATH = Path("rank_history.json")
+KEY_STATE_PATH = Path("key_state.json")
 RANK_HISTORY_KEEP_DAYS = 400  # trim anything older than this so the file doesn't grow forever
 
 # Kept in sync with the identically-named constants/logic in
@@ -698,6 +700,35 @@ def parse_args(argv):
     return Path(config_path or "config.json"), resync, allow_partial, refetch_details, prune_cache
 
 
+def track_api_key(key, permanent=False):
+    """When this key was first seen working, so the page can say how long a
+    development key has left.
+
+    Riot does not tell you when a key was issued, and a development key dies
+    24 hours after that rather than 24 hours after first use. First use is the
+    closest thing available and is usually within minutes of issue, so the
+    estimate is good to about that. It is labelled an estimate for that
+    reason.
+
+    Only a hash of the key is stored, never the key. The point is to notice
+    that the key changed, which a hash does perfectly well.
+    """
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    state = {}
+    if KEY_STATE_PATH.exists():
+        try:
+            state = json.loads(KEY_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+    now_ms = int(datetime.now().timestamp() * 1000)
+    if state.get("hash") != digest:
+        state = {"hash": digest, "firstSeenMs": now_ms}
+        KEY_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        print(f"  new API key seen; the 24 hour clock starts now "
+              f"({datetime.fromtimestamp(now_ms / 1000):%Y-%m-%d %H:%M})")
+    return {"firstSeenMs": state["firstSeenMs"], "permanent": bool(permanent)}
+
+
 def main():
     # Taken before anything is fetched: this is what the dashboard shows as
     # "Data from", and it should name the moment the reading was taken.
@@ -816,6 +847,8 @@ def main():
         # fires at 15:00:02 report its data as "15:01:14", which reads like it
         # missed the hour. The snapshot is of the moment it began asking Riot.
         "generatedAt": run_started,
+        "apiKey": track_api_key(config["api_key"],
+                                config.get("api_key_permanent", False)),
         "platform": config["platform"],
         "seasonStart": datetime.fromtimestamp(season_start_epoch).strftime("%Y-%m-%d"),
         "friends": results,

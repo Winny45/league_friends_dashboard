@@ -73,6 +73,22 @@ except Exception as e:
 
 config["api_key"] = key
 cfg_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+
+# Stamp the clock here rather than leaving it to the next fetch. A key is
+# issued moments before it is pasted in, so this is the closest anything gets
+# to knowing when Riot started its 24 hours. Letting the first fetch record it
+# would date a key to whenever the schedule next happened to run, which for a
+# key pasted in the evening could be most of a day late, and a countdown that
+# is wrong in the optimistic direction is worse than no countdown.
+import hashlib
+import time
+state = {"hash": hashlib.sha256(key.encode("utf-8")).hexdigest()[:16],
+         "firstSeenMs": int(time.time() * 1000)}
+cfg_path.with_name("key_state.json").write_text(
+    json.dumps(state, indent=2), encoding="utf-8")
+
 print(f"Riot accepts it. Written to config.json (ends {key[-4:]}).")
+print("A development key lasts 24 hours from when Riot issued it, so the "
+      "dashboard will now count down from about now.")
 print("\nThe hourly task will pick it up on its own at the top of the hour.")
 print(r"To publish right now instead:  .\update_and_publish.ps1")

@@ -1309,6 +1309,32 @@ def render_rate_strip(rows):
             f'</tr></thead><tbody>{body}</tbody></table></div>')
 
 
+# A development key dies 24 hours after Riot issued it. Nothing here can know
+# that moment, only when the key first worked, which is usually within minutes
+# of it. Close enough to be worth showing, not close enough to state flatly.
+DEV_KEY_HOURS = 24
+
+
+def render_key_age(info):
+    """A chip counting down a development key, or nothing at all.
+
+    Shown because the single most common way this dashboard goes stale is a
+    key quietly expiring overnight, and the first anyone knew was the numbers
+    not moving.
+    """
+    if not info or not info.get("firstSeenMs"):
+        return ""
+    if info.get("permanent"):
+        return '<span class="meta-chip">API key <b>does not expire</b></span>'
+    added = datetime.fromtimestamp(info["firstSeenMs"] / 1000)
+    expires = added + timedelta(hours=DEV_KEY_HOURS)
+    return (f'<span class="meta-chip key-age" data-key-expires="{int(expires.timestamp() * 1000)}" '
+            f'title="Riot development keys last {DEV_KEY_HOURS} hours from when they were issued. '
+            f'This counts from when the key first worked here, which is usually a few minutes later, '
+            f'so treat it as an estimate.">'
+            f'API key added <b>{added:%b %d, %H:%M}</b>, <b data-key-left>expires {expires:%H:%M}</b></span>')
+
+
 def render_card_rank(entry, peak):
     """Current rank in the card's corner, with the season peak under it.
 
@@ -5508,6 +5534,10 @@ def build_html(data):
     border-radius: 999px; padding: 3px 10px; white-space: nowrap;
   }}
   .meta-chip b {{ font-weight: 700; color: var(--text-primary); }}
+  /* Amber under six hours, red under one. The chip is only worth the space
+     it takes if it changes appearance before the key actually dies. */
+  .key-age.soon b {{ color: var(--warn, #e0a63c); }}
+  .key-age.now b {{ color: var(--critical); }}
   .header-actions {{ display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }}
   /* One class for every header control. These used to be styled by id, and
      three of the five ids were missing from the rule, so Live ranks / Refresh
@@ -6650,6 +6680,7 @@ def build_html(data):
           <div class="meta-row">
             <span class="meta-chip">Platform <b>{esc(data.get("platform", "?"))}</b></span>
             <span class="meta-chip" data-updated>Data from <b>{esc(data.get("generatedAt", ""))}</b></span>
+            {render_key_age(data.get("apiKey"))}
             {f'<span class="meta-chip">Season since <b>{esc(data.get("seasonStart"))}</b></span>' if data.get("seasonStart") else ""}
           </div>
         </div>
@@ -7072,6 +7103,33 @@ def build_html(data):
           }});
         }});
       }});
+
+      // The API key chip counts down in the browser rather than being baked
+      // into the page. A build is at most an hour old, but the page itself
+      // can sit open on somebody's second monitor all day, and a chip that
+      // still claims "6h left" the morning after is worse than no chip.
+      (function () {{
+        var chip = document.querySelector('[data-key-expires]');
+        if (!chip) return;
+        var left = chip.querySelector('[data-key-left]');
+        var expires = parseInt(chip.getAttribute('data-key-expires'), 10);
+        if (!left || !expires) return;
+
+        function tick() {{
+          var ms = expires - Date.now();
+          chip.classList.toggle('soon', ms > 0 && ms <= 6 * 3600 * 1000);
+          chip.classList.toggle('now', ms <= 3600 * 1000);
+          if (ms <= 0) {{
+            left.textContent = 'expired';
+            return;
+          }}
+          var h = Math.floor(ms / 3600000);
+          var m = Math.floor((ms % 3600000) / 60000);
+          left.textContent = h ? h + 'h ' + m + 'm left' : m + 'm left';
+        }}
+        tick();
+        setInterval(tick, 60000);
+      }})();
 
       // Hover a legend name to bring that line forward and fade the rest.
       // Pure presentation · it changes no state, so it can't get out of sync
