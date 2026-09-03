@@ -41,6 +41,10 @@ on:
         description: "Rebuild even if the published page is already fresh"
         type: boolean
         default: false
+      refetch:
+        description: "Also re-pull match detail missing the newer fields (about an hour)"
+        type: boolean
+        default: false
 
 concurrency:
   # A slow run must never overlap the next one: two fetches sharing a cache
@@ -184,7 +188,16 @@ jobs:
         run: python ci/make_config.py
 
       - name: Fetch from Riot
-        run: python fetch_data.py
+        # The backfill runs here rather than on somebody's PC: it takes about
+        # an hour, and a machine being switched off halfway through is the
+        # obvious way to never finish it. The cache it fills lives in the
+        # state repo, so the work is kept whoever asked for it.
+        run: |
+          if [ "${{ github.event.inputs.refetch }}" = "true" ]; then
+            python fetch_data.py --refetch-details
+          else
+            python fetch_data.py
+          fi
 
       - name: Rebuild the page
         run: python generate_dashboard.py
