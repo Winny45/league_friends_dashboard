@@ -64,6 +64,8 @@ jobs:
     outputs:
       go: ${{ steps.check.outputs.go }}
     steps:
+      # The gate needs the generator to hash, so it checks the repo out too.
+      - uses: actions/checkout@v4
       - id: check
         run: |
           page="$(curl -fsS --max-time 60 https://league-dashboard-static.vercel.app || true)"
@@ -80,6 +82,19 @@ jobs:
           fi
           age=$(( $(date +%s) - built / 1000 ))
           echo "Live page was built $((age / 60)) minutes ago."
+
+          # A change to the generator has to publish even when the data is
+          # fresh. The gate measures data age, so without this a code fix sat
+          # unpublished until the data happened to go stale, which looked
+          # exactly like the deploy being broken.
+          live_hash="$(printf '%s' "$page" | grep -oE 'name="build-hash" content="[a-f0-9]+"' | head -1 | grep -oE '[a-f0-9]{12}')"
+          repo_hash="$(sha256sum generate_dashboard.py | cut -c1-12)"
+          if [ -n "$live_hash" ] && [ "$live_hash" != "$repo_hash" ]; then
+            echo "The generator changed since the live page was built ($live_hash -> $repo_hash); rebuilding."
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [ "$age" -ge 3300 ]; then
             echo "go=true" >> "$GITHUB_OUTPUT"
           else
