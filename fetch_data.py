@@ -652,8 +652,21 @@ def record_rank_snapshots(history, results, today_key):
                 "rank": entry.get("rank"),
                 "leaguePoints": entry.get("leaguePoints", 0),
             }
-            # setdefault, not assignment: the first reading of the day stands.
-            by_key.setdefault((r["label"], queue_key, today_key), snap)
+            # The first reading of the day stands as that day's anchor, so the
+            # daily chart compares like with like. But an anchor taken at
+            # midnight is not the rank now, and the per-game chart has to land
+            # today's games somewhere true: forcing them onto a reading taken
+            # before they were played dragged the line backwards. So the row
+            # also carries the latest reading, refreshed every run.
+            k = (r["label"], queue_key, today_key)
+            existing = by_key.get(k)
+            if existing is None:
+                by_key[k] = snap
+                existing = snap
+            existing["liveTier"] = entry["tier"]
+            existing["liveRank"] = entry.get("rank")
+            existing["liveLeaguePoints"] = entry.get("leaguePoints", 0)
+            existing["liveAtMs"] = int(now_ms)
     merged = list(by_key.values())
     cutoff = (datetime.now() - timedelta(days=RANK_HISTORY_KEEP_DAYS)).strftime("%Y-%m-%d")
     merged = [h for h in merged if h["date"] >= cutoff]
