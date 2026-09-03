@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-09-03",
+    "title": "Every highlight now shows its working",
+    "items": [
+      {
+        "type": "added",
+        "text": "Each of the 39 highlight cards has a How this was worked out link. Opening it gives the measurement in a sentence and the full standings behind it: everyone who was measured, in order, with the gap to whoever won. A card asserting somebody is the best at something invites exactly one question, and the numbers to answer it were already being computed and thrown away."
+      },
+      {
+        "type": "added",
+        "text": "The standings also name who could not be measured and why, because not on the list and last on the list mean very different things. Someone with 12 games where the card needs 20 is absent for a reason that is worth stating."
+      },
+      {
+        "type": "changed",
+        "text": "The games column is labelled Season games on the season cards, and the five cards that can only measure part of a season say so explicitly. The wall, The assassin, Diffed, Besto Friendo and the vision card depend on fields recorded only on recently fetched matches, so the season total beside their numbers is not the sample they were taken over."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-03",
     "title": "Publishing four times an hour to publish once, and a key countdown",
     "items": [
       {
