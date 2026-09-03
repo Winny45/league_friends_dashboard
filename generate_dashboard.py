@@ -4199,10 +4199,16 @@ def duo_cards(friends, rows, now):
                               list(reversed(by_wr)), "%", 1, players=False, excluded=thin)))
 
     # When each pair last shared a game, so the ones who have drifted show up.
+    # Solo/Duo only, like every other card in this panel. The duo map behind
+    # it covers all three ranked queues, because it also tints the "With"
+    # column on a match list where any shared game counts. Reading it here
+    # unfiltered made Exes the only card in the panel measuring something
+    # different from the rest: it answered Rory and Winny at 14 days, when
+    # the Solo/Duo answer was Neel and Shas at 58.
     last_seen = {}
     for f in friends:
         for m in f.get("seasonMatches", []):
-            if m.get("remake"):
+            if m.get("remake") or m.get("queue") != "Ranked Solo/Duo":
                 continue
             for mate, _v in (_DUO_CTX["map"].get((m.get("matchId"), f["label"])) or []):
                 key = tuple(sorted([f["label"], mate]))
