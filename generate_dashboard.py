@@ -7,6 +7,7 @@ can open in any browser.
 Usage:
     python3 generate_dashboard.py [data.json] [dashboard.html]
 """
+import hashlib
 import html
 import json
 import math
@@ -4469,6 +4470,23 @@ BRAND_MARK_SVG = (
 )
 
 
+def build_hash():
+    """A fingerprint of the code that produced this page.
+
+    The publish gate skips a rebuild when the live page's data is still fresh,
+    which is right for data and wrong for code: a fix to the generator would
+    sit unpublished for up to an hour while the gate correctly reported that
+    nothing about the data had changed. Comparing this against the generator
+    on disk tells the gate the difference, so a code change publishes at once
+    and a quiet hour still costs nothing.
+    """
+    try:
+        src = Path(__file__).read_bytes()
+    except OSError:
+        return "unknown"
+    return hashlib.sha256(src).hexdigest()[:12]
+
+
 def favicon_data_uri():
     return "data:image/svg+xml," + urllib.parse.quote(FAVICON_SVG, safe="")
 
@@ -5714,6 +5732,7 @@ def build_html(data):
 <link rel="icon" href="{favicon_data_uri()}">
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="theme-color" content="#090a0e">
+<meta name="build-hash" content="{build_hash()}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="League Friends Dashboard">
 <meta property="og:title" content="League Friends Dashboard">
@@ -8881,3 +8900,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

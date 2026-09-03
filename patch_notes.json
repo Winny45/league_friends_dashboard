@@ -22,6 +22,10 @@
       {
         "type": "fixed",
         "text": "The working table no longer runs off the edge of a card on a phone. The unit is written once in the column heading rather than after all seven numbers, the word behind moved into the heading too, and the table scrolls in place if a long name still beats a narrow card."
+      },
+      {
+        "type": "fixed",
+        "text": "A change to the page itself now publishes straight away instead of waiting for the data to go stale. The publish gate measures how old the data is, which is right for data and wrong for code: a fix would sit unpublished for up to an hour while the gate correctly reported nothing about the data had changed, which looked exactly like the deploy being broken. The page now carries a fingerprint of the generator that built it, and the gate rebuilds when that no longer matches."
       }
     ]
   },
