@@ -1142,6 +1142,15 @@ def queue_timeline(rank_history, label, queue_key, matches, queue_name):
     played = [m for m in matches if m.get("queue") == queue_name and not m.get("remake")]
     if len(pts) < 2 or not played:
         return []
+    # The newest row's stored rank is that day's midnight anchor, which the
+    # daily chart wants and this chart does not: every game played since then
+    # would be forced to land on a reading taken before it happened. Where a
+    # later reading exists, the final anchor uses it.
+    if pts[-1].get("liveTier"):
+        pts = pts[:-1] + [dict(pts[-1],
+                               tier=pts[-1]["liveTier"],
+                               rank=pts[-1].get("liveRank"),
+                               leaguePoints=pts[-1].get("liveLeaguePoints", 0))]
     return build_lp_timeline(pts, played)
 
 
@@ -2336,9 +2345,13 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         # which is a different question from which line is whose. The key
         # beside the plot answers that one and carries nothing else, so its
         # rows can be spaced evenly instead of sized by their longest text.
+        # The live entry, not the last snapshot: snapshots are anchored to
+        # midnight, so reading one here showed a rank up to a day old beside a
+        # game list refreshed every hour.
+        live = (f.get("ranked") or {}).get("solo") or hist[-1]
         standings.append({"var": friend_colour(f["label"]), "label": f["label"],
-                          "tier": hist[-1].get("tier"),
-                          "rankLabel": rank_label(hist[-1]), "games": games,
+                          "tier": live.get("tier"),
+                          "rankLabel": rank_label(live), "games": games,
                           "lp": net_lp, "winrate": round(100 * wins / games) if games else 0,
                           "record": record})
         legend_items.append(

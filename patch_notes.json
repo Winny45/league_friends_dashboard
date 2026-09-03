@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-03",
+    "title": "The rank beside the LP chart was stuck at midnight",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Anchoring the daily snapshot to midnight, so the Daily rank progress chart compares like with like, had a consequence I missed: every other thing reading that history got this morning's rank instead of the current one. The table under the LP per game chart showed Kirish on Emerald III 30 LP when he was on 10, beside a game list refreshing every hour."
+      },
+      {
+        "type": "fixed",
+        "text": "Worse, the per-game chart was forcing today's games to land on that midnight reading, which is a rank measured before they were played. The line was being dragged backwards to meet it. Each day's row now keeps both readings: the midnight anchor the daily chart wants, and the latest one, refreshed every run, that the per-game chart and the standings need."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-03",
     "title": "Replacing the Riot key now updates the website too",
     "items": [
       {
