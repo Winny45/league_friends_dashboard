@@ -76,6 +76,50 @@ Revoking it is deleting that one key, and it can write to nothing else.
 Actions tab, "Publish dashboard", "Run workflow". Watch it go green before
 trusting the schedule.
 
+## 6. An external trigger, because GitHub's cron is not dependable
+
+GitHub's scheduler is a queue, not a clock, and on this repo it has been far
+worse than late. An hourly schedule produced three runs in eight hours. A
+fifteen-minute one produced none in an hour, with the workflow active and the
+cron correct on the default branch. It is best-effort and there is no setting
+that changes that.
+
+The fix is to have something else ask. Any cron service that can make an HTTP
+request will do; cron-job.org is free and enough.
+
+**The request** (verified against the live repo, which answers `204 No
+Content` and starts a run):
+
+```
+POST https://api.github.com/repos/<you>/league_friends_dashboard/actions/workflows/publish.yml/dispatches
+
+Accept:               application/vnd.github+json
+X-GitHub-Api-Version: 2022-11-28
+Authorization:        Bearer <your token>
+Content-Type:         application/json
+
+{"ref":"main"}
+```
+
+Every 15 minutes. Note there is no `force` in that body on purpose: the gate
+then applies, so three pings in four cost about twenty seconds each and
+change nothing, and the fourth publishes.
+
+**The token.** A fine-grained personal access token, and scope it down,
+because it is going to sit in somebody else's web form:
+
+- Repository access: **only** `league_friends_dashboard`
+- Permissions: **Actions: Read and write**, nothing else
+- Expiry: as long as you are offered, or none
+
+That token can start this one workflow in this one repo. It cannot read your
+code, your other repositories, or your account.
+
+**Check it worked.** The Actions tab should show runs appearing every 15
+minutes, most of them finishing in under half a minute with the publish job
+skipped. If they are all doing full publishes, the gate is not being reached
+and something is passing `force`.
+
 ## Things worth knowing
 
 **The schedule is approximate.** GitHub's cron is a queue, not a clock. Runs
