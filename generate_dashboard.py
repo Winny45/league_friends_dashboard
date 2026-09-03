@@ -6684,7 +6684,7 @@ def build_html(data):
           <h1>League Friends Dashboard</h1>
           <div class="meta-row">
             <span class="meta-chip">Platform <b>{esc(data.get("platform", "?"))}</b></span>
-            <span class="meta-chip" data-updated>Data from <b>{esc(data.get("generatedAt", ""))}</b></span>
+            <span class="meta-chip" data-updated{f' data-generated-ms="{int(data["generatedAtMs"])}"' if data.get("generatedAtMs") else ""}>Data from <b data-generated-text>{esc(data.get("generatedAt", ""))}</b></span>
             {render_key_age(data.get("apiKey"))}
             {f'<span class="meta-chip">Season since <b>{esc(data.get("seasonStart"))}</b></span>' if data.get("seasonStart") else ""}
           </div>
@@ -7108,6 +7108,37 @@ def build_html(data):
           }});
         }});
       }});
+
+      // "Data from" in the reader's timezone, and how long ago that was.
+      // The page is built on a UTC runner, so a UK reader was shown a time an
+      // hour behind their own clock and the page looked an hour more stale
+      // than it was. The string in the markup stays as the no-script
+      // fallback.
+      (function () {{
+        var chip = document.querySelector('[data-generated-ms]');
+        if (!chip) return;
+        var el = chip.querySelector('[data-generated-text]');
+        var ms = parseInt(chip.getAttribute('data-generated-ms'), 10);
+        if (!el || !ms) return;
+
+        function ago(then) {{
+          var mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+          if (mins < 1) return 'just now';
+          if (mins < 60) return mins + 'm ago';
+          var h = Math.floor(mins / 60);
+          return h + 'h ' + (mins % 60) + 'm ago';
+        }}
+
+        function paint() {{
+          var d = new Date(ms);
+          el.textContent = d.toLocaleString(undefined, {{
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+          }}) + ' · ' + ago(ms);
+        }}
+        paint();
+        setInterval(paint, 30000);
+      }})();
 
       // The API key chip counts down in the browser rather than being baked
       // into the page. A build is at most an hour old, but the page itself
