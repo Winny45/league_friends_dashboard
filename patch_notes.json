@@ -14,6 +14,14 @@
       {
         "type": "changed",
         "text": "The games column is labelled Season games on the season cards, and the five cards that can only measure part of a season say so explicitly. The wall, The assassin, Diffed, Besto Friendo and the vision card depend on fields recorded only on recently fetched matches, so the season total beside their numbers is not the sample they were taken over."
+      },
+      {
+        "type": "fixed",
+        "text": "The disclosure arrow rendered as a control character followed by the literal text b8. It was written as the CSS escape for a triangle, but the whole stylesheet lives inside a Python f-string and Python reads a backslash followed by digits as an octal escape long before CSS sees it. The character is written directly now."
+      },
+      {
+        "type": "fixed",
+        "text": "The working table no longer runs off the edge of a card on a phone. The unit is written once in the column heading rather than after all seven numbers, the word behind moved into the heading too, and the table scrolls in place if a long name still beats a narrow card."
       }
     ]
   },
