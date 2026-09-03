@@ -36,6 +36,11 @@ on:
     # less than fifty-five minutes old.
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if the published page is already fresh"
+        type: boolean
+        default: false
 
 concurrency:
   # A slow run must never overlap the next one: two fetches sharing a cache
@@ -76,9 +81,15 @@ jobs:
 
   publish:
     needs: gate
-    # A person pressing the button always means it. The gate only governs the
-    # scheduled triggers.
-    if: github.event_name != 'schedule' || needs.gate.outputs.go == 'true'
+    # The gate governs every trigger, not just the scheduled ones. It used to
+    # exempt workflow_dispatch on the grounds that a person pressing a button
+    # means it, which was true until nudge_publish.ps1 started pressing that
+    # button on a timer: an hourly nudge then did the full fetch and deploy
+    # every time regardless of whether the page needed it.
+    #
+    # Tick "force" to rebuild anyway, which is what a person wanting it now
+    # actually wants.
+    if: github.event.inputs.force == 'true' || needs.gate.outputs.go == 'true'
     runs-on: ubuntu-latest
     # A warm run takes a couple of minutes. A cold one has to fetch the
     # detail of every match of the season, about 2,800 of them, and a
