@@ -4321,19 +4321,18 @@ def render_award_why(detail):
 
     def cell(r, n):
         gap = r["value"] - top
-        # The gap to the leader, signed the way the reader expects: on a card
-        # where low wins, being 0.4 behind means being 0.4 higher.
-        gap_txt = ""
-        if n > 1 and gap:
-            gap_txt = f'<span class="why-gap">{abs(gap):,.{places}f} behind</span>'
+        # Just the size of the gap, with the word "behind" once in the column
+        # heading rather than on every row. Repeating it cost more width than
+        # the numbers did, in a table that has to fit a card three to a row.
+        gap_txt = f'{abs(gap):,.{places}f}' if n > 1 and gap else ""
         colour = r.get("colour", friend_colour(r["label"]))
         name = (f'<b style="color:var({colour});">{esc(r["label"])}</b>' if colour
                 else f'<b>{esc(r["label"])}</b>')
         return (f'<tr><td class="num muted small">{n}</td>'
-                f'<td class="nowrap">{name}</td>'
-                f'<td class="num"><b>{r["value"]:,.{places}f}</b>{esc(unit)}</td>'
+                f'<td class="why-name">{name}</td>'
+                f'<td class="num"><b>{r["value"]:,.{places}f}</b></td>'
                 + (f'<td class="num muted small">{r["games"]}</td>' if show_games else "")
-                + f'<td class="num">{gap_txt}</td></tr>')
+                + f'<td class="num why-gap">{gap_txt}</td></tr>')
 
     body = "".join(cell(r, n) for n, r in enumerate(rows, start=1))
     method = detail.get("method")
@@ -4343,13 +4342,19 @@ def render_award_why(detail):
     if excluded:
         items = ", ".join(f"{esc(lbl)} ({esc(why)})" for lbl, why in excluded)
         excl_html = f'<div class="why-excluded">Not measured: {items}</div>'
+    # The unit is written once, in the heading, rather than after every
+    # number. "per takedown" on each of seven rows was most of the width of
+    # the column it was in.
+    unit_html = f'<span class="why-unit">{esc(unit.strip())}</span>' if unit.strip() else ""
+    games_head = esc(detail.get("games_label", "Games")).replace("Season games", "Games")
     return (f'<details class="award-why"><summary>How this was worked out</summary>'
             f'{method_html}'
-            f'<table class="why-table"><thead><tr><th class="num">#</th><th>Player</th>'
-            f'<th class="num">Value</th>'
-            + (f'<th class="num">{esc(detail.get("games_label", "Games"))}</th>'
-               if show_games else "")
-            + f'<th class="num">Gap</th></tr></thead><tbody>{body}</tbody></table>'
+            f'<div class="why-scroll"><table class="why-table">'
+            f'<thead><tr><th class="num">#</th><th>Player</th>'
+            f'<th class="num">Value{unit_html}</th>'
+            + (f'<th class="num">{games_head}</th>' if show_games else "")
+            + f'<th class="num">Behind</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div>'
             f'{excl_html}</details>')
 
 
@@ -6018,7 +6023,12 @@ def build_html(data):
     list-style: none; user-select: none;
   }}
   .award-why > summary::-webkit-details-marker {{ display: none; }}
-  .award-why > summary::before {{ content: "\25b8 "; display: inline-block; transition: transform .15s ease; }}
+  /* The character itself, not a CSS escape. This stylesheet lives inside a
+     Python f-string, and Python reads a backslash followed by digits as an
+     octal escape long before CSS sees it, so the triangle written as a CSS
+     escape arrived as a control character followed by the literal text "b8".
+     Writing that escape here to explain it put the control character back. */
+  .award-why > summary::before {{ content: "▸"; display: inline-block; margin-right: 5px; transition: transform .15s ease; }}
   .award-why[open] > summary::before {{ transform: rotate(90deg); }}
   .award-why > summary:hover {{ color: var(--text-secondary); }}
   .why-method {{
@@ -6026,14 +6036,25 @@ def build_html(data):
     margin: 6px 0 8px; padding-left: 10px;
     border-left: 2px solid var(--border);
   }}
+  /* A last resort. The table is built to fit, but a long name and a big
+     number together can still beat a narrow card, and scrolling in place
+     beats spilling past the card's rounded edge. */
+  .why-scroll {{ overflow-x: auto; }}
   .why-table {{ width: 100%; border-collapse: collapse; font-size: 11px; }}
   .why-table th {{
     text-align: left; font-weight: 600; color: var(--muted);
-    padding: 3px 6px; border-bottom: 1px solid var(--border);
+    padding: 3px 4px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; vertical-align: bottom;
   }}
-  .why-table td {{ padding: 3px 6px; border-bottom: 1px solid var(--border); }}
+  .why-table td {{ padding: 3px 4px; border-bottom: 1px solid var(--border); }}
   .why-table tr:last-child td {{ border-bottom: none; }}
-  .why-table .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .why-table .num {{ text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+  /* The unit under the heading instead of after all seven numbers. */
+  .why-unit {{
+    display: block; font-weight: 400; font-size: 9px; letter-spacing: 0;
+    text-transform: none; opacity: .75;
+  }}
+  .why-name {{ max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .why-gap {{ color: var(--muted); font-size: 10px; white-space: nowrap; }}
   .why-excluded {{ font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.45; }}
   /* The LP behind a promotion: "Platinum I → Emerald IV" says how far, this
