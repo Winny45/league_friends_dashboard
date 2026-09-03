@@ -3205,26 +3205,114 @@ def _has(matches, field):
     return any(field in m for m in matches)
 
 
-def _best(friends, value, fmt, min_games=HL_MIN_GAMES, lowest=False):
+# How each highlight is measured, keyed by title: the sentence shown when a
+# card is opened, the unit its value is in, and how many decimals that value
+# deserves.
+#
+# Kept here rather than passed at each call site because it is documentation,
+# it is read together, and threading twenty-four strings through the argument
+# lists would bury the code that does the work.
+HIGHLIGHT_METHOD = {
+    "MVP": ("Share of their ranked games ending on a KDA of 5.0 or better. "
+            "KDA is (kills + assists) / deaths, counting a death-free game as "
+            "if it had one death.", "%", 1),
+    "KDA king": ("Mean KDA across every ranked game, each game weighted the "
+                 "same regardless of length.", "", 2),
+    "Farm god": ("Mean creep score a minute, counting only games played "
+                 "outside support and jungle, where farm is not the job.", " CS/min", 2),
+    "Marathon day": ("Most ranked games played in one calendar day.", " games", 0),
+    "Season grinder": ("Total ranked games this season, remakes excluded.", " games", 0),
+    "Unemployed": ("Longest run of consecutive calendar days with at least "
+                   "one ranked game on each.", " days", 0),
+    "Chicken dinner": ("Longest run of consecutive wins, in the order the "
+                       "games were played.", " wins", 0),
+    "If at first you don't succeed": ("Longest run of consecutive losses.", " losses", 0),
+    "Sisyphus": ("Longest run of strictly alternating results: win, loss, "
+                 "win, loss, with no two the same in a row.", " games", 0),
+    "The assassin": ("Damage taken divided by kills plus assists. Measured "
+                     "only across games where damage taken was recorded, so "
+                     "the top and bottom of the fraction cover the same "
+                     "games. The season games column is their whole season, not the smaller set this was measured over.", " per takedown", 0),
+    "The wall": ("Damage taken divided by deaths, across the games where "
+                 "damage taken was recorded. The season games column is their whole season, not the smaller set this was measured over.", " per death", 0),
+    "The DPS": ("Mean damage dealt to champions a game. Damage to towers, "
+                "jungle and minions is not counted.", " damage", 0),
+    "On a mission": ("Kills divided by total minutes played. The card reports "
+                     "the totals behind it; this ranks on the rate, so a long "
+                     "season does not win by itself.", " kills/min", 3),
+    "Int alert": ("Deaths divided by total minutes played.", " deaths/min", 3),
+    "I cannot see, I'm legally blind": ("Mean vision score a game, lowest "
+                                        "wins. Only games where vision score "
+                                        "was recorded. The season games column is their whole season, not the smaller set this was measured over.", "", 1),
+    "Tickle monster": ("Damage dealt to champions divided by kills. Highest "
+                       "wins: the most damage spent per kill.", " per kill", 0),
+    "Dirty KSer": ("Damage dealt to champions divided by kills, lowest wins.",
+                   " per kill", 0),
+    "Passenger": ("Mean KDA in games they won, lowest wins. Losses are "
+                  "excluded on purpose: a low KDA in a game you lost is "
+                  "losing, a low KDA in a game your team won anyway is being "
+                  "carried.", "", 2),
+    "Speedrunner": ("Share of all their games that were wins finishing inside "
+                    "16 minutes, which is a surrender rather than a game.", "%", 1),
+    "Besto Friendo": ("Their best winrate alongside a given champion on their "
+                      "own team, over at least 10 games with it. Only games "
+                      "where the allied champions were recorded. The season games column is their whole season, not the smaller set this was measured over.", "%", 1),
+    "Just this once": ("Largest gap between their single best KDA on a "
+                       "champion and their average on that champion, across "
+                       "champions with at least 10 games.", " KDA above", 1),
+    "Diffed": ("Share of games where their KDA came out below their direct "
+               "lane opponent's. Only games where the opponent was "
+               "identified. The season games column is their whole season, not the smaller set this was measured over.", "%", 0),
+    "Lights were too bright": ("Winrate in the games that immediately follow "
+                               "a win, lowest wins. Needs at least 10 such "
+                               "games.", "%", 1),
+    "Resilient": ("Mean length of the games they lose. Longest wins.", " min", 1),
+}
+
+
+def _best(friends, value, fmt, min_games=HL_MIN_GAMES, lowest=False,
+          method=None, unit="", places=2):
     """Pick the friend with the highest (or lowest) `value`, and describe it.
 
     `value` returns None for anyone the measure cannot be taken on, so a
     missing field or a thin sample drops that player rather than the award.
+
+    The whole scoreboard comes back, not just the winner. A card that says
+    somebody is the best at something invites exactly one question, which is
+    "by how much, and over whom", and the numbers to answer it were already
+    computed and then thrown away.
+
+    `method` is how the number was arrived at, in a sentence, and `excluded`
+    records who could not be measured and why, because "not on the list" and
+    "last on the list" mean very different things.
     """
-    scored = []
+    scored, excluded = [], []
     for f in friends:
         games = _played(f)
         if len(games) < min_games:
+            excluded.append((f["label"], f"{len(games)} games, needs {min_games}"))
             continue
         v = value(f, games)
-        if v is not None:
+        if v is None:
+            excluded.append((f["label"], "not enough data recorded"))
+        else:
             scored.append((v, f, games))
     if not scored:
         return None
     scored.sort(key=lambda x: x[0], reverse=not lowest)
     v, f, games = scored[0]
     runner = scored[1][0] if len(scored) > 1 else None
-    return {"who": f["label"], "text": fmt(f, games, v, runner)}
+    return {
+        "who": f["label"],
+        "text": fmt(f, games, v, runner),
+        "method": method,
+        "standings": [{"label": e[1]["label"], "value": e[0], "games": len(e[2])}
+                      for e in scored],
+        "excluded": excluded,
+        "unit": unit,
+        "places": places,
+        "lowest": lowest,
+    }
 
 
 def streaks(results):
@@ -3545,7 +3633,14 @@ def _wrap(card, icon, title, whole=False):
     if not card:
         return None
     text = card["text"] if whole else f'{esc(card["who"])} {card["text"]}'
-    return {"icon": icon, "title": title, "text": text, "who": card["who"]}
+    method, unit, places = HIGHLIGHT_METHOD.get(title, (card.get("method"), "", 2))
+    if card.get("lowest") and method:
+        method += " Lowest wins, so first place is the smallest number."
+    return {"icon": icon, "title": title, "text": text, "who": card["who"],
+            "method": method, "standings": card.get("standings"),
+            "excluded": card.get("excluded"), "unit": unit,
+            "games_label": "Season games",
+            "places": places, "lowest": card.get("lowest", False)}
 
 
 def _one_off_detail(g):
@@ -3861,15 +3956,23 @@ def week_tiles(friends_sorted, rank_history, now):
         return format_minutes(sum(m.get("durationMin", 0) for m in ms))
 
     everyone = [m for ms in week.values() for m in ms]
+    # Both of the next two rank on the same thing, so it is built once.
+    per_player = sorted(((label, len(ms), len(ms)) for label, ms in week.items()),
+                        key=lambda r: -r[1])
     if everyone:
         tiles.append(("\U0001f4bb", "Total games this week",
-                      f'<strong>{len(everyone)}</strong> ranked games, {mins(everyone)} of League.'))
+                      f'<strong>{len(everyone)}</strong> ranked games, {mins(everyone)} of League.',
+                      _detail("Every ranked game any of them played in the last seven days, "
+                              "remakes excluded. The table is who contributed what.",
+                              per_player, " games", 0)))
 
     busiest = max(week.items(), key=lambda kv: len(kv[1]), default=None)
     if busiest and busiest[1]:
         tiles.append(("\u23f1\ufe0f", "Most active player",
                       f'{esc(busiest[0])} played <strong>{len(busiest[1])}</strong> games, '
-                      f'{mins(busiest[1])}.'))
+                      f'{mins(busiest[1])}.',
+                      _detail("Ranked games played in the last seven days.",
+                              per_player, " games", 0)))
 
     # A shared game counted once, not once per player who was in it.
     shared = {}
@@ -3878,9 +3981,18 @@ def week_tiles(friends_sorted, rank_history, now):
             if _DUO_CTX["map"].get((m.get("matchId"), label)):
                 shared[m["matchId"]] = m
     if shared:
+        in_shared = sorted(
+            ((label, sum(1 for m in ms if _DUO_CTX["map"].get((m.get("matchId"), label))),
+              len(ms)) for label, ms in week.items()),
+            key=lambda r: -r[1])
         tiles.append(("\U0001f465", "Games played together",
                       f'<strong>{len(shared)}</strong> games were played together, '
-                      f'{mins(shared.values())} of League.'))
+                      f'{mins(shared.values())} of League.',
+                      _detail("Games in the last seven days with two or more of them on the "
+                              "same team, counted once each however many were in it. The "
+                              "table is how many of those each person appeared in, so it "
+                              "sums to more than the total.",
+                              in_shared, " games", 0)))
 
     climber = weekly_rank_leader(rank_history, now)
     if climber and climber.get("text"):
@@ -3889,18 +4001,40 @@ def week_tiles(friends_sorted, rank_history, now):
                  and climber["fromLabel"] != climber["toLabel"])
         where = (f' and climbed from {climber["fromLabel"]} to {climber["toLabel"]}'
                  if moved else '')
+        moves = []
+        by_label = {}
+        for h in rank_history:
+            if h.get("queue") == "solo":
+                by_label.setdefault(h["label"], []).append(h)
+        cut = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        for label, pts in by_label.items():
+            pts.sort(key=lambda h: h["date"])
+            pair = week_window(pts, cut)
+            if pair:
+                moves.append((label, tier_score(pair[1]) - tier_score(pair[0]), len(pts)))
+        moves.sort(key=lambda r: -r[1])
         tiles.append(("\U0001f4c8", "Biggest climber",
                       f'{esc(climber["label"])} gained <strong>{gained}</strong> LP this week'
-                      f'{where}.'))
+                      f'{where}.',
+                      _detail("Ladder position at the end of the week minus its position at "
+                              "the start, in LP, from the daily rank snapshots. Anyone "
+                              "without a snapshot at both ends of the window cannot be "
+                              "measured.",
+                              moves, " LP", 0)))
 
     form = [(100 * sum(1 for m in ms if m["win"]) / len(ms), label, ms)
             for label, ms in week.items() if len(ms) >= 5]
     if form:
         rate, label, ms = max(form)
         wins = sum(1 for m in ms if m["win"])
+        thin = [(l, f"{len(m)} games, needs 5") for l, m in week.items() if 0 < len(m) < 5]
         tiles.append(("\U0001f525", "Hottest streak",
                       f'{esc(label)} is winning <strong>{rate:.0f}%</strong> this week, '
-                      f'{wins}W {len(ms) - wins}L.'))
+                      f'{wins}W {len(ms) - wins}L.',
+                      _detail("Winrate over the last seven days, for anyone with at least "
+                              "five games in that window.",
+                              sorted(((l, r, len(m)) for r, l, m in form), key=lambda x: -x[1]),
+                              "%", 1, excluded=thin)))
 
     # A champion two or more of them picked up this week, ranked by how the
     # group did on it rather than by how any one of them did.
@@ -3918,7 +4052,13 @@ def week_tiles(friends_sorted, rank_history, now):
         n_players = len(v["players"])
         tiles.append(("\U0001f43e", "Animal of the week",
                       f'{esc(champion_display(champ))} was played by <strong>{n_players}</strong> '
-                      f'people and had a winrate of {rate:.0f}% across {v["games"]} games.'))
+                      f'people and had a winrate of {rate:.0f}% across {v["games"]} games.',
+                      _detail("Champions at least two of them picked this week, over at least "
+                              "four games between them, ranked by the group's winrate on it "
+                              "rather than by any one person's.",
+                              sorted(((champion_display(c), r, vv["games"]) for r, c, vv in herd),
+                                     key=lambda x: -x[1]),
+                              "%", 1, players=False)))
 
     # Pick rate averaged over the players who played at all, so a champion one
     # person spams does not beat one everybody reaches for.
@@ -3936,7 +4076,15 @@ def week_tiles(friends_sorted, rank_history, now):
         rate, champ, players = max(rated)
         tiles.append(("\u2764\ufe0f", "Most loved champion",
                       f'{esc(champion_display(champ))} was picked <strong>{rate:.0f}%</strong> on '
-                      f'average across the group this week.'))
+                      f'average across the group this week.',
+                      _detail("Each person's pick rate for a champion this week, averaged over "
+                              "everyone who played at all. Averaging rather than totalling "
+                              "stops one person spamming a champion beating one everybody "
+                              "reaches for. Needs two or more players.",
+                              sorted(((champion_display(c), sum(v) / active, len(v))
+                                      for c, v in loved.items() if len(v) >= 2),
+                                     key=lambda x: -x[1]),
+                              "%", 1, players=False)))
 
     pool = [(len({m["champion"] for m in ms}), label, len(ms))
             for label, ms in week.items() if ms]
@@ -3944,7 +4092,12 @@ def week_tiles(friends_sorted, rank_history, now):
         n, label, games = max(pool)
         tiles.append(("\U0001f9ec", "Adaptable",
                       f'{esc(label)} played <strong>{n}</strong> different champions in '
-                      f'{games} games.'))
+                      f'{games} games.',
+                      _detail("Distinct champions played in the last seven days. Not adjusted "
+                              "for how many games each played, so more games makes a wider "
+                              "pool easier.",
+                              sorted(((l, c, g) for c, l, g in pool), key=lambda x: -x[1]),
+                              " champions", 0)))
 
     # Untouched in the week before this one, and under 5% of their picks
     # before that. "Never played this season" ruled out anyone coming back to
@@ -3972,7 +4125,14 @@ def week_tiles(friends_sorted, rank_history, now):
         n, label, champ = max(fresh)
         tiles.append(("\U0001f997", "Grasshopper",
                       f'{esc(label)} picked up {esc(champion_display(champ))} and played it '
-                      f'<strong>{n}</strong> time{"s" if n != 1 else ""} already.'))
+                      f'<strong>{n}</strong> time{"s" if n != 1 else ""} already.',
+                      _detail(f"Champions played at least twice this week that they had not "
+                              f"touched in the seven days before, and that were under "
+                              f"{GRASSHOPPER_MAX_SHARE:.0f}% of their picks before that. "
+                              f"Ranked by games this week.",
+                              sorted(((f"{l} on {champion_display(c)}", cnt, cnt)
+                                      for cnt, l, c in fresh), key=lambda x: -x[1]),
+                              " games", 0, players=False)))
 
     return in_declared_order(tiles, WEEK_TILE_ORDER, lambda t: t[1])
 
@@ -3987,27 +4147,55 @@ def duo_cards(friends, rows, now):
     def name(r):
         return f'{esc(r["a"])} &amp; {esc(r["b"])}'
 
+    def pair_label(r):
+        return f'{r["a"]} & {r["b"]}'
+
+    # Every pair, however few games, so a card that applies a threshold can
+    # show who the threshold excluded rather than just omitting them.
+    thin = [(pair_label(r), f'{r["total"]["games"]} games, needs {DUO_THIN_GAMES}')
+            for r in listed if r["total"]["games"] < DUO_THIN_GAMES]
+
     most = max(listed, key=lambda r: r["total"]["games"])
     cards.append(("\U0001f496", "Lovers",
                   f'{name(most)} have played <strong>{most["total"]["games"]}</strong> games '
-                  f'together.'))
+                  f'together.',
+                  _detail("Games with both of them on the same team, in any ranked queue. "
+                          "Every pair with at least two games is listed.",
+                          sorted(((pair_label(r), r["total"]["games"], r["total"]["games"])
+                                  for r in listed), key=lambda x: -x[1]),
+                          " games", 0, players=False)))
 
     rated = [r for r in listed if r["total"]["games"] >= DUO_THIN_GAMES]
     if rated:
+        by_wr = sorted(((pair_label(r), r["total"]["winrate"], r["total"]["games"])
+                        for r in rated), key=lambda x: -x[1])
         best = max(rated, key=lambda r: r["total"]["winrate"])
         cards.append(("\U0001f48d", "Perfect couple",
                       f'{name(best)} win <strong>{best["total"]["winrate"]}%</strong> of '
-                      f'{best["total"]["games"]} games together.'))
+                      f'{best["total"]["games"]} games together.',
+                      _detail(f"Winrate in games the pair played together, over at least "
+                              f"{DUO_THIN_GAMES} games. Below that a winrate is one evening.",
+                              by_wr, "%", 1, players=False, excluded=thin)))
         lifted = [r for r in rated if r["total"]["lift"] is not None]
         if lifted:
             top = max(lifted, key=lambda r: r["total"]["lift"])
             cards.append(("\U0001f331", "Healthy relationship",
                           f'{name(top)} beat their own winrates by '
-                          f'<strong>{top["total"]["lift"]:+.1f}%</strong> when they queue together.'))
+                          f'<strong>{top["total"]["lift"]:+.1f}%</strong> when they queue together.',
+                          _detail("The pair's winrate together minus what the two of them "
+                                  "average apart. Positive means they are better as a pair "
+                                  "than the sum of their parts, which is not the same as "
+                                  "winning the most.",
+                                  sorted(((pair_label(r), r["total"]["lift"], r["total"]["games"])
+                                          for r in lifted), key=lambda x: -x[1]),
+                                  "%", 1, players=False, excluded=thin)))
         worst = min(rated, key=lambda r: r["total"]["winrate"])
         cards.append(("\U0001f3b0", "Vegas wedding",
                       f'{name(worst)} win <strong>{worst["total"]["winrate"]}%</strong> of '
-                      f'{worst["total"]["games"]}. It might be time to split up.'))
+                      f'{worst["total"]["games"]}. It might be time to split up.',
+                      _detail(f"The same table as Perfect couple, read from the bottom: "
+                              f"lowest winrate together over at least {DUO_THIN_GAMES} games.",
+                              list(reversed(by_wr)), "%", 1, players=False, excluded=thin)))
 
     # When each pair last shared a game, so the ones who have drifted show up.
     last_seen = {}
@@ -4024,16 +4212,23 @@ def duo_cards(friends, rows, now):
     if stale:
         ms, key = min(stale)
         days = (now - datetime.fromtimestamp(ms / 1000)).days
+        gaps = sorted(((f"{k[0]} & {k[1]}",
+                        (now - datetime.fromtimestamp(v / 1000)).days, 0)
+                       for k, v in last_seen.items() if v), key=lambda x: -x[1])
         cards.append(("\U0001f494", "Exes",
                       f'{esc(key[0])} &amp; {esc(key[1])} have not queued together in '
-                      f'<strong>{days}</strong> days.'))
+                      f'<strong>{days}</strong> days.',
+                      _detail("Days since each pair last shared a game. Pairs who have never "
+                              "played together at all are not here: this measures drifting "
+                              "apart, not never having met.",
+                              gaps, " days", 0, players=False)))
 
     # A pair who do better together than either does with their usual partner.
     by_player = {}
     for r in listed:
         for who, other in ((r["a"], r["b"]), (r["b"], r["a"])):
             by_player.setdefault(who, []).append(r)
-    sneaky = None
+    sneaky, sneaky_all = None, []
     for who, rs in by_player.items():
         usual = max(rs, key=lambda r: r["total"]["games"])
         for r in rs:
@@ -4042,13 +4237,21 @@ def duo_cards(friends, rows, now):
             if r["total"]["winrate"] <= usual["total"]["winrate"]:
                 continue
             gap = r["total"]["winrate"] - usual["total"]["winrate"]
+            sneaky_all.append((gap, who, r, usual))
             if sneaky is None or gap > sneaky[0]:
                 sneaky = (gap, who, r, usual)
     if sneaky:
         gap, who, r, usual = sneaky
+        cands = sorted(((f'{w} with {(rr["b"] if rr["a"] == w else rr["a"])}', g, rr["total"]["games"])
+                        for g, w, rr, _u in sneaky_all), key=lambda x: -x[1])
         cards.append(("\U0001f92b", "Sneaky link",
                       f'{name(r)} win <strong>{r["total"]["winrate"]}%</strong> together, '
-                      f'{gap:.1f}% better than with their usual partners.'))
+                      f'{gap:.1f}% better than with their usual partners.',
+                      _detail("For each person, their winrate with someone other than their "
+                              "most-played partner, minus their winrate with that usual "
+                              "partner. The biggest such gap wins. Only pairs over the "
+                              "minimum game count are considered.",
+                              cands, "% better", 1, players=False)))
 
     return in_declared_order(cards, DUO_CARD_ORDER, lambda c: c[1])
 
@@ -4075,6 +4278,79 @@ def render_week_glance_panel(friends_sorted, awards, rank_history, now):
       <h2 style="margin-bottom:14px;">This week at a glance</h2>
       <div class="awards">{render_award_tiles(tiles, friends_sorted)}</div>
     </div>'''
+
+
+def _detail(method, rows, unit="", places=2, players=True, excluded=None):
+    """Working for a card that ranked things itself.
+
+    `rows` is (label, value, count). `players` says whether those labels are
+    people, which decides whether they are painted in someone's colour: a
+    champion in Winny's blue reads as Winny.
+    """
+    return {
+        "method": method,
+        "unit": unit,
+        "places": places,
+        "excluded": excluded or [],
+        "standings": [{"label": lbl, "value": val, "games": n,
+                       **({} if players else {"colour": None})}
+                      for lbl, val, n in rows],
+    }
+
+
+def render_award_why(detail):
+    """The working behind a card: how the number was reached, and everyone
+    else's, in order.
+
+    Folded away by default. The claim is the point of the card; the arithmetic
+    is what you go looking for once you disagree with it.
+    """
+    if not detail:
+        return ""
+    rows = detail.get("standings") or []
+    if not rows:
+        return ""
+    places = detail.get("places", 2)
+    unit = detail.get("unit", "")
+    top = rows[0]["value"]
+
+    # On a card that ranks by games played, a Games column repeats the Value
+    # column exactly. Drop it rather than print the same number twice.
+    show_games = any(r.get("games") for r in rows) and not all(
+        abs(r["value"] - r.get("games", 0)) < 1e-9 for r in rows)
+
+    def cell(r, n):
+        gap = r["value"] - top
+        # The gap to the leader, signed the way the reader expects: on a card
+        # where low wins, being 0.4 behind means being 0.4 higher.
+        gap_txt = ""
+        if n > 1 and gap:
+            gap_txt = f'<span class="why-gap">{abs(gap):,.{places}f} behind</span>'
+        colour = r.get("colour", friend_colour(r["label"]))
+        name = (f'<b style="color:var({colour});">{esc(r["label"])}</b>' if colour
+                else f'<b>{esc(r["label"])}</b>')
+        return (f'<tr><td class="num muted small">{n}</td>'
+                f'<td class="nowrap">{name}</td>'
+                f'<td class="num"><b>{r["value"]:,.{places}f}</b>{esc(unit)}</td>'
+                + (f'<td class="num muted small">{r["games"]}</td>' if show_games else "")
+                + f'<td class="num">{gap_txt}</td></tr>')
+
+    body = "".join(cell(r, n) for n, r in enumerate(rows, start=1))
+    method = detail.get("method")
+    method_html = f'<div class="why-method">{method}</div>' if method else ""
+    excluded = detail.get("excluded") or []
+    excl_html = ""
+    if excluded:
+        items = ", ".join(f"{esc(lbl)} ({esc(why)})" for lbl, why in excluded)
+        excl_html = f'<div class="why-excluded">Not measured: {items}</div>'
+    return (f'<details class="award-why"><summary>How this was worked out</summary>'
+            f'{method_html}'
+            f'<table class="why-table"><thead><tr><th class="num">#</th><th>Player</th>'
+            f'<th class="num">Value</th>'
+            + (f'<th class="num">{esc(detail.get("games_label", "Games"))}</th>'
+               if show_games else "")
+            + f'<th class="num">Gap</th></tr></thead><tbody>{body}</tbody></table>'
+            f'{excl_html}</details>')
 
 
 def render_award_tiles(tiles, friends_sorted):
@@ -4106,19 +4382,24 @@ def render_award_tiles(tiles, friends_sorted):
         return (f' style="--award-colour: linear-gradient(180deg, var({a}) 0%, '
                 f'var({a}) 20%, var({b}) 80%, var({b}) 100%);"')
 
-    return "".join(
-        f'<div class="award"{style(text)}><div class="award-icon">{icon}</div><div>'
-        f'<div class="award-title">{esc(title)}</div><div class="award-text">{text}</div>'
-        f'</div></div>'
-        for icon, title, text in tiles
-    )
+    def one(tile):
+        icon, title, text = tile[0], tile[1], tile[2]
+        detail = tile[3] if len(tile) > 3 else None
+        return (f'<div class="award"{style(text)}><div class="award-icon">{icon}</div>'
+                f'<div class="award-body">'
+                f'<div class="award-title">{esc(title)}</div>'
+                f'<div class="award-text">{text}</div>'
+                f'{render_award_why(detail)}'
+                f'</div></div>')
+
+    return "".join(one(t) for t in tiles)
 
 
 def render_season_highlights_panel(friends_sorted, now):
     cards = season_highlights(friends_sorted, now)
     if not cards:
         return ""
-    tiles = [(c["icon"], c["title"], c["text"]) for c in cards]
+    tiles = [(c["icon"], c["title"], c["text"], c) for c in cards]
     return f'''
     <div class="panel">
       <h2 style="margin-bottom:14px;">Season highlights</h2>
@@ -5727,6 +6008,34 @@ def build_html(data):
   .award-title {{ font-weight: 700; font-size: 13px; margin-bottom: 3px; letter-spacing: -0.01em; }}
   .award-text {{ font-size: 12px; color: var(--text-secondary); line-height: 1.45; }}
   .award-text strong {{ color: var(--text-primary); font-weight: 700; }}
+  /* The card is a claim; this is the working. Folded away because the claim
+     is what the card is for, and open on a click because the first thing
+     anyone says to a superlative is "by how much?". */
+  .award-body {{ min-width: 0; flex: 1; }}
+  .award-why {{ margin-top: 8px; }}
+  .award-why > summary {{
+    font-size: 11px; padding: 3px 0; color: var(--muted);
+    list-style: none; user-select: none;
+  }}
+  .award-why > summary::-webkit-details-marker {{ display: none; }}
+  .award-why > summary::before {{ content: "\25b8 "; display: inline-block; transition: transform .15s ease; }}
+  .award-why[open] > summary::before {{ transform: rotate(90deg); }}
+  .award-why > summary:hover {{ color: var(--text-secondary); }}
+  .why-method {{
+    font-size: 11px; color: var(--text-secondary); line-height: 1.5;
+    margin: 6px 0 8px; padding-left: 10px;
+    border-left: 2px solid var(--border);
+  }}
+  .why-table {{ width: 100%; border-collapse: collapse; font-size: 11px; }}
+  .why-table th {{
+    text-align: left; font-weight: 600; color: var(--muted);
+    padding: 3px 6px; border-bottom: 1px solid var(--border);
+  }}
+  .why-table td {{ padding: 3px 6px; border-bottom: 1px solid var(--border); }}
+  .why-table tr:last-child td {{ border-bottom: none; }}
+  .why-table .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .why-gap {{ color: var(--muted); font-size: 10px; white-space: nowrap; }}
+  .why-excluded {{ font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.45; }}
   /* The LP behind a promotion: "Platinum I → Emerald IV" says how far, this
      says how much. */
   .lp-gain {{
