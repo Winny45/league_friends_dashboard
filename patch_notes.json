@@ -1,5 +1,23 @@
 [
   {
+    "date": "2026-09-03",
+    "title": "Publishing four times an hour to publish once, and a key countdown",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The hourly publish was not hourly. GitHub's scheduler is a queue rather than a clock, and on a public repo it does not merely run late: an hourly trigger produced runs at 16:21, 19:39 and 22:29 one evening, three of the eight it owed, leaving the page nearly two hours old. The schedule now fires every fifteen minutes and a gate job reads the live page first, doing the work only when what a visitor can actually see is more than fifty-five minutes old. An hour is missed only if all four triggers are dropped."
+      },
+      {
+        "type": "added",
+        "text": "A chip in the header saying when the Riot API key was added and how long it has left, counting down in the browser so a page left open overnight does not keep claiming hours it no longer has. It turns amber under six hours and red under one. Set api_key_permanent in config.json and it says the key does not expire instead."
+      },
+      {
+        "type": "changed",
+        "text": "set_key.py stamps the key's clock when the key is installed rather than leaving it to the next fetch. A key pasted in the evening would otherwise be dated to whenever the schedule next ran, and a countdown wrong in the optimistic direction is worse than no countdown."
+      }
+    ]
+  },
+  {
     "date": "2026-09-02",
     "title": "Cards in a declared order, and a KDA term that finally counts",
     "items": [

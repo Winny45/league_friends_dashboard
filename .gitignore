@@ -49,3 +49,6 @@ deploy/index.html
 deploy/og.png
 deploy/icon-180.png
 .state/
+
+# Derived: a hash of the current key and when it was installed.
+key_state.json
