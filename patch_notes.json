@@ -1,6 +1,16 @@
 [
   {
     "date": "2026-09-03",
+    "title": "Exes was counting Flex and 5s",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Exes was the only card in the duo panel not restricted to Ranked Solo/Duo. The five others come from the same Solo/Duo figures as the matrix, but Exes read the duo lookup directly, and that covers all three ranked queues because it also tints the With column on a match list where any shared game counts. It answered Rory and Winny at 14 days; the Solo/Duo answer is Neel and Shas at 58."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-03",
     "title": "Every highlight now shows its working",
     "items": [
       {
