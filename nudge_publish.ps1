@@ -15,9 +15,11 @@
 # is under fifty-five minutes old costs about twenty seconds and changes
 # nothing.
 #
-# Run it by hand, or every hour:
+# Run it by hand, or every hour. Note it goes through run_hidden.vbs: a task
+# that starts powershell.exe directly draws a console on the logged-in desktop
+# every time it fires, which on an hourly schedule is an hourly window.
 #   schtasks /Create /TN "LeagueDashboard-Nudge" /TR `
-#     "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PWD\nudge_publish.ps1`"" `
+#     "wscript.exe `"$PWD\run_hidden.vbs`" nudge_publish.ps1" `
 #     /SC HOURLY /MO 1 /ST 00:00 /F
 #
 # To stop:  schtasks /Delete /TN "LeagueDashboard-Nudge" /F
