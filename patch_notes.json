@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-03",
+    "title": "Replacing the Riot key now updates the website too",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "set_key.py only ever changed the copy on your PC. The published site is built on GitHub, which reads the key from a repository secret and never sees config.json, so replacing an expired key locally left the website failing exactly as before. It now sets the secret as well, and says plainly what to do if it cannot."
+      },
+      {
+        "type": "changed",
+        "text": "It also stopped telling you to run the local publish script afterwards, which has not been how the site updates since it moved to GitHub."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-03",
     "title": "Exes was counting Flex and 5s",
     "items": [
       {
