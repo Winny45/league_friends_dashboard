@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-09-04",
+    "title": "A suspended account is marked as one",
+    "items": [
+      {
+        "type": "added",
+        "text": "An account serving a temporary ban gets a red line across its card, everything below dimmed, and a banner saying how long is left and the day they are back. The line alone would say something is wrong without saying what, so it comes with the reason."
+      },
+      {
+        "type": "changed",
+        "text": "The suspension is a date in the config rather than a flag, so it stops applying by itself. A flag needs turning off by hand three days later, and the hand that turned it on is rarely there, so the card would sit claiming a ban that ended a fortnight ago."
+      }
+    ]
+  },
+  {
     "date": "2026-09-03",
     "title": "The rank beside the LP chart was stuck at midnight",
     "items": [
