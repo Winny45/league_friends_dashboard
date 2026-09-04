@@ -764,6 +764,105 @@ def compute_duo_synergy(friends):
     return {"rows": rows, "own": own, "players": [f["label"] for f in friends]}
 
 
+# How far from "seven days ago" a snapshot may sit and still be called a seven
+# day trend. Inside TIGHT it is one; inside WIDE it is the nearest reading and
+# says so; beyond that there is no answer worth giving, because reaching
+# further back and still calling it a week is the mislabelling this exists to
+# avoid.
+TREND_TIGHT_HOURS = 2
+TREND_WIDE_HOURS = 24
+
+
+def snapshot_at_ms(h):
+    """When a reading was taken, as a timestamp.
+
+    Rows carry atMs, and the newer ones also carry liveAtMs for the reading
+    refreshed through the day. Older rows have neither, so their date at
+    midnight is the best available and is treated as exact to the day.
+    """
+    if h.get("liveAtMs"):
+        return int(h["liveAtMs"])
+    if h.get("atMs"):
+        return int(h["atMs"])
+    try:
+        return int(datetime.strptime(h["date"], "%Y-%m-%d").timestamp() * 1000)
+    except (ValueError, KeyError):
+        return 0
+
+
+def snapshot_rank(h, live=True):
+    """The rank a row reports. The live reading by default, the frozen
+    midnight anchor when the daily chart asks for it."""
+    if live and h.get("liveTier"):
+        return {"tier": h["liveTier"], "rank": h.get("liveRank"),
+                "leaguePoints": h.get("liveLeaguePoints", 0)}
+    return h
+
+
+def weekly_move(rank_history, label, now, queue="solo", games=None):
+    """One player's movement over the last seven days, or why there isn't one.
+
+    The single place this comparison is made. It used to be made twice, in
+    weekly_trend_for and again inside the Biggest climber card's working, and
+    the two drifted: one measured in ladder LP and the other in tier_score, so
+    a card reading 96 LP was explained by a table reading 396.
+
+    Returns None when nothing can be said, otherwise a dict carrying the LP
+    moved, both rank names, and whether the anchor was close enough to the
+    target time to call this a week without qualification.
+    """
+    pts = sorted((h for h in rank_history
+                  if h.get("queue") == queue and h.get("label") == label),
+                 key=snapshot_at_ms)
+    if len(pts) < 2:
+        return None
+
+    target = (now - timedelta(days=7)).timestamp() * 1000
+    latest = pts[-1]
+    # The anchor is the reading nearest seven days ago, not the nearest one
+    # inside the week: those are different questions and only the first is a
+    # seven day trend.
+    candidates = [h for h in pts if h is not latest]
+    if not candidates:
+        return None
+    anchor = min(candidates, key=lambda h: abs(snapshot_at_ms(h) - target))
+    off_hours = abs(snapshot_at_ms(anchor) - target) / 3600000.0
+    if off_hours > TREND_WIDE_HOURS:
+        return None
+
+    start, end = snapshot_rank(anchor), snapshot_rank(latest)
+    moved = ladder_lp(end) - ladder_lp(start)
+    return {
+        "label": label,
+        "lp": moved,
+        "from": tier_only_label(start),
+        "to": tier_only_label(end),
+        "fromFull": rank_label(start),
+        "toFull": rank_label(end),
+        "approx": off_hours > TREND_TIGHT_HOURS,
+        "offHours": off_hours,
+        "games": games,
+        "direction": 1 if moved > 0 else (-1 if moved < 0 else 0),
+        "moved": tier_only_label(start) != tier_only_label(end),
+    }
+
+
+def weekly_moves(rank_history, friends, now, queue="solo"):
+    """Everyone's seven day movement, biggest climb first, with game counts
+    taken from the match history rather than counted again here."""
+    cut = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    out = []
+    for f in friends:
+        played = sum(1 for m in f.get("seasonMatches", [])
+                     if not m.get("remake") and (m.get("dateKey") or "") >= cut
+                     and (queue != "solo" or m.get("queue") == "Ranked Solo/Duo"))
+        mv = weekly_move(rank_history, f["label"], now, queue, games=played)
+        if mv:
+            out.append(mv)
+    out.sort(key=lambda m: -m["lp"])
+    return out
+
+
 def week_window(pts, cutoff):
     """The pair of snapshots that actually spans the last seven days.
 
@@ -785,17 +884,18 @@ def week_window(pts, cutoff):
 
 
 def weekly_trend_for(rank_history, label, now, queue="solo"):
-    """Net movement over the last seven days for one friend and one queue –
-    powers the ▲/▼ trend arrow on the leaderboard and on each card."""
-    cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-    pts = sorted(
-        (h for h in rank_history if h.get("queue") == queue and h["label"] == label),
-        key=lambda h: h["date"],
-    )
-    pair = week_window(pts, cutoff)
-    # No suffix: every place this is shown already says the period, in a
-    # column heading or a label beside it.
-    return net_change_label(*pair) if pair else None
+    """Net movement over the last seven days for one friend and one queue,
+    powering the arrow on the leaderboard and on each card.
+
+    Shares weekly_move with the Biggest climber card, so the number and the
+    explanation of it cannot disagree.
+    """
+    mv = weekly_move(rank_history, label, now, queue)
+    if not mv:
+        return None
+    text = f'{mv["from"]} &rarr; {mv["to"]}' if mv["moved"] else "no change"
+    return {"text": text, "lp": mv["lp"], "direction": mv["direction"],
+            "moved": mv["moved"], "approx": mv["approx"]}
 
 
 def weekly_rank_leader(rank_history, now):
@@ -1937,26 +2037,47 @@ def lp_step_label(prev_value, value, delta, exact):
 
 
 def segment_deltas(wins, net):
-    """Split a known net LP change across the games in one snapshot-to-snapshot
-    segment. Solves for the win/loss step sizes closest to a nominal 20 LP that
-    still land exactly on the next real snapshot: minimise (g-20)^2 + (d-20)^2
-    subject to W*g - L*d = net. `wins` is the ordered list of win booleans."""
+    """Split a known net LP change across the games between two readings.
+
+    A win is worth 20 + offset and a loss costs 20 - offset, the same offset
+    either side of a nominal game:
+
+        offset = (net - 20 * (wins - losses)) / (wins + losses)
+
+    which lands on the measured net exactly, since
+    W*(20+off) - L*(20-off) = 20*(W-L) + off*(W+L) = net.
+
+    All wins or all losses needs no special case: with L = 0 the offset
+    reduces to net/W - 20, so each win is worth net/W, the plain average.
+
+    The previous version minimised (g-20)^2 + (d-20)^2 instead, which put the
+    offset on wins and losses in proportion to how many of each there were.
+    That is defensible and it is not what anyone means by "split it evenly".
+
+    LP is a whole number, so the values are rounded and then the rounding is
+    given back a point at a time until the total is the measured net again.
+    Games in one batch are indistinguishable, so which of them absorbs it does
+    not matter.
+    """
     if not wins:
         return []
     W = sum(1 for w in wins if w)
     L = len(wins) - W
-    lam = (net - NOMINAL_LP * (W - L)) / (W * W + L * L)
-    gain = NOMINAL_LP + lam * W
-    loss = NOMINAL_LP - lam * L
-    # A win must never cost LP and a loss must never gain it, so clamp the
-    # solve, then spread whatever that clamping left over evenly — the line
-    # still has to land on the real snapshot.
-    gain, loss = max(gain, 1.0), max(loss, 1.0)
-    deltas = [gain if w else -loss for w in wins]
-    residual = net - sum(deltas)
-    if abs(residual) > 1e-9:
-        share = residual / len(deltas)
-        deltas = [d + share for d in deltas]
+    offset = (net - NOMINAL_LP * (W - L)) / (W + L)
+    gain = NOMINAL_LP + offset
+    loss = NOMINAL_LP - offset
+    # A win never costs LP and a loss never gains it.
+    gain, loss = max(gain, 0.0), max(loss, 0.0)
+    deltas = [round(gain) if w else -round(loss) for w in wins]
+
+    # Hand the rounding back, one LP at a time, until the total is exact.
+    residual = int(round(net - sum(deltas)))
+    i = 0
+    while residual and deltas:
+        step = 1 if residual > 0 else -1
+        deltas[i % len(deltas)] += step
+        residual -= step
+        i += 1
     return deltas
 
 
@@ -4048,33 +4169,29 @@ def week_tiles(friends_sorted, rank_history, now):
                               "sums to more than the total.",
                               in_shared, " games", 0)))
 
-    climber = weekly_rank_leader(rank_history, now)
-    if climber and climber.get("text"):
-        gained = abs(climber.get("lp") or 0)
-        moved = (climber.get("fromLabel") and climber.get("toLabel")
-                 and climber["fromLabel"] != climber["toLabel"])
-        where = (f' and climbed from {climber["fromLabel"]} to {climber["toLabel"]}'
-                 if moved else '')
-        moves = []
-        by_label = {}
-        for h in rank_history:
-            if h.get("queue") == "solo":
-                by_label.setdefault(h["label"], []).append(h)
-        cut = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-        for label, pts in by_label.items():
-            pts.sort(key=lambda h: h["date"])
-            pair = week_window(pts, cut)
-            if pair:
-                moves.append((label, tier_score(pair[1]) - tier_score(pair[0]), len(pts)))
-        moves.sort(key=lambda r: -r[1])
+    # The card and its working now come from one call. They used to be
+    # computed separately: the card in ladder LP, the working in tier_score,
+    # so Rory's 96 LP was explained by a table saying 396. The games column
+    # counted snapshots, which is why everyone had nine of them.
+    moves = weekly_moves(rank_history, friends_sorted, now)
+    climbs = [m for m in moves if m["lp"] > 0]
+    if climbs:
+        top = climbs[0]
+        where = f' and climbed from {top["from"]} to {top["to"]}' if top["moved"] else ""
+        approx = " (nearest reading)" if top["approx"] else ""
+        unmeasured = [(f["label"], "no reading near seven days ago") for f in friends_sorted
+                      if not any(m["label"] == f["label"] for m in moves)]
         tiles.append(("\U0001f4c8", "Biggest climber",
-                      f'{esc(climber["label"])} gained <strong>{gained}</strong> LP this week'
-                      f'{where}.',
-                      _detail("Ladder position at the end of the week minus its position at "
-                              "the start, in LP, from the daily rank snapshots. Anyone "
-                              "without a snapshot at both ends of the window cannot be "
-                              "measured.",
-                              moves, " LP", 0)))
+                      f'{esc(top["label"])} gained <strong>{top["lp"]}</strong> LP this week'
+                      f'{where}{approx}.',
+                      _detail(f"Ladder position now minus ladder position seven days ago, in "
+                              f"LP, where one division is 100 and one tier is 400. The "
+                              f"anchor is the reading nearest to seven days ago; beyond "
+                              f"{TREND_WIDE_HOURS} hours from it there is no answer worth "
+                              f"giving. Games are this week's Solo/Duo games, from the same "
+                              f"match history the rest of the page counts.",
+                              [(m["label"], m["lp"], m["games"]) for m in moves],
+                              " LP", 0, excluded=unmeasured)))
 
     form = [(100 * sum(1 for m in ms if m["win"]) / len(ms), label, ms)
             for label, ms in week.items() if len(ms) >= 5]
@@ -4867,21 +4984,38 @@ window.LpChart = (function () {
   // loss steps closest to a nominal 20 LP that still land on the next real
   // snapshot. Riot does not expose per-game LP, so the shape between two
   // snapshots is an estimate while every snapshot itself is measured.
+  // Must match segment_deltas() in the generator exactly: verifySelf
+  // compares the two renders byte for byte.
+  // Python's round() goes to even on a tie, Math.round() goes up: round(20.5)
+  // is 20 in one and 21 in the other. Exactly the halves this produces, so
+  // the tie has to be broken the same way in both.
+  function pyRound(x) {
+    var f = Math.floor(x);
+    var d = x - f;
+    if (Math.abs(d - 0.5) > 1e-9) return Math.round(x);
+    return (f % 2 === 0) ? f : f + 1;
+  }
+
   function segmentDeltas(wins, net) {
     if (!wins.length) return [];
     var W = 0, i;
     for (i = 0; i < wins.length; i++) if (wins[i]) W++;
     var L = wins.length - W;
-    var lam = (net - D.nominalLp * (W - L)) / (W * W + L * L);
-    var gain = Math.max(D.nominalLp + lam * W, 1.0);
-    var loss = Math.max(D.nominalLp - lam * L, 1.0);
-    var deltas = wins.map(function (w) { return w ? gain : -loss; });
+    var offset = (net - D.nominalLp * (W - L)) / (W + L);
+    var gain = Math.max(D.nominalLp + offset, 0.0);
+    var loss = Math.max(D.nominalLp - offset, 0.0);
+    var deltas = wins.map(function (w) {
+      return w ? pyRound(gain) : -pyRound(loss);
+    });
     var sum = 0;
     for (i = 0; i < deltas.length; i++) sum += deltas[i];
-    var residual = net - sum;
-    if (Math.abs(residual) > 1e-9) {
-      var share = residual / deltas.length;
-      deltas = deltas.map(function (d) { return d + share; });
+    var residual = Math.round(net - sum);
+    var n = 0;
+    while (residual !== 0 && deltas.length) {
+      var step = residual > 0 ? 1 : -1;
+      deltas[n % deltas.length] += step;
+      residual -= step;
+      n++;
     }
     return deltas;
   }
