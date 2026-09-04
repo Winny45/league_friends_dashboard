@@ -5,7 +5,7 @@
     "items": [
       {
         "type": "added",
-        "text": "A red line across a card for an account serving a temporary ban. The detail sits in the hover text rather than on the page: spelling it out in a banner made a joke among people who already know why it is there read like an incident report."
+        "text": "A red line across a suspended account, on the leaderboard row and on their card. The detail sits in the hover text rather than on the page."
       },
       {
         "type": "changed",

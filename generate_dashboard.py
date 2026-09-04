@@ -1779,15 +1779,22 @@ def render_trend_arrow(trend, compact=False):
     return '<span class="muted small">–</span>'
 
 
-def render_leaderboard_row(f, i, trend=None):
+def render_leaderboard_row(f, i, trend=None, now=None):
     solo = f["ranked"].get("solo")
+    susp = suspension(f, now or datetime.now())
     var = tier_var((solo or {}).get("tier"))
     wr = (solo or {}).get("winrate")
     # Top three get a tinted medal chip; everyone else a neutral one.
     pos_cls = f"pos pos-{i}" if i <= 3 else "pos"
     # data-* hooks let the client-side "live ranks" refresh rewrite these
     # cells in place without re-rendering the page.
-    return f'''<tr data-friend-row="{esc(f["label"])}">
+    susp_attrs = ""
+    if susp:
+        back = (susp["ends"] + timedelta(days=1)).strftime("%b %d")
+        susp_attrs = (f' class="suspended" title="{esc(susp["note"] or "Temporarily banned")}: '
+                      f'{susp["days"]} day{"s" if susp["days"] != 1 else ""} left, '
+                      f'back on {back}"')
+    return f'''<tr data-friend-row="{esc(f["label"])}"{susp_attrs}>
       <td class="num"><span class="{pos_cls}">{i}</span></td>
       <td class="lb-name">{render_avatar(f, size=24)}<a href="#friends/{f["label"].lower()}" data-friend-link="{f["label"].lower()}">{esc(f["label"])}</a></td>
       <td class="rank-cell" data-cell="rank" style="color:var({var});font-weight:600;">{render_rank_icon((solo or {}).get("tier"))}{rank_label(solo)}</td>
@@ -5604,7 +5611,7 @@ def build_html(data):
     set_duo_context(friends_sorted, [f["label"] for f in friends])
 
     leaderboard_rows = "".join(
-        render_leaderboard_row(f, i + 1, weekly_trend_for(rank_history, f["label"], now))
+        render_leaderboard_row(f, i + 1, weekly_trend_for(rank_history, f["label"], now), now)
         for i, f in enumerate(friends_sorted)
     )
     cards = "".join(
@@ -6313,7 +6320,18 @@ def build_html(data):
   }}
   .card-head h2 {{ margin: 0; font-size: 19px; }}
 
-  /* A red line across a suspended account, and nothing else. */
+  /* A red line across a suspended account, and nothing else.
+
+     On the leaderboard the line is drawn per cell rather than once on the
+     row: a table row is not a positioning container in every browser, so a
+     single pseudo-element on it collapses to nothing. Cell by cell, the
+     segments meet and read as one line across the whole row. */
+  .leaderboard tr.suspended td {{ position: relative; }}
+  .leaderboard tr.suspended td::after {{
+    content: ""; position: absolute; left: 0; right: 0; top: 50%;
+    height: 2px; background: var(--critical); opacity: .7;
+    pointer-events: none;
+  }}
   .card.suspended {{ position: relative; }}
   .card.suspended::after {{
     content: ""; position: absolute; left: 0; right: 0; top: 50%;
