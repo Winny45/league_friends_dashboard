@@ -814,6 +814,13 @@ def main():
                 refetch_details=refetch_details,
             )
             if summary:
+                # Anything the config says about a player that Riot cannot:
+                # a suspension, for instance, which is real, temporary, and
+                # invisible to the API. Dated rather than a flag, so it stops
+                # applying on its own instead of being left on for months.
+                if friend.get("suspended_until"):
+                    summary["suspendedUntil"] = friend["suspended_until"]
+                    summary["suspendedNote"] = friend.get("suspended_note", "")
                 results.append(summary)
         except Exception as e:
             print(f"  ! error fetching {friend.get('label')}: {e}")
