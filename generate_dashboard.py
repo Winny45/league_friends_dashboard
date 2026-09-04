@@ -892,7 +892,11 @@ def weekly_trend_for(rank_history, label, now, queue="solo"):
     """
     mv = weekly_move(rank_history, label, now, queue)
     if not mv:
-        return None
+        # Not the same as "nothing moved". Nothing was measurable, and saying
+        # so is the point of the tiered window: reaching further back and
+        # calling the result a seven day trend is the thing being avoided.
+        return {"insufficient": True, "direction": 0, "lp": 0,
+                "text": "insufficient data", "moved": False, "approx": False}
     # Two shapes, matching what render_trend_arrows expects. Inside one
     # division the LP number is the whole story, so the text is that number
     # and the renderer prints it as it stands. Across a promotion the raw LP
@@ -1847,6 +1851,10 @@ def render_trend_arrows(trend, label="", tag=""):
     either read as two upward arrows.
     """
     chip = f'<span class="tr-tag">{esc(tag)}</span>' if tag else ""
+    if trend and trend.get("insufficient"):
+        return (f'<span class="tr-group" title="{esc(label)}: no rank reading near '
+                f'seven days ago, so there is nothing to compare against">{chip}'
+                f'<span class="tr-none tr-insufficient">insufficient data</span></span>')
     if not trend or not trend.get("direction"):
         return (f'<span class="tr-group" title="{esc(label)}: nothing recorded">'
                 f'{chip}<span class="tr-none">&ndash;</span></span>')
@@ -1858,8 +1866,11 @@ def render_trend_arrows(trend, label="", tag=""):
     text = trend["text"]
     if trend.get("moved") and trend.get("lp") is not None:
         text = f"{'+' if trend['lp'] >= 0 else '−'}{abs(trend['lp'])} LP, {text}"
-    return (f'<span class="tr-group" title="{esc(label)}: {esc(text)}">{chip}'
-            + f'<span class="{cls}">{glyph}</span>' * count + '</span>')
+    approx = ('<span class="tr-approx" title="Based on the nearest rank reading, '
+              'not one exactly seven days old">~</span>') if trend.get("approx") else ""
+    return (f'<span class="tr-group" title="{esc(label)}: {esc(text)}'
+            f'{" (nearest reading)" if trend.get("approx") else ""}">{chip}'
+            + f'<span class="{cls}">{glyph}</span>' * count + approx + '</span>')
 
 
 def render_trend_arrow(trend, compact=False):
@@ -1870,6 +1881,13 @@ def render_trend_arrow(trend, compact=False):
     `compact` drops the text and keeps the glyph, for the row of arrows in
     a card header where there is room for a symbol and a tooltip but not a
     sentence."""
+    if trend and trend.get("insufficient"):
+        title = ("No rank reading near seven days ago, so there is nothing to "
+                 "compare against")
+        if compact:
+            return f'<span class="tr-flat" title="{esc(title)}">&#9651;</span>'
+        return (f'<span class="muted small tr-insufficient" title="{esc(title)}">'
+                f'insufficient data</span>')
     if not trend:
         return ('<span class="tr-flat" title="No movement recorded">&#9651;</span>'
                 if compact else '<span class="muted small">–</span>')
@@ -1880,6 +1898,13 @@ def render_trend_arrow(trend, compact=False):
     if trend.get("moved") and trend.get("lp") is not None:
         lp = trend["lp"]
         text = f"{'+' if lp >= 0 else '−'}{abs(lp)} LP, {text}"
+    # The spec asks for the approximate marker on the friend cards and on the
+    # overview table; only the cards had it. A tilde beside the arrow, with the
+    # reason in the tooltip.
+    approx = ('<span class="tr-approx" title="Based on the nearest rank reading, '
+              'not one exactly seven days old">~</span>') if trend.get("approx") else ""
+    if trend.get("approx"):
+        text += " (nearest reading)"
     if compact:
         if trend["direction"] > 0:
             return f'<span class="tr-up" title="{esc(text)}">&#9650;</span>'
@@ -1887,9 +1912,9 @@ def render_trend_arrow(trend, compact=False):
             return f'<span class="tr-down" title="{esc(text)}">&#9660;</span>'
         return f'<span class="tr-flat" title="{esc(text)}">&#9651;</span>'
     if trend["direction"] > 0:
-        return f'<span class="small" style="color:var(--good);">▲ {esc(text)}</span>'
+        return f'<span class="small" style="color:var(--good);">▲ {esc(text)}</span>{approx}'
     if trend["direction"] < 0:
-        return f'<span class="small" style="color:var(--critical);">▼ {esc(text)}</span>'
+        return f'<span class="small" style="color:var(--critical);">▼ {esc(text)}</span>{approx}'
     return '<span class="muted small">–</span>'
 
 
@@ -6609,6 +6634,12 @@ def build_html(data):
   .range-btn.active {{ background: var(--surface-1); color: var(--text-primary); box-shadow: var(--shadow-sm); }}
   .chart-view[hidden] {{ display: none; }}
 
+  /* "insufficient data" is a sentence where the column expects a symbol, so
+     it is sized down to sit in the same row without stretching it. */
+  .tr-insufficient {{ font-size: 11px; font-style: italic; opacity: .75; white-space: nowrap; }}
+  /* A trend measured against a reading hours off the target is still a real
+     number, and this says the period behind it is approximate. */
+  .tr-approx {{ font-size: 11px; color: var(--muted); margin-left: 3px; cursor: help; }}
   .lp-dump-row {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 4px; }}
   .rank-chart {{ width: 100%; height: auto; overflow: visible; }}
   .chart-grid {{ stroke: var(--gridline); stroke-width: 1; }}
