@@ -2699,6 +2699,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         )
 
     table_rows = "".join(lp_row(e) for e in lp_events)
+    lp_debug_text = build_lp_debug_text(lp_events, rank_history, tracking_since)
 
     return f'''
     <div class="panel">
@@ -2714,6 +2715,15 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       <div class="chart-stats-wrap" data-lp-standings>{standings_html}</div>
       <details class="matches-details" style="margin-top:10px;">
         <summary>Recent Games</summary>
+        <div class="lp-dump-row">
+          <button class="hbtn" type="button" data-lp-dump
+                  title="Download every reconstructed game as a text file">
+            &#11015; Download as .txt
+          </button>
+          <span class="muted small">Every game below, with the LP worked out for it
+          and the rank it left them on. For checking the numbers.</span>
+        </div>
+        <script type="text/plain" id="lp-dump-data">{esc(lp_debug_text)}</script>
         <table class="matches-table lp-table">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
@@ -2721,6 +2731,67 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         </table>
       </details>
     </div>'''
+
+
+def build_lp_debug_text(lp_events, rank_history, tracking_since):
+    """Every reconstructed game as plain text, newest first.
+
+    Written for someone checking the arithmetic rather than reading a report,
+    so it carries the things the table has no room for: which readings are
+    real measurements and which are worked out, and the snapshots the whole
+    reconstruction is anchored on.
+    """
+    lines = [
+        "League Friends Dashboard - per-game LP working",
+        "Generated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Rank tracking began: " + str(tracking_since),
+        "",
+        "Riot's match API returns no LP, so none of this is measured directly.",
+        "What is measured is the rank snapshot taken at each reading. Between two",
+        "readings the net LP change is known exactly, and it is split across the",
+        "games played in between: a win is worth 20 + offset and a loss costs",
+        "20 - offset, where offset = (net - 20 * (wins - losses)) / (wins + losses).",
+        "Values are whole LP, with the rounding handed back until the total is the",
+        "measured net again. Rows marked (measured) land on a real snapshot; the",
+        "rest are the split.",
+        "",
+        "=" * 78,
+        "SNAPSHOTS  (the measured readings everything else is anchored on)",
+        "=" * 78,
+    ]
+
+    solo = sorted((h for h in rank_history if h.get("queue") == "solo"),
+                  key=lambda h: (h.get("label", ""), snapshot_at_ms(h)))
+    if solo:
+        lines.append(f"{'player':10} {'taken':17} {'rank':26} {'ladder LP':>9}")
+        for h in solo:
+            when = datetime.fromtimestamp(snapshot_at_ms(h) / 1000).strftime("%Y-%m-%d %H:%M")
+            live = snapshot_rank(h)
+            lines.append(f"{h.get('label', ''):10} {when:17} "
+                         f"{html.unescape(rank_label(live)):26} {ladder_lp(live):>9}")
+    else:
+        lines.append("(none recorded yet)")
+
+    lines += ["", "=" * 78,
+              "GAMES  (newest first)",
+              "=" * 78,
+              f"{'when':17} {'player':10} {'res':4} {'champion':16} "
+              f"{'LP':>6}  {'rank after':26} note"]
+
+    for e in lp_events:
+        m, pt = e["match"], e["point"]
+        delta = pt.get("delta")
+        lp = "" if delta is None else f"{'+' if delta >= 0 else ''}{delta:.0f}"
+        note = "(measured)" if pt.get("exact") else ""
+        when = html.unescape(format_match_when(m))
+        lines.append(
+            f"{when:17} {e['label']:10} {'W' if m['win'] else 'L':4} "
+            f"{html.unescape(champion_display(m['champion'])):16} "
+            f"{lp:>6}  {html.unescape(score_to_rank_label(pt['score'])):26} {note}".rstrip()
+        )
+
+    lines += ["", f"{len(lp_events)} games listed."]
+    return "\n".join(lines)
 
 
 def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
@@ -6535,6 +6606,7 @@ def build_html(data):
   .range-btn.active {{ background: var(--surface-1); color: var(--text-primary); box-shadow: var(--shadow-sm); }}
   .chart-view[hidden] {{ display: none; }}
 
+  .lp-dump-row {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 4px; }}
   .rank-chart {{ width: 100%; height: auto; overflow: visible; }}
   .chart-grid {{ stroke: var(--gridline); stroke-width: 1; }}
   .chart-tick {{ fill: var(--muted); font-size: 11px; font-family: "Inter", system-ui, sans-serif; }}
@@ -7422,6 +7494,25 @@ def build_html(data):
 
   <script>
     (function () {{
+      // The .txt dump is built by the generator and carried in the page, so
+      // what downloads is exactly what produced the table above it. Rebuilding
+      // it here would mean auditing the maths with a second copy of the maths.
+      document.querySelectorAll('[data-lp-dump]').forEach(function (b) {{
+        b.addEventListener('click', function () {{
+          var el = document.getElementById('lp-dump-data');
+          if (!el) return;
+          var stamp = new Date().toISOString().slice(0, 10);
+          var blob = new Blob([el.textContent], {{ type: 'text/plain;charset=utf-8' }});
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'lp_per_game_' + stamp + '.txt';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+        }});
+      }});
+
       var btn = document.getElementById('export-csv');
       if (!btn) return;
       btn.addEventListener('click', function () {{
