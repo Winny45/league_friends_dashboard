@@ -1,6 +1,16 @@
 [
   {
     "date": "2026-09-04",
+    "title": "An L on the logo",
+    "items": [
+      {
+        "type": "changed",
+        "text": "The header mark is an L rather than the two chevrons. It is drawn rather than copied: Riot's fan content policy is happy with fan projects and unhappy with their trademark being used as somebody else's branding, which is what a site logo is."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-04",
     "title": "Download the LP working as a text file",
     "items": [
       {

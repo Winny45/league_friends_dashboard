@@ -4719,14 +4719,17 @@ FAVICON_SVG = (
     '</svg>'
 )
 
-# The same mark for the header, minus its own background — the .brand-mark
-# element already paints the gradient tile behind it.
+# The header mark, minus its own background — the .brand-mark element already
+# paints the gradient tile behind it.
+#
+# Drawn here rather than embedding Riot's actual logo file. Their fan content
+# policy is happy with fan projects and unhappy with their trademark being used
+# as somebody else's branding, which is exactly what a site logo is, so this is
+# an L in the same spirit rather than a copy of theirs. The chamfered corners
+# are what stop it reading as a plain block letter.
 BRAND_MARK_SVG = (
     '<svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true" focusable="false">'
-    '<path d="M18 43.5 32 29.5 46 43.5" fill="none" stroke="#fff" stroke-width="7" '
-    'stroke-linecap="round" stroke-linejoin="round"/>'
-    '<path d="M18 30.5 32 16.5 46 30.5" fill="none" stroke="#fff" stroke-width="7" '
-    'stroke-linecap="round" stroke-linejoin="round" opacity=".5"/>'
+    '<path d="M22 13 H35 V39 H50 V46 L44 52 H22 Z" fill="#fff"/>'
     '</svg>'
 )
 
