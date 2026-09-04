@@ -5,11 +5,11 @@
     "items": [
       {
         "type": "added",
-        "text": "An account serving a temporary ban gets a red line across its card, everything below dimmed, and a banner saying how long is left and the day they are back. The line alone would say something is wrong without saying what, so it comes with the reason."
+        "text": "A red line across a card for an account serving a temporary ban. The detail sits in the hover text rather than on the page: spelling it out in a banner made a joke among people who already know why it is there read like an incident report."
       },
       {
         "type": "changed",
-        "text": "The suspension is a date in the config rather than a flag, so it stops applying by itself. A flag needs turning off by hand three days later, and the hand that turned it on is rarely there, so the card would sit claiming a ban that ended a fortnight ago."
+        "text": "It is a date in the config rather than a flag, so it lifts by itself. Nothing checks for bans and nothing could: Riot does not expose that. Somebody types the date."
       }
     ]
   },

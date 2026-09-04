@@ -1618,26 +1618,23 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
             form_net = (f'<span class="form-net {"up" if moved >= 0 else "down"}">'
                         f'{"+" if moved >= 0 else "−"}{abs(moved):.0f} LP</span>')
 
+    # Just the line. It is a joke among people who already know why it is
+    # there, and spelling it out in a banner made a gag read like an incident
+    # report. The title attribute carries the detail for anyone who hovers.
     susp = suspension(f, now)
     susp_class = " suspended" if susp else ""
-    susp_banner = ""
+    susp_title = ""
     if susp:
         days = susp["days"]
-        # The line alone says something is wrong without saying what, so it
-        # comes with the reason and the date it lifts.
-        susp_banner = (
-            f'<div class="susp-banner" role="status">'
-            f'<span class="susp-tag">Suspended</span>'
-            f'<span class="susp-text">{esc(susp["note"] or "Temporarily banned")} &middot; '
-            f'{days} day{"s" if days != 1 else ""} left, back on '
-            f'{(susp["ends"] + timedelta(days=1)).strftime("%b %d")}</span></div>')
+        back = (susp["ends"] + timedelta(days=1)).strftime("%b %d")
+        susp_title = (f' title="{esc(susp["note"] or "Temporarily banned")}: '
+                      f'{days} day{"s" if days != 1 else ""} left, back on {back}"')
 
     return f'''
     <section class="card{susp_class}" id="friend-{f["label"].lower()}" tabindex="-1"
-             aria-label="{esc(f["label"])}{" (suspended)" if susp else ""}"
+             aria-label="{esc(f["label"])}{" (suspended)" if susp else ""}"{susp_title}
              style="--card-tier: var({solo_var});">
       {card_art}
-      {susp_banner}
       <header class="card-head">
         <div class="rank-crest">
           {render_avatar(f, size=52)}
@@ -6316,31 +6313,14 @@ def build_html(data):
   }}
   .card-head h2 {{ margin: 0; font-size: 19px; }}
 
-  /* A suspended account. The line is drawn across the whole card rather than
-     through the name, because the numbers underneath are the thing that has
-     stopped being current, not the person. Everything is dimmed a little so
-     the card reads as set aside without becoming unreadable, since the season
-     it already played is still worth looking at. */
+  /* A red line across a suspended account, and nothing else. */
   .card.suspended {{ position: relative; }}
   .card.suspended::after {{
     content: ""; position: absolute; left: 0; right: 0; top: 50%;
     height: 2px; background: var(--critical); opacity: .55;
     pointer-events: none; z-index: 2;
   }}
-  .card.suspended > *:not(.susp-banner) {{ opacity: .62; }}
-  .susp-banner {{
-    display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
-    margin: 0 0 14px; padding: 8px 12px; border-radius: 10px;
-    background: color-mix(in srgb, var(--critical) 13%, var(--surface-2));
-    border: 1px solid color-mix(in srgb, var(--critical) 38%, transparent);
-    position: relative; z-index: 3;
-  }}
-  .susp-tag {{
-    font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--critical); border: 1px solid color-mix(in srgb, var(--critical) 45%, transparent);
-    border-radius: 999px; padding: 2px 8px; white-space: nowrap;
-  }}
-  .susp-text {{ font-size: 12px; color: var(--text-secondary); }}
+  .card.suspended::after {{ opacity: .7; }}
 
   .rank-rows {{ display: flex; flex-direction: column; gap: 11px; margin-bottom: 16px; }}
   .rank-row {{ display: grid; grid-template-columns: 150px 70px 1fr 152px; align-items: center; gap: 10px; font-size: 13px; }}
