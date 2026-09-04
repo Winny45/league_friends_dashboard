@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-04",
+    "title": "Download the LP working as a text file",
+    "items": [
+      {
+        "type": "added",
+        "text": "A Download as .txt button under Recent Games on the LP per game panel. It gives every reconstructed game with the LP worked out for it and the rank it left the player on, plus the measured snapshots the whole reconstruction is anchored on, and a note on each row saying whether it landed on a real reading or was part of a split."
+      },
+      {
+        "type": "changed",
+        "text": "The file is written by the generator and carried in the page rather than assembled in the browser. It exists to check the arithmetic, and rebuilding it in a second language would mean auditing the maths with another copy of the maths."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-04",
     "title": "A suspended account is marked as one",
     "items": [
       {
