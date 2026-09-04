@@ -893,7 +893,21 @@ def weekly_trend_for(rank_history, label, now, queue="solo"):
     mv = weekly_move(rank_history, label, now, queue)
     if not mv:
         return None
-    text = f'{mv["from"]} &rarr; {mv["to"]}' if mv["moved"] else "no change"
+    # Two shapes, matching what render_trend_arrows expects. Inside one
+    # division the LP number is the whole story, so the text is that number
+    # and the renderer prints it as it stands. Across a promotion the raw LP
+    # resets and means nothing, so the text names both ranks and the renderer
+    # prefixes the ladder distance travelled.
+    #
+    # The arrow is the character, not "&rarr;": this text is escaped before it
+    # is written, so the entity had its ampersand turned into "&amp;" and
+    # printed itself literally on any row where somebody changed rank.
+    if mv["moved"]:
+        text = f'{mv["from"]} → {mv["to"]}'
+    else:
+        if not mv["lp"]:
+            return None
+        text = f'{"+" if mv["lp"] >= 0 else ""}{mv["lp"]} LP'
     return {"text": text, "lp": mv["lp"], "direction": mv["direction"],
             "moved": mv["moved"], "approx": mv["approx"]}
 
