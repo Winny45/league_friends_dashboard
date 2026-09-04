@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-04",
+    "title": "A seven-day trend says when it is not quite seven days",
+    "items": [
+      {
+        "type": "added",
+        "text": "Where the nearest rank reading is more than two hours from seven days ago, the trend is marked with a tilde and says so on hover. The number is real; the period behind it is approximate, and that was previously silent."
+      },
+      {
+        "type": "added",
+        "text": "Where there is no reading within a day of seven days ago, the trend reads insufficient data rather than a dash. A dash meant nothing moved, which is a different answer from nothing could be measured, and reaching further back to fill the gap would put a stale comparison under a seven day heading."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-04",
     "title": "An L on the logo",
     "items": [
       {
