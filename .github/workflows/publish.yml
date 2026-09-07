@@ -206,6 +206,17 @@ jobs:
         run: python ci/make_config.py
 
       - name: Fetch from Riot
+        # A warm run fetches a handful of new matches and takes about a
+        # minute. A cold one, or a backfill, can legitimately take an hour,
+        # which is why the job's own cap is generous. But with nothing
+        # bounding this step, one run that hung here held the concurrency
+        # group for an hour, and because GitHub keeps only one run queued per
+        # group, every scheduled run behind it was cancelled by the next
+        # arrival. Nothing published for that whole hour.
+        #
+        # 25 minutes is far more than a warm run needs and far less than an
+        # outage. A refetch pass is given the room it actually needs.
+        timeout-minutes: ${{ github.event.inputs.refetch == 'true' && 150 || 25 }}
         # The backfill runs here rather than on somebody's PC: it takes about
         # an hour, and a machine being switched off halfway through is the
         # obvious way to never finish it. The cache it fills lives in the

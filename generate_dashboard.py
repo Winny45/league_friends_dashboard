@@ -1869,7 +1869,7 @@ def render_trend_arrows(trend, label="", tag=""):
     approx = ('<span class="tr-approx" title="Based on the nearest rank reading, '
               'not one exactly seven days old">~</span>') if trend.get("approx") else ""
     return (f'<span class="tr-group" title="{esc(label)}: {esc(text)}'
-            f'{" (nearest reading)" if trend.get("approx") else ""}">{chip}'
+            f'">{chip}'
             + f'<span class="{cls}">{glyph}</span>' * count + approx + '</span>')
 
 
@@ -1903,8 +1903,6 @@ def render_trend_arrow(trend, compact=False):
     # reason in the tooltip.
     approx = ('<span class="tr-approx" title="Based on the nearest rank reading, '
               'not one exactly seven days old">~</span>') if trend.get("approx") else ""
-    if trend.get("approx"):
-        text += " (nearest reading)"
     if compact:
         if trend["direction"] > 0:
             return f'<span class="tr-up" title="{esc(text)}">&#9650;</span>'
@@ -4288,7 +4286,7 @@ def week_tiles(friends_sorted, rank_history, now):
     if climbs:
         top = climbs[0]
         where = f' and climbed from {top["from"]} to {top["to"]}' if top["moved"] else ""
-        approx = " (nearest reading)" if top["approx"] else ""
+        approx = ""
         unmeasured = [(f["label"], "no reading near seven days ago") for f in friends_sorted
                       if not any(m["label"] == f["label"] for m in moves)]
         tiles.append(("\U0001f4c8", "Biggest climber",
