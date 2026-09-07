@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-09-07",
+    "title": "The seven-day trend always has a number now",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "A gap in the rank history erased the trend entirely. With no readings between 30 August and 2 September, the nearest reading to seven days ago was 28.6 hours away, four hours outside the window the rule allowed, so every row read insufficient data. Meanwhile the page's own refresh button had no such rule and cheerfully showed a number, so two parts of the page disagreed. The nearest reading is now always used."
+      },
+      {
+        "type": "changed",
+        "text": "The tilde says how far off it was: 29 hours from exactly seven days ago, rather than just that it was approximate. That is the difference between knowing whether to trust the figure and only knowing that you should not fully."
+      },
+      {
+        "type": "changed",
+        "text": "Insufficient data now means what it says: fewer than two readings, so there is nothing to compare. A player who genuinely has not moved still shows a dash, which is a different answer again."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-07",
     "title": "LP per game is measured hourly, not smoothed over a day",
     "items": [
       {
