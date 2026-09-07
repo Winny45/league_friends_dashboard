@@ -745,8 +745,22 @@ def compute_duo_synergy(friends):
         order[f["label"]] = i
         pool = [m for m in f.get("seasonMatches", [])
                 if not m.get("remake") and m.get("queue") == "Ranked Solo/Duo"]
+        # Two different numbers, and the diagonal wanted the second.
+        #
+        # `total` is every Solo/Duo game whoever they played with, and it stays
+        # the baseline a pair's winrate is measured against. `alone` is the
+        # games with none of the others on their side, which is what the
+        # diagonal claims to show and did not: it printed the total under the
+        # word "alone", so somebody who duos constantly read as having played
+        # hundreds of solo games.
+        solo_only = [m for m in pool
+                     if not _DUO_CTX["map"].get((m.get("matchId"), f["label"]))]
         own[f["label"]] = ({"total": 100 * sum(1 for m in pool if m["win"]) / len(pool),
-                            "games": len(pool)} if pool else {})
+                            "games": len(pool),
+                            "alone": len(solo_only),
+                            "aloneWr": (round(100 * sum(1 for m in solo_only if m["win"])
+                                              / len(solo_only), 1) if solo_only else None)}
+                           if pool else {})
 
     def bucket_stats(a, b, st):
         games, wins = st["games"], st["wins"]
@@ -1269,7 +1283,7 @@ def top_champions(season_matches, matchups, limit=5):
 
 LP_RATE_MIN_GAMES = 10   # below this the average is one bad night
 LP_RATE_MIN_SIDE = 3     # and it needs both sides of the ledger
-LP_RATE_RECENT = 20      # the "last N games" window
+LP_RATE_RECENT = 50      # the "last N games" window for MMR
 
 
 def queue_timeline(rank_history, label, queue_key, matches, queue_name,
@@ -2647,7 +2661,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     # Two zoom levels, both rendered up front and toggled with CSS — no
     # client-side re-plotting, so the zoom can't get out of step with the
     # data or break if scripting fails.
-    TAIL_GAMES = 20
+    # The zoomed view and the MMR window are the same fifty games, so the
+    # graph and the numbers under it are talking about the same stretch.
+    TAIL_GAMES = LP_RATE_RECENT
     longest = max((len(timelines[f["label"]]) - 1 for f in chart_friends), default=0)
     show_zoom = longest > TAIL_GAMES + 4   # not worth offering when everyone is short
     charts_svg = (
@@ -2819,6 +2835,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
 
     table_rows = "".join(lp_row(e) for e in lp_events)
     lp_debug_text = build_lp_debug_text(lp_events, rank_history, tracking_since)
+    snapshot_text = build_snapshot_text(rank_history, _READINGS, tracking_since)
 
     return f'''
     <div class="panel">
@@ -2837,12 +2854,17 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         <div class="lp-dump-row">
           <button class="hbtn" type="button" data-lp-dump
                   title="Download every reconstructed game as a text file">
-            &#11015; Download as .txt
+            &#11015; Games .txt
+          </button>
+          <button class="hbtn" type="button" data-snapshot-dump
+                  title="Download every rank and LP reading as a text file">
+            &#11015; Snapshots .txt
           </button>
           <span class="muted small">Every game below, with the LP worked out for it
           and the rank it left them on. For checking the numbers.</span>
         </div>
         <script type="text/plain" id="lp-dump-data">{esc(lp_debug_text)}</script>
+        <script type="text/plain" id="snapshot-dump-data">{esc(snapshot_text)}</script>
         <table class="matches-table lp-table">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
@@ -2850,6 +2872,59 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         </table>
       </details>
     </div>'''
+
+
+def build_snapshot_text(rank_history, readings, tracking_since):
+    """Every rank reading ever recorded, per player, newest first.
+
+    The per-game file explains how LP was split between games. This one is the
+    measurements themselves, which is what you check when you doubt the split:
+    if a reading here is wrong, everything derived from it is wrong too, and
+    that is worth being able to see on its own.
+    """
+    lines = [
+        "League Friends Dashboard - rank and LP snapshots",
+        "Generated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Rank tracking began: " + str(tracking_since),
+        "",
+        "Every reading taken of every player's rank, in all three ranked queues.",
+        "These are measured directly from Riot and are not derived from anything.",
+        "Daily rows are the snapshot kept for each day; hourly rows are the",
+        "per-refresh readings, kept for the recent window.",
+        "",
+    ]
+
+    QUEUE_NAMES = {"solo": "Ranked Solo/Duo", "flex": "Ranked Flex", "fives": "Ranked 5s"}
+    rows = []
+    for h in rank_history:
+        rows.append(("daily", h.get("label"), h.get("queue"),
+                     snapshot_at_ms(h), snapshot_rank(h, live=False)))
+        if h.get("liveTier"):
+            rows.append(("daily/live", h.get("label"), h.get("queue"),
+                         int(h["liveAtMs"]) if h.get("liveAtMs") else snapshot_at_ms(h),
+                         snapshot_rank(h, live=True)))
+    for r in (readings or []):
+        rows.append(("hourly", r.get("label"), r.get("queue"), int(r.get("atMs") or 0), r))
+
+    by_player = {}
+    for kind, label, queue, ms, entry in rows:
+        by_player.setdefault(label or "?", []).append((ms, kind, queue, entry))
+
+    total = 0
+    for label in sorted(by_player):
+        entries = sorted(by_player[label], key=lambda x: -x[0])
+        lines += ["=" * 74, label, "=" * 74,
+                  f"{'taken':17} {'queue':17} {'rank':26} {'ladder LP':>9}  source"]
+        for ms, kind, queue, entry in entries:
+            when = datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M") if ms else "unknown"
+            lines.append(f"{when:17} {QUEUE_NAMES.get(queue, queue or '?'):17} "
+                         f"{html.unescape(rank_label(entry)):26} "
+                         f"{ladder_lp(entry):>9}  {kind}")
+            total += 1
+        lines.append("")
+
+    lines.append(f"{total} readings across {len(by_player)} players.")
+    return "\n".join(lines)
 
 
 def build_lp_debug_text(lp_events, rank_history, tracking_since):
@@ -4132,13 +4207,15 @@ def render_duo_synergy_panel(friends):
                 # it sits. Its "lift" is its distance from an even 50%, which
                 # is what makes it green or red.
                 rates = own.get(a, {})
-                wr = round(rates.get("total", 0), 1)
-                own_games = rates.get("games", 0)
+                # The cell says "alone", so it shows alone.
+                own_games = rates.get("alone", 0)
+                wr = rates.get("aloneWr")
+                wr = round(wr, 1) if wr is not None else round(rates.get("total", 0), 1)
                 attrs = (f'data-total-games="{own_games}" data-total-wr="{wr}" '
                          f'data-total-lift="{round(wr - 50, 1) if own_games else -999}" '
                          f'data-total-base=""')
                 cells.append(f'<td class="duo-cell duo-self" {attrs} '
-                             f'title="{esc(a)} across every Solo/Duo game, whoever they played with">'
+                             f'title="{esc(a)} in Solo/Duo games with none of the others on their team">'
                              f'<span class="cell-wr"></span>'
                              f'<span class="cell-g">{own_games}g alone</span></td>')
                 continue
@@ -7663,6 +7740,22 @@ def build_html(data):
       // The .txt dump is built by the generator and carried in the page, so
       // what downloads is exactly what produced the table above it. Rebuilding
       // it here would mean auditing the maths with a second copy of the maths.
+      document.querySelectorAll('[data-snapshot-dump]').forEach(function (b) {{
+        b.addEventListener('click', function () {{
+          var el = document.getElementById('snapshot-dump-data');
+          if (!el) return;
+          var stamp = new Date().toISOString().slice(0, 10);
+          var blob = new Blob([el.textContent], {{ type: 'text/plain;charset=utf-8' }});
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'rank_snapshots_' + stamp + '.txt';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+        }});
+      }});
+
       document.querySelectorAll('[data-lp-dump]').forEach(function (b) {{
         b.addEventListener('click', function () {{
           var el = document.getElementById('lp-dump-data');
