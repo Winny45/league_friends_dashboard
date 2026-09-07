@@ -838,8 +838,16 @@ def weekly_move(rank_history, label, now, queue="solo", games=None):
         return None
     anchor = min(candidates, key=lambda h: abs(snapshot_at_ms(h) - target))
     off_hours = abs(snapshot_at_ms(anchor) - target) / 3600000.0
-    if off_hours > TREND_WIDE_HOURS:
-        return None
+    # The nearest reading is used however far off it is, and the marker says
+    # so. Refusing beyond a day meant a gap in the history erased the trend
+    # entirely: with no readings between 30 Aug and 2 Sep, the nearest to
+    # "seven days ago" was 28.6 hours away and everybody read "insufficient
+    # data", while the browser's own refresh button, which had no such rule,
+    # happily showed a number. A figure marked as approximate beats no figure
+    # and beats two parts of the page disagreeing.
+    #
+    # "Insufficient data" is kept for its real meaning, below: fewer than two
+    # readings, so there is nothing to compare at all.
 
     start, end = snapshot_rank(anchor), snapshot_rank(latest)
     moved = ladder_lp(end) - ladder_lp(start)
@@ -851,7 +859,7 @@ def weekly_move(rank_history, label, now, queue="solo", games=None):
         "fromFull": rank_label(start),
         "toFull": rank_label(end),
         "approx": off_hours > TREND_TIGHT_HOURS,
-        "offHours": off_hours,
+        "offHours": round(off_hours, 1),
         "games": games,
         "direction": 1 if moved > 0 else (-1 if moved < 0 else 0),
         "moved": tier_only_label(start) != tier_only_label(end),
@@ -924,7 +932,8 @@ def weekly_trend_for(rank_history, label, now, queue="solo"):
             return None
         text = f'{"+" if mv["lp"] >= 0 else ""}{mv["lp"]} LP'
     return {"text": text, "lp": mv["lp"], "direction": mv["direction"],
-            "moved": mv["moved"], "approx": mv["approx"]}
+            "moved": mv["moved"], "approx": mv["approx"],
+            "offHours": mv.get("offHours")}
 
 
 def weekly_rank_leader(rank_history, now):
@@ -1894,8 +1903,13 @@ def render_trend_arrows(trend, label="", tag=""):
     text = trend["text"]
     if trend.get("moved") and trend.get("lp") is not None:
         text = f"{'+' if trend['lp'] >= 0 else '−'}{abs(trend['lp'])} LP, {text}"
-    approx = ('<span class="tr-approx" title="Based on the nearest rank reading, '
-              'not one exactly seven days old">~</span>') if trend.get("approx") else ""
+    # Says how far off, rather than only that it is off. "28 hours from seven
+    # days ago" tells you whether to trust it; "nearest reading" does not.
+    _off = trend.get("offHours")
+    _why = (f"Measured against the nearest rank reading, {_off:.0f} hours from "
+            f"exactly seven days ago" if _off
+            else "Measured against the nearest rank reading")
+    approx = f'<span class="tr-approx" title="{esc(_why)}">~</span>' if trend.get("approx") else ""
     return (f'<span class="tr-group" title="{esc(label)}: {esc(text)}'
             f'">{chip}'
             + f'<span class="{cls}">{glyph}</span>' * count + approx + '</span>')
@@ -1929,8 +1943,13 @@ def render_trend_arrow(trend, compact=False):
     # The spec asks for the approximate marker on the friend cards and on the
     # overview table; only the cards had it. A tilde beside the arrow, with the
     # reason in the tooltip.
-    approx = ('<span class="tr-approx" title="Based on the nearest rank reading, '
-              'not one exactly seven days old">~</span>') if trend.get("approx") else ""
+    # Says how far off, rather than only that it is off. "28 hours from seven
+    # days ago" tells you whether to trust it; "nearest reading" does not.
+    _off = trend.get("offHours")
+    _why = (f"Measured against the nearest rank reading, {_off:.0f} hours from "
+            f"exactly seven days ago" if _off
+            else "Measured against the nearest rank reading")
+    approx = f'<span class="tr-approx" title="{esc(_why)}">~</span>' if trend.get("approx") else ""
     if compact:
         if trend["direction"] > 0:
             return f'<span class="tr-up" title="{esc(text)}">&#9650;</span>'
