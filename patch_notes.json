@@ -14,6 +14,10 @@
       {
         "type": "changed",
         "text": "Readings that repeat the previous value are not stored: an identical reading says only that nobody played since, and keeping those would triple the file to record nothing. Three weeks are kept, which covers the seven day trend and the recent part of the per-game chart."
+      },
+      {
+        "type": "fixed",
+        "text": "The daily chart's line ended at this morning's midnight reading while the table beside it showed the live rank, so for anyone who had played since midnight the two disagreed: Rory's line finished 41 LP from the number printed next to it. Past days keep their midnight anchor, which is what makes them comparable; today plots where the player actually is."
       }
     ]
   },

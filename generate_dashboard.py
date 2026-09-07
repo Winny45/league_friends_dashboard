@@ -2706,8 +2706,14 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         "friends": [
             {
                 "label": f["label"],
+                # atMs matters as much as the rank now that segments are cut
+                # by time. Without it the browser fell back to placing each
+                # reading at the end of its day, which is a different instant
+                # from the one Python used, so the two renders drew different
+                # lines from the same data.
                 "history": [
-                    {"date": h["date"], "tier": h.get("tier"), "rank": h.get("rank"),
+                    {"date": h["date"], "atMs": h.get("atMs"),
+                     "tier": h.get("tier"), "rank": h.get("rank"),
                      "leaguePoints": h.get("leaguePoints")}
                     for h in solo_history_by_label[f["label"]]
                 ],
@@ -2896,6 +2902,20 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
         solo_history_by_label.setdefault(h["label"], []).append(h)
     for pts in solo_history_by_label.values():
         pts.sort(key=lambda h: h["date"])
+
+    # Past days keep their midnight anchor, which is the point of this chart:
+    # readings taken at a comparable time so the days can be compared. Today
+    # is different. It is not over, its anchor is this morning, and the
+    # standings table beside this chart reads the live rank, so plotting the
+    # anchor for today put the end of the line 41 LP away from the number
+    # printed next to it for anyone who had played since midnight.
+    for pts in solo_history_by_label.values():
+        last = pts[-1]
+        if last.get("liveTier"):
+            pts[-1] = dict(last,
+                           tier=last["liveTier"],
+                           rank=last.get("liveRank"),
+                           leaguePoints=last.get("liveLeaguePoints", 0))
 
     chart_friends = [f for f in friends_sorted if f["label"] in solo_history_by_label]
     if not chart_friends:
