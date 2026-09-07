@@ -195,7 +195,7 @@ jobs:
       - name: Bring the stored state into the working copy
         run: |
           cp .state/rank_history.json ./rank_history.json
-          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json; do
+          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json \n                   rank_readings.json; do
             if [ -f ".cache/$f" ]; then cp ".cache/$f" "./$f"; fi
           done
           ls -l *.json
@@ -265,7 +265,7 @@ jobs:
       - name: Save the fetch caches
         if: always()
         run: |
-          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json; do
+          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json \n                   rank_readings.json; do
             if [ -f "$f" ]; then cp "$f" ".cache/$f"; fi
           done
           cd .cache

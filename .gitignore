@@ -56,3 +56,6 @@ key_state.json
 nudge_publish.log
 nudge_publish.prev.log
 run_hidden_error.log
+
+# Per-refresh rank readings: names the players, so not in a public repo.
+rank_readings.json

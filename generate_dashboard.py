@@ -200,6 +200,17 @@ def esc(s):
 # signature. A little global state, but scoped to a single render pass.
 _ICON_CTX = {"version": None, "map": {}, "slugs": set(), "fold": {}}
 
+# Every rank reading of the retention window, set once per render. Threading it
+# through render_lp_chart, render_friend_card and queue_timeline would have
+# meant changing five signatures to carry one list that never varies within a
+# render, which is what the other context globals here are for.
+_READINGS = []
+
+
+def set_readings(readings):
+    global _READINGS
+    _READINGS = list(readings or [])
+
 
 def set_icon_context(version, icon_map):
     _ICON_CTX["version"] = version
@@ -1252,8 +1263,14 @@ LP_RATE_MIN_SIDE = 3     # and it needs both sides of the ledger
 LP_RATE_RECENT = 20      # the "last N games" window
 
 
-def queue_timeline(rank_history, label, queue_key, matches, queue_name):
-    """One player's reconstructed per-game LP path for one queue."""
+def queue_timeline(rank_history, label, queue_key, matches, queue_name,
+                   readings=None):
+    """One player's reconstructed per-game LP path for one queue.
+
+    Prefers the per-refresh readings, which cut the segments finely enough for
+    each step to mean something, and falls back to the daily snapshots for the
+    stretch of season from before readings were kept.
+    """
     pts = sorted((h for h in rank_history
                   if h.get("label") == label and h.get("queue") == queue_key),
                  key=lambda h: h["date"])
@@ -1269,6 +1286,17 @@ def queue_timeline(rank_history, label, queue_key, matches, queue_name):
                                tier=pts[-1]["liveTier"],
                                rank=pts[-1].get("liveRank"),
                                leaguePoints=pts[-1].get("liveLeaguePoints", 0))]
+
+    fine = [r for r in (_READINGS if readings is None else readings)
+            if r.get("label") == label and r.get("queue") == queue_key]
+    if len(fine) >= 2:
+        # Daily snapshots from before the readings start, then every reading.
+        # Keeping the older snapshots means the chart still reaches back to
+        # when tracking began rather than starting three weeks ago.
+        fine.sort(key=lambda r: r["atMs"])
+        first = fine[0]["atMs"]
+        older = [h for h in pts if snapshot_at_ms(h) < first]
+        pts = older + fine
     return build_lp_timeline(pts, played)
 
 
@@ -2118,28 +2146,54 @@ def segment_deltas(wins, net):
     return deltas
 
 
-def build_lp_timeline(solo_pts, solo_matches):
-    """Per-game LP path for one friend, anchored on their real daily snapshots.
+def reading_at_ms(pt):
+    """When a rank reading was taken.
 
-    Games played *before* the first snapshot are skipped · there's no known LP
-    to place them against. Returns [{idx, score, delta, match, exact}] where
-    idx 0 is the first snapshot itself."""
+    A per-refresh reading carries its own timestamp. An older daily snapshot
+    carries only a date, and is placed at the end of that day, which is where
+    a once-daily reading taken in the evening actually sat.
+    """
+    if pt.get("atMs"):
+        return int(pt["atMs"])
+    try:
+        d = datetime.strptime(pt["date"], "%Y-%m-%d")
+        return int((d + timedelta(days=1)).timestamp() * 1000) - 1
+    except (ValueError, KeyError, TypeError):
+        return 0
+
+
+def build_lp_timeline(solo_pts, solo_matches):
+    """Per-game LP path for one friend, anchored on their real rank readings.
+
+    Games played before the first reading are skipped: there is no known LP to
+    place them against. Returns [{idx, score, delta, match, exact}] where idx 0
+    is the first reading itself.
+
+    Segments are cut by timestamp rather than by calendar day. With a reading
+    every refresh, a segment holds nought to three games and each step is close
+    to a measurement. Cutting by day meant one segment could hold thirty games
+    on a heavy evening, all sharing one measured LP change split between them,
+    so every step in that day was the same smoothed guess. That is what made
+    the per-game numbers disagree with what people remembered playing.
+    """
     if len(solo_pts) < 2:
         return []
-    by_date = {}
-    for m in solo_matches:
-        by_date.setdefault(m.get("dateKey"), []).append(m)
-    for lst in by_date.values():
-        lst.sort(key=lambda m: m.get("gameStartMs", 0))
 
-    points = [{"idx": 0, "score": ladder_lp(solo_pts[0]), "delta": None,
+    pts = sorted(solo_pts, key=reading_at_ms)
+    played = sorted((m for m in solo_matches if m.get("gameStartMs")),
+                    key=lambda m: m["gameStartMs"])
+
+    points = [{"idx": 0, "score": ladder_lp(pts[0]), "delta": None,
                "match": None, "exact": True}]
     idx = 0
-    for prev, cur in zip(solo_pts, solo_pts[1:]):
-        # A snapshot taken on day D reflects LP at whatever time the fetch ran
-        # that day, so attribute games by date: everything after the previous
-        # snapshot's day up to and including this one produced this change.
-        seg = [m for d in sorted(by_date) if prev["date"] < d <= cur["date"] for m in by_date[d]]
+    i = 0  # walks `played` once: readings are in order, so the games are too
+    for prev, cur in zip(pts, pts[1:]):
+        lo, hi = reading_at_ms(prev), reading_at_ms(cur)
+        seg = []
+        while i < len(played) and played[i]["gameStartMs"] <= hi:
+            if played[i]["gameStartMs"] > lo:
+                seg.append(played[i])
+            i += 1
         if not seg:
             continue
         start, end = ladder_lp(prev), ladder_lp(cur)
@@ -2148,7 +2202,7 @@ def build_lp_timeline(solo_pts, solo_matches):
             run += delta
             idx += 1
             points.append({"idx": idx, "score": run, "delta": delta, "match": m, "exact": False})
-        # Land exactly on the measured snapshot rather than on accumulated float.
+        # Land exactly on the measured reading rather than on accumulated float.
         points[-1]["score"] = end
         points[-1]["exact"] = True
     return points
@@ -2274,7 +2328,15 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         if not pts:
             continue
         solo_matches = [m for m in f.get("seasonMatches", []) if m.get("queue") == "Ranked Solo/Duo"]
-        tl = build_lp_timeline(pts, solo_matches)
+        # Same merge queue_timeline does: readings where they exist, daily
+        # snapshots for the season before them.
+        fine = [r for r in _READINGS
+                if r.get("label") == f["label"] and r.get("queue") == "solo"]
+        merged = pts
+        if len(fine) >= 2:
+            fine.sort(key=lambda r: r["atMs"])
+            merged = [h for h in pts if snapshot_at_ms(h) < fine[0]["atMs"]] + fine
+        tl = build_lp_timeline(merged, solo_matches)
         if len(tl) >= 2:
             timelines[f["label"]] = tl
 
@@ -2629,6 +2691,15 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         "lpPerDivision": LP_PER_DIVISION,
         "divisionsPerTier": DIVISIONS_PER_TIER,
         "nominalLp": NOMINAL_LP,
+        # The browser rebuilds this chart on a live refresh and verifySelf
+        # compares the two renders byte for byte, so it needs the same readings
+        # the Python side merged in.
+        "readings": [
+            {"label": r["label"], "queue": r["queue"], "atMs": r["atMs"],
+             "tier": r["tier"], "rank": r.get("rank"),
+             "leaguePoints": r.get("leaguePoints", 0)}
+            for r in _READINGS if r.get("queue") == "solo"
+        ],
         "tierBandAlpha": TIER_BAND_ALPHA,
         "tailGames": TAIL_GAMES,
         "rankIconBase": RANK_ICON_BASE,
@@ -5131,26 +5202,36 @@ window.LpChart = (function () {
     return deltas;
   }
 
+  // Must match build_lp_timeline() in the generator exactly.
+  //
+  // A reading with no timestamp is placed at the end of its day, which is
+  // where a once-daily snapshot taken in the evening actually sat. Python
+  // builds that from the local date; Date.parse on "YYYY-MM-DD" gives UTC
+  // midnight, so the offset is applied here to land on the same instant.
+  function readingAt(pt) {
+    if (pt.atMs) return pt.atMs;
+    if (!pt.date) return 0;
+    var parts = String(pt.date).split('-');
+    var d = new Date(+parts[0], +parts[1] - 1, +parts[2] + 1);
+    return d.getTime() - 1;
+  }
+
   function buildLpTimeline(soloPts, soloMatches) {
     if (soloPts.length < 2) return [];
-    var byDate = {}, i;
-    for (i = 0; i < soloMatches.length; i++) {
-      var m = soloMatches[i];
-      (byDate[m.dateKey] = byDate[m.dateKey] || []).push(m);
-    }
-    Object.keys(byDate).forEach(function (d) {
-      byDate[d].sort(function (a, b) { return (a.gameStartMs || 0) - (b.gameStartMs || 0); });
-    });
-    var dates = Object.keys(byDate).sort();
+    var pts = soloPts.slice().sort(function (a, b) { return readingAt(a) - readingAt(b); });
+    var played = soloMatches.filter(function (m) { return m.gameStartMs; })
+      .sort(function (a, b) { return a.gameStartMs - b.gameStartMs; });
 
-    var points = [{ idx: 0, score: ladderLp(soloPts[0]), delta: null, match: null, exact: true }];
-    var idx = 0;
-    for (i = 0; i + 1 < soloPts.length; i++) {
-      var prev = soloPts[i], cur = soloPts[i + 1];
+    var points = [{ idx: 0, score: ladderLp(pts[0]), delta: null, match: null, exact: true }];
+    var idx = 0, i = 0;
+    for (var k = 0; k + 1 < pts.length; k++) {
+      var prev = pts[k], cur = pts[k + 1];
+      var lo = readingAt(prev), hi = readingAt(cur);
       var seg = [];
-      dates.forEach(function (d) {
-        if (prev.date < d && d <= cur.date) seg = seg.concat(byDate[d]);
-      });
+      while (i < played.length && played[i].gameStartMs <= hi) {
+        if (played[i].gameStartMs > lo) seg.push(played[i]);
+        i++;
+      }
       if (!seg.length) continue;
       var start = ladderLp(prev), end = ladderLp(cur), run = start;
       var deltas = segmentDeltas(seg.map(function (m) { return !!m.win; }), end - start);
@@ -5624,7 +5705,19 @@ window.LpChart = (function () {
   function computeState(friends) {
     var timelines = {}, kept = [];
     friends.forEach(function (f) {
-      var tl = buildLpTimeline(f.history, f.matches);
+      // The same merge the generator does: per-refresh readings where they
+      // exist, daily snapshots for the season before them. Without this the
+      // browser would rebuild the chart from daily points while the page was
+      // rendered from hourly ones, and verifySelf would catch it as a
+      // mismatch rather than the two quietly disagreeing.
+      var fine = (D.readings || []).filter(function (r) { return r.label === f.label; })
+        .sort(function (a, b) { return a.atMs - b.atMs; });
+      var pts = f.history;
+      if (fine.length >= 2) {
+        var first = fine[0].atMs;
+        pts = f.history.filter(function (h) { return readingAt(h) < first; }).concat(fine);
+      }
+      var tl = buildLpTimeline(pts, f.matches);
       if (tl.length >= 2) { timelines[f.label] = tl; kept.push(f); }
     });
     if (!kept.length) return null;
@@ -5853,6 +5946,8 @@ def build_html(data):
     set_platform(data.get("platform"))
     # data.json keeps the friends in config order, which is stable; the
     # dashboard sorts by rank for display only.
+    # Before anything renders: queue_timeline and render_lp_chart both read it.
+    set_readings(data.get("rankReadings") or [])
     set_duo_context(friends_sorted, [f["label"] for f in friends])
 
     leaderboard_rows = "".join(

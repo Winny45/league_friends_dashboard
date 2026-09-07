@@ -1,5 +1,23 @@
 [
   {
+    "date": "2026-09-07",
+    "title": "LP per game is measured hourly, not smoothed over a day",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Rank was recorded once a day, so a day's games all fell in one gap and the LP change across it was divided between them by formula. On a heavy evening that was thirty games sharing a single measurement, which is why individual steps on the graph did not match what anyone remembered playing. A reading is now recorded on every refresh, and the LP between two readings is split only between the games actually played between them. In testing that took the worst case from 32 games per measurement to 1."
+      },
+      {
+        "type": "changed",
+        "text": "Segments are cut by timestamp rather than by calendar day. A reading with no timestamp, from before readings were kept, is placed at the end of its day, which is where a once-daily evening snapshot actually sat. The daily chart still reads the midnight snapshots and is unaffected."
+      },
+      {
+        "type": "changed",
+        "text": "Readings that repeat the previous value are not stored: an identical reading says only that nobody played since, and keeping those would triple the file to record nothing. Three weeks are kept, which covers the seven day trend and the recent part of the per-game chart."
+      }
+    ]
+  },
+  {
     "date": "2026-09-04",
     "title": "A seven-day trend says when it is not quite seven days",
     "items": [
