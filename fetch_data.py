@@ -79,6 +79,21 @@ RANK_HISTORY_PATH = Path("rank_history.json")
 KEY_STATE_PATH = Path("key_state.json")
 RANK_HISTORY_KEEP_DAYS = 400  # trim anything older than this so the file doesn't grow forever
 
+RANK_READINGS_PATH = Path("rank_readings.json")
+# Every refresh records a reading. The daily snapshot is what the daily chart
+# wants; this is what per-game LP needs.
+#
+# With one reading a day, a day's games all fall in one gap and the LP change
+# across it is split between them by formula. On a heavy day that is thirty
+# games sharing one measurement, so every step on the graph is a smoothed
+# guess. An hourly reading puts nought to three games in a gap, which is close
+# enough to measuring each game directly.
+#
+# Kept for three weeks, which covers the seven day trend and the recent part
+# of the per-game chart with room to spare. Older readings collapse to the
+# daily snapshots, which are kept forever.
+RANK_READINGS_KEEP_DAYS = 21
+
 # Kept in sync with the identically-named constants/logic in
 # generate_dashboard.py's tier_score() — duplicated here (rather than
 # imported) so fetch_data.py has no dependency on the dashboard renderer.
@@ -617,6 +632,57 @@ def load_rank_history():
     return []
 
 
+def load_rank_readings():
+    if RANK_READINGS_PATH.exists():
+        try:
+            return json.loads(RANK_READINGS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def save_rank_readings(readings):
+    RANK_READINGS_PATH.write_text(
+        json.dumps(readings, ensure_ascii=False), encoding="utf-8")
+
+
+def record_rank_readings(readings, results, now_ms):
+    """Append this refresh's reading for every friend and queue.
+
+    Deduplicated on (player, queue, rank, LP): a reading identical to the one
+    before it says only that nothing happened since, and keeping it would
+    triple the file to record that nobody played overnight. What matters for
+    splitting LP is where the value changed.
+    """
+    latest = {}
+    for r in readings:
+        key = (r["label"], r["queue"])
+        if key not in latest or r["atMs"] > latest[key]["atMs"]:
+            latest[key] = r
+
+    for r in results:
+        ranked = r.get("ranked") or {}
+        for queue_key in ("solo", "flex", "fives"):
+            entry = ranked.get(queue_key)
+            if not entry or not entry.get("tier"):
+                continue
+            row = {"label": r["label"], "queue": queue_key, "atMs": int(now_ms),
+                   "tier": entry["tier"], "rank": entry.get("rank"),
+                   "leaguePoints": entry.get("leaguePoints", 0)}
+            prev = latest.get((r["label"], queue_key))
+            same = (prev and prev.get("tier") == row["tier"]
+                    and prev.get("rank") == row["rank"]
+                    and prev.get("leaguePoints") == row["leaguePoints"])
+            if same:
+                continue
+            readings.append(row)
+
+    cutoff_ms = now_ms - RANK_READINGS_KEEP_DAYS * 86400 * 1000
+    readings = [r for r in readings if r.get("atMs", 0) >= cutoff_ms]
+    readings.sort(key=lambda r: (r["atMs"], r["label"], r["queue"]))
+    return readings
+
+
 def record_rank_snapshots(history, results, today_key):
     """One snapshot per (friend, queue) per day, taken as near midnight as the
     schedule allows.
@@ -845,6 +911,12 @@ def main():
     rank_history = load_rank_history()
     rank_history = record_rank_snapshots(rank_history, results, today_key)
     save_rank_history(rank_history)
+
+    now_ms = int(datetime.now().timestamp() * 1000)
+    rank_readings = record_rank_readings(load_rank_readings(), results, now_ms)
+    save_rank_readings(rank_readings)
+    print(f"  {len(rank_readings)} rank readings kept "
+          f"(last {RANK_READINGS_KEEP_DAYS} days, changes only)")
     tracking_since = min((h["date"] for h in rank_history), default=today_key)
     chart_cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     rank_history_30d = [h for h in rank_history if h["date"] >= chart_cutoff]
@@ -879,6 +951,9 @@ def main():
         "seasonStart": datetime.fromtimestamp(season_start_epoch).strftime("%Y-%m-%d"),
         "friends": results,
         "rankHistory": rank_history_30d,
+        # Every reading in the retention window, so the generator can split LP
+        # between readings rather than between days.
+        "rankReadings": rank_readings,
         "rankTrackingSince": tracking_since,
         "ddragonVersion": champ_data.get("version"),
         "championIconMap": champ_data.get("byName", {}),
