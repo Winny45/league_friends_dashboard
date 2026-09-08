@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-08",
+    "title": "Game times are on your clock now",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Every game time on the page was printed in the timezone of the machine that built it, which is UTC, so all summer they read an hour early. The times now carry their timestamp and the browser rewrites them into your own clock when the page loads, the same way the 'Data from' stamp in the header already did. This covers the Recent Games list, the recent games table on each player's card, and the hover text on the little win and loss dots. A reader with JavaScript off still sees the UTC version rather than nothing."
+      },
+      {
+        "type": "changed",
+        "text": "The two downloadable text files are written when the page is built, so their times stay UTC. They say so at the top now."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-08",
     "title": "A date meant one instant on the server and another in your browser",
     "items": [
       {

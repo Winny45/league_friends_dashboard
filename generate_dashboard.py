@@ -590,6 +590,21 @@ def parse_match_dt(m):
         return None
 
 
+def when_attr(m):
+    """The epoch of a game, for the browser to format in the reader's clock.
+
+    The page is built on a machine in UTC and read by people who are not, so
+    every game time printed here was an hour early for them in summer. The
+    string stays as the no-script fallback and the browser rewrites it on
+    load, which is what the "Data from" chip in the header already does.
+
+    Omitted when there is no timestamp, so there is nothing to rewrite and
+    the dash stands.
+    """
+    ms = m.get("gameStartMs")
+    return f' data-when-ms="{int(ms)}"' if ms else ""
+
+
 def format_match_when(m):
     dt = parse_match_dt(m)
     if not dt:
@@ -990,7 +1005,7 @@ def render_match_dot(m):
     cls = "win" if m["win"] else "loss"
     when = format_match_when(m)
     title = f"{when} · {champion_display(m['champion'])} · {'Win' if m['win'] else 'Loss'} · {m['kills']}/{m['deaths']}/{m['assists']} KDA {m['kda']}"
-    return f'<span class="dot {cls}" title="{esc(title)}"></span>'
+    return f'<span class="dot {cls}"{when_attr(m)} title="{esc(title)}"></span>'
 
 
 def render_mastery_chip(m):
@@ -1018,7 +1033,7 @@ def render_match_row(m, friend_label=""):
     if party > 1 and band:
         row_attrs = f' class="party party-{min(party, 5)}" style="{band}"'
     return f'''<tr{row_attrs}>
-      <td class="muted small">{esc(format_match_when(m))}</td>
+      <td class="muted small"{when_attr(m)}>{esc(format_match_when(m))}</td>
       <td><span class="tag {cls}">{label}</span></td>
       <td class="champ-cell"><span class="cc">{render_champion_icon(m["champion"])}{esc(champion_display(m["champion"]))}</span></td>
       <td class="with-cell">{render_duo_mates(m.get("matchId"), friend_label)}</td>
@@ -2943,7 +2958,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         return (
             f'<tr class="{row_cls}" data-p="{esc(e["label"])}"'
             f'{f" style=\"{band}\"" if band else ""}>'
-            f'<td class="muted small nowrap">{esc(format_match_when(m))}</td>'
+            f'<td class="muted small nowrap"{when_attr(m)}>{esc(format_match_when(m))}</td>'
             f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b>'
             f'<span class="muted small"> &middot; game {esc(e["idx"])}</span></td>'
             f'<td><span class="tag {"win" if m["win"] else "loss"}">{"W" if m["win"] else "L"}</span></td>'
@@ -3043,7 +3058,7 @@ def build_snapshot_text(rank_history, readings, tracking_since):
     """
     lines = [
         "League Friends Dashboard - rank and LP snapshots",
-        "Generated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Generated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " (times below are UTC)",
         "Rank tracking began: " + str(tracking_since),
         "",
         "Every reading taken of every player's rank, in all three ranked queues.",
@@ -5877,7 +5892,9 @@ window.LpChart = (function () {
       }
       return '<tr class="' + rowCls + '" data-p="' + esc(e.label) + '"' +
         (band ? ' style="' + band + '"' : '') + '>' +
-        '<td class="muted small nowrap">' + esc(whenTextLp(m.gameStartMs)) + '</td>' +
+        '<td class="muted small nowrap"' +
+        (m.gameStartMs ? ' data-when-ms="' + m.gameStartMs + '"' : '') + '>' +
+        esc(whenTextLp(m.gameStartMs)) + '</td>' +
         '<td class="nowrap"><b style="color:var(' + e.varName + ');">' + esc(e.label) + '</b>' +
         '<span class="muted small"> &middot; game ' + esc(e.idx) + '</span></td>' +
         '<td><span class="tag ' + (m.win ? 'win' : 'loss') + '">' + (m.win ? 'W' : 'L') +
@@ -6262,6 +6279,30 @@ window.LpChart = (function () {
     return { ok: true, bytes: norm(host.innerHTML).length };
   }
 
+  // Every game time on the page, in the reader's clock rather than the clock
+  // of the machine that built it. The markup carries the epoch and a rendered
+  // fallback for a reader with no JavaScript; this replaces the fallback.
+  //
+  // It is also what keeps verifySelf() able to check the game list at all: the
+  // server cannot know the reader's timezone, so the only way the two renders
+  // can agree on a time is for both to come from the same epoch through the
+  // same formatter.
+  function localiseTimes(root) {
+    (root || document).querySelectorAll('[data-when-ms]').forEach(function (el) {
+      var ms = parseInt(el.getAttribute('data-when-ms'), 10);
+      if (!ms) return;
+      var text = whenTextLp(ms);
+      if (el.tagName === 'TD') {
+        el.textContent = text;
+        return;
+      }
+      // A match dot says the time first and the rest of the game after it.
+      var title = el.getAttribute('title') || '';
+      var at = title.indexOf(' \u00b7 ');
+      if (at > -1) el.setAttribute('title', text + title.slice(at));
+    });
+  }
+
   // Redraw with a live LP reading and any games played since the publish.
   // `live` is { label: {tier, rank, leaguePoints, matches: [...] } }.
   function rerender(live) {
@@ -6331,6 +6372,9 @@ window.LpChart = (function () {
     if (chips) chips.innerHTML = standingsHtml(state);
     var body = document.querySelector('.lp-table tbody');
     if (body) body.innerHTML = tableHtml(state);
+    // tableHtml() already writes local times, but the cards and dots around
+    // it were rendered by the server and are still on the server's clock.
+    localiseTimes();
 
     // The key is static markup, so it is reordered rather than rebuilt: the
     // click handlers on it look their series up by id and survive the move.
@@ -6364,7 +6408,16 @@ window.LpChart = (function () {
     return touched;
   }
 
+  // The fallback times are wrong for most readers, so this runs whether or
+  // not the chart itself has anything to draw.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { localiseTimes(); });
+  } else {
+    localiseTimes();
+  }
+
   return { init: init, verifySelf: verifySelf, rerender: rerender,
+           localiseTimes: localiseTimes,
            blend: blendVars, colourFor: colourFor };
 })();
 '''
