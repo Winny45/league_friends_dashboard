@@ -10,6 +10,10 @@
       {
         "type": "fixed",
         "text": "The merge that joins the hourly readings to the older daily ones was filtering by one clock and sorting by another: a daily anchor read in the morning was judged by the time its rank was last re-read that evening, and dropped. It now uses the same clock the chart itself is cut by."
+      },
+      {
+        "type": "fixed",
+        "text": "With that fixed the two charts still differed by a tenth of a unit at one point out of several thousand. The padded top and bottom of the chart are worked out from the projection line's own floating point walk, and two runtimes need not agree on those to the last bit; that scales every coordinate by an invisible amount and flips whichever one happens to sit on a rounding boundary. The bounds are whole numbers now, which costs nothing on a padded axis and is the same number in both languages."
       }
     ]
   },
