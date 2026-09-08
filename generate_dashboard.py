@@ -5577,7 +5577,7 @@ window.LpChart = (function () {
     });
     var sum = 0;
     for (i = 0; i < deltas.length; i++) sum += deltas[i];
-    var residual = Math.round(net - sum);
+    var residual = pyRound(net - sum);
     // Same MINSTD walk as the generator, so the same games absorb the same
     // remainders. Anything else and the two renders disagree by a point here
     // and there, which is exactly what verifySelf is watching for.
@@ -5982,7 +5982,7 @@ window.LpChart = (function () {
       else if (showDivisions) yTicks.push([xy(0, tick)[1], rankBySc(dec[1]), false]);
     }
 
-    var step = Math.max(1, Math.round(maxGames / (compact ? 3 : 6)));
+    var step = Math.max(1, pyRound(maxGames / (compact ? 3 : 6)));
     var tickIdxs = [];
     for (i = 0; i <= maxGames; i += step) tickIdxs.push(i);
     if (tickIdxs[tickIdxs.length - 1] !== maxGames) {
@@ -6121,7 +6121,7 @@ window.LpChart = (function () {
       standings.push({ varName: colourFor(f.label), label: f.label, tier: last.tier,
                        rank: last.rank, leaguePoints: last.leaguePoints || 0,
                        rankLabel: rankLabelOf(last), games: games, lp: netLp,
-                       winrate: games ? Math.round(100 * wins / games) : 0,
+                       winrate: games ? pyRound(100 * wins / games) : 0,
                        record: record });
     });
     return { netLabels: netLabels, tiers: tiers, standings: standings };
