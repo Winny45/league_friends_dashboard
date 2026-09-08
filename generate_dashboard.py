@@ -1283,7 +1283,14 @@ def top_champions(season_matches, matchups, limit=5):
 
 LP_RATE_MIN_GAMES = 10   # below this the average is one bad night
 LP_RATE_MIN_SIDE = 3     # and it needs both sides of the ledger
-LP_RATE_RECENT = 50      # the "last N games" window for MMR
+LP_RATE_RECENT = 50
+
+# How many games the Recent Games list shows at once. The table used to hold
+# every game since tracking began, which is the right thing to keep and the
+# wrong thing to show: several hundred rows to scroll before reaching anything
+# older than yesterday. A game two friends played together is one game, not
+# two, so the count runs over distinct matches rather than rows.
+RECENT_GAMES = 100      # the "last N games" window for MMR
 
 
 def queue_timeline(rank_history, label, queue_key, matches, queue_name,
@@ -2791,6 +2798,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         "lpPerDivision": LP_PER_DIVISION,
         "divisionsPerTier": DIVISIONS_PER_TIER,
         "nominalLp": NOMINAL_LP,
+        "recentGames": RECENT_GAMES,
         "averageEraEndMs": AVERAGE_ERA_END_MS,
         "lpRateMinGames": LP_RATE_MIN_GAMES,
         "lpRateMinSide": LP_RATE_MIN_SIDE,
@@ -2861,6 +2869,19 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         key=lambda e: (-e["when"], e["match"].get("matchId") or "", e["label"]),
     )
 
+    # Two ordinals per row: where its game sits in everyone's list, and where
+    # it sits in that player's own. Both count games rather than rows, so a duo
+    # game moves the overall counter once however many friends were in it.
+    seen_games, per_player, order_all, order_own = {}, {}, {}, {}
+    for e in lp_events:
+        mid = e["match"].get("matchId") or id(e)
+        if mid not in seen_games:
+            seen_games[mid] = len(seen_games)
+        order_all[id(e)] = seen_games[mid]
+        n = per_player.get(e["label"], 0)
+        order_own[id(e)] = n
+        per_player[e["label"]] = n + 1
+
     # Which rows open and close a game, so the block is drawn once around the
     # group rather than repeated on every row inside it.
     group_pos = {}
@@ -2882,13 +2903,18 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         party = party_size(m.get("matchId"), e["label"])
         band = party_band(m.get("matchId"), e["label"], e["var"])
         first, last = group_pos[id(e)]
-        row_cls = ""
+        # Static classes rather than something the filter toggles at click
+        # time: the browser rebuilds this table after a live refresh and
+        # compares its own HTML against the server's, so a filter that edited
+        # rows would show up as the two disagreeing.
+        row_cls = "in-all " if order_all[id(e)] < RECENT_GAMES else ""
+        row_cls += "in-own " if order_own[id(e)] < RECENT_GAMES else ""
         if party > 1:
-            row_cls = "party party-" + str(min(party, 5))
+            row_cls += "party party-" + str(min(party, 5))
             row_cls += " g-first" if first else ""
             row_cls += " g-last" if last else ""
         return (
-            f'<tr class="{row_cls}"'
+            f'<tr class="{row_cls}" data-p="{esc(e["label"])}"'
             f'{f" style=\"{band}\"" if band else ""}>'
             f'<td class="muted small nowrap">{esc(format_match_when(m))}</td>'
             f'<td class="nowrap"><b style="color:var({e["var"]});">{esc(e["label"])}</b>'
@@ -2900,6 +2926,37 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             f'<td class="num nowrap">{score_to_rank_label(p["score"])}</td>'
             f'</tr>'
         )
+
+    # Which rows are on screen is decided in CSS off one attribute on the
+    # table, not by touching the rows. The browser rebuilds this tbody after a
+    # live refresh and checks its own HTML against the server's, so anything
+    # the filter wrote into a row would read as the two disagreeing.
+    #
+    # One rule per player because CSS cannot compare two attributes to each
+    # other, only an attribute to a constant.
+    view_css = [
+        ".lp-table tbody tr { display: none; }",
+        '.lp-table[data-view="all"] tbody tr.in-all { display: table-row; }',
+        # Filtered to one player, every row is that player's own, so the
+        # grouping band that joins a shared game has nothing left to join.
+        # Give each row its closing edge back.
+        '.lp-table:not([data-view="all"]) tbody tr.party td'
+        " { border-bottom: 7px solid var(--surface-1); }",
+    ]
+    for f in chart_friends:
+        sel = '.lp-table[data-view="' + esc(f["label"]) + '"] tbody tr.in-own[data-p="'
+        view_css.append(sel + esc(f["label"]) + '"] { display: table-row; }')
+
+    who_buttons = (
+        '<div class="range-toggle who-toggle" role="group" aria-label="Whose games">'
+        '<button type="button" class="range-btn active" data-who="all">Everyone</button>'
+        + "".join(
+            '<button type="button" class="range-btn" data-who="' + esc(f["label"]) + '">'
+            + esc(f["label"]) + "</button>"
+            for f in chart_friends
+        )
+        + "</div>"
+    )
 
     table_rows = "".join(lp_row(e) for e in lp_events)
     lp_debug_text = build_lp_debug_text(lp_events, rank_history, tracking_since)
@@ -2919,6 +2976,8 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
       <div class="chart-stats-wrap" data-lp-standings>{standings_html}</div>
       <details class="matches-details" style="margin-top:10px;">
         <summary>Recent Games</summary>
+<style>{"".join(view_css)}</style>
+        {who_buttons}
         <div class="lp-dump-row">
           <button class="hbtn" type="button" data-lp-dump
                   title="Download every reconstructed game as a text file">
@@ -2928,12 +2987,17 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                   title="Download every rank and LP reading as a text file">
             &#11015; Snapshots .txt
           </button>
-          <span class="muted small">Every game below, with the LP worked out for it
-          and the rank it left them on. For checking the numbers.</span>
+          <button class="hbtn" type="button" data-season-dump hidden
+                  title="Download this player's whole season as a text file">
+            &#11015; <span data-season-dump-label>Season .txt</span>
+          </button>
+          <span class="muted small" data-recent-blurb>The last {RECENT_GAMES} games anyone
+          played, with the LP worked out for each and the rank it left them on. Pick a name
+          to see just their last {RECENT_GAMES}, and to download their whole season.</span>
         </div>
         <script type="text/plain" id="lp-dump-data">{esc(lp_debug_text)}</script>
         <script type="text/plain" id="snapshot-dump-data">{esc(snapshot_text)}</script>
-        <table class="matches-table lp-table">
+        <table class="matches-table lp-table" data-view="all">
           <thead><tr><th>When</th><th>Player</th><th>Result</th><th>Champion</th><th>With</th>
           <th class="num">LP</th><th class="num">Rank after</th></tr></thead>
           <tbody>{table_rows}</tbody>
@@ -3094,154 +3158,207 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
         omitted = [f["label"] for f in chart_friends[len(FRIEND_PALETTE):]]
         chart_friends = chart_friends[:len(FRIEND_PALETTE)]
 
-    end_date = now.date()
-    earliest_date = min(
-        datetime.strptime(h["date"], "%Y-%m-%d").date()
-        for f in chart_friends for h in solo_history_by_label[f["label"]]
-    )
-    # Anchor the axis to the first real snapshot instead of always spanning a
-    # full 30 days — with only a few days of tracking history, a fixed
-    # 30-day window left most of the chart empty. Still capped at 30 days
-    # back so the axis doesn't keep growing forever once history piles up.
-    start_date = max(earliest_date, end_date - timedelta(days=29))
-    span_days = max((end_date - start_date).days, 1)
+    # Three ranges rather than one. A 30-day window is the right amount of
+    # detail for "how has this month gone" and the wrong amount for both of
+    # the other questions people actually ask of this chart: where the season
+    # has got to, and what has happened this week. Each range is built as its
+    # own pair of SVGs with its own axes, because a 7-day window squeezed onto
+    # season-wide axes is a flat line.
+    #
+    # window_days is None for the season view, which starts at the first
+    # reading. prefix_base keeps every element id distinct across the three
+    # copies, since the legend looks its series up by id.
+    def build_view(window_days, prefix_base):
+        end_date = now.date()
+        earliest_date = min(
+            datetime.strptime(h["date"], "%Y-%m-%d").date()
+            for f in chart_friends for h in solo_history_by_label[f["label"]]
+        )
+        # Never start before the first real snapshot: with only a few days of
+        # tracking history a fixed window leaves most of the chart empty.
+        start_date = earliest_date
+        if window_days is not None:
+            start_date = max(earliest_date, end_date - timedelta(days=window_days))
+        span_days = max((end_date - start_date).days, 1)
+        start_key = start_date.strftime("%Y-%m-%d")
 
-    def x_frac(date_key):
-        d = datetime.strptime(date_key, "%Y-%m-%d").date()
-        return max(0.0, min(1.0, (d - start_date).days / span_days))
+        # Readings from before the window are dropped rather than clamped onto
+        # the left edge. x_frac used to pin them all to x=0, which drew a
+        # vertical stack of dots there and, on the 7-day view, would have made
+        # the whole season look like it happened on Monday.
+        history = {
+            f["label"]: [h for h in solo_history_by_label[f["label"]] if h["date"] >= start_key]
+            for f in chart_friends
+        }
 
-    all_scores = [
-        tier_score({"tier": h["tier"], "rank": h.get("rank"), "leaguePoints": h.get("leaguePoints")})
-        for f in chart_friends for h in solo_history_by_label[f["label"]]
-    ]
-    y_min, y_max = min(all_scores), max(all_scores)
-    pad = max(250, (y_max - y_min) * 0.2)
-    y_min -= pad
-    y_max += pad
-    if y_max <= y_min:
-        y_max = y_min + 400
+        def x_frac(date_key):
+            d = datetime.strptime(date_key, "%Y-%m-%d").date()
+            return max(0.0, min(1.0, (d - start_date).days / span_days))
 
-    # Chart height scales with how many friends are on it — with a fixed
-    # height, a crowded group (several friends at similar rank) forces the
-    # label-decluttering pass to compress everything into too little
-    # vertical room, which is what actually made a big group feel
-    # cluttered rather than the line chart itself. Capped so a huge group
-    # doesn't produce an absurdly tall panel.
-    # Rendered twice, wide and compact, exactly as the LP chart is. This
-    # panel used to be hidden outright on a phone, which is why the Rank
-    # progress tab showed only the chart above it there.
-    def build_svg(compact):
-        if compact:
-            # Phone build. The wide chart is 900 units across, and squeezing
-            # that into a 350px screen scales its 11px labels to about 4px.
-            W = 360
-            H = max(230, min(420, 20 * len(chart_friends) + 150))
-            PAD_L, PAD_R, PAD_T, PAD_B = 40, 10, 12, 26
-        else:
-            W = 900
-            H = max(280, min(640, 34 * len(chart_friends) + 120))
-            # Same as the LP chart: the key is the legend underneath.
-            PAD_L, PAD_R, PAD_T, PAD_B = 64, 24, 16, 30
-        plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
+        all_scores = [
+            tier_score({"tier": h["tier"], "rank": h.get("rank"), "leaguePoints": h.get("leaguePoints")})
+            for f in chart_friends for h in history[f["label"]]
+        ] or [0]
+        y_min, y_max = min(all_scores), max(all_scores)
+        pad = max(250, (y_max - y_min) * 0.2)
+        y_min -= pad
+        y_max += pad
+        if y_max <= y_min:
+            y_max = y_min + 400
 
-        def xy(date_key, score):
-            x = PAD_L + x_frac(date_key) * plot_w
-            y = PAD_T + (1 - (score - y_min) / (y_max - y_min)) * plot_h
-            return x, y
+        # Chart height scales with how many friends are on it — with a fixed
+        # height, a crowded group (several friends at similar rank) forces the
+        # label-decluttering pass to compress everything into too little
+        # vertical room, which is what actually made a big group feel
+        # cluttered rather than the line chart itself. Capped so a huge group
+        # doesn't produce an absurdly tall panel.
+        # Rendered twice, wide and compact, exactly as the LP chart is. This
+        # panel used to be hidden outright on a phone, which is why the Rank
+        # progress tab showed only the chart above it there.
+        def build_svg(compact):
+            if compact:
+                # Phone build. The wide chart is 900 units across, and squeezing
+                # that into a 350px screen scales its 11px labels to about 4px.
+                W = 360
+                H = max(230, min(420, 20 * len(chart_friends) + 150))
+                PAD_L, PAD_R, PAD_T, PAD_B = 40, 10, 12, 26
+            else:
+                W = 900
+                H = max(280, min(640, 34 * len(chart_friends) + 120))
+                # Same as the LP chart: the key is the legend underneath.
+                PAD_L, PAD_R, PAD_T, PAD_B = 64, 24, 16, 30
+            plot_w, plot_h = W - PAD_L - PAD_R, H - PAD_T - PAD_B
 
-        # Y gridlines at whole-tier boundaries within the visible score range.
-        lo_ti, hi_ti = int(y_min // 1000), int(y_max // 1000) + 1
-        y_ticks = []
-        for ti in range(max(lo_ti, 0), min(hi_ti + 1, len(TIER_ORDER))):
-            tick_score = ti * 1000
-            if y_min <= tick_score <= y_max:
-                _, y = xy(start_date.strftime("%Y-%m-%d"), tick_score)
-                y_ticks.append((y, TIER_ORDER[ti].capitalize()))
+            def xy(date_key, score):
+                x = PAD_L + x_frac(date_key) * plot_w
+                y = PAD_T + (1 - (score - y_min) / (y_max - y_min)) * plot_h
+                return x, y
 
-        # X ticks roughly weekly, plus today — drop the last weekly tick if it'd
-        # land close enough to "Today" for the labels to overlap.
-        x_ticks = []
-        for i in range(0, span_days, 14 if compact else 7):
-            if span_days - i < (8 if compact else 4):
-                continue
-            d = start_date + timedelta(days=i)
-            x, _ = xy(d.strftime("%Y-%m-%d"), y_min)
-            x_ticks.append((x, d.strftime("%b %d")))
-        x_today, _ = xy(end_date.strftime("%Y-%m-%d"), y_min)
-        x_ticks.append((x_today, "Today"))
+            # Y gridlines at whole-tier boundaries within the visible score range.
+            lo_ti, hi_ti = int(y_min // 1000), int(y_max // 1000) + 1
+            y_ticks = []
+            for ti in range(max(lo_ti, 0), min(hi_ti + 1, len(TIER_ORDER))):
+                tick_score = ti * 1000
+                if y_min <= tick_score <= y_max:
+                    _, y = xy(start_date.strftime("%Y-%m-%d"), tick_score)
+                    y_ticks.append((y, TIER_ORDER[ti].capitalize()))
 
-        prefix = "dailym" if compact else "daily"
-        series_groups, legend_items, standings = [], [], []
-        label_entries = []  # end-of-line labels, positioned after a declutter pass below
-        for i, f in enumerate(chart_friends):
-            var = friend_colour(f["label"])
-            pts = solo_history_by_label[f["label"]]
-            coords = [
-                xy(h["date"], tier_score({"tier": h["tier"], "rank": h.get("rank"), "leaguePoints": h.get("leaguePoints")}))
-                for h in pts
-            ]
-            series_parts = []
-            if len(coords) >= 2:
-                path_d = " ".join(f"{'M' if idx == 0 else 'L'}{x:.1f},{y:.1f}" for idx, (x, y) in enumerate(coords))
-                series_parts.append(
-                    f'<path d="{path_d}" fill="none" stroke="var({var})" stroke-width="2" '
-                    f'stroke-linecap="round" stroke-linejoin="round" />'
+            # Tick spacing follows the window. A fixed weekly step is right for
+            # a month and useless for a week: on the 7-day view it labelled the
+            # first day and nothing else, so the axis said only where the chart
+            # started and that it ended today.
+            step = 7 if span_days > 16 else (2 if span_days > 8 else 1)
+            if compact:
+                step *= 2
+            # Drop the last tick if it would sit under "Today".
+            gap = max(2, step // 2 + 1) if span_days <= 16 else (8 if compact else 4)
+            x_ticks = []
+            for i in range(0, span_days, step):
+                if span_days - i < gap:
+                    continue
+                d = start_date + timedelta(days=i)
+                x, _ = xy(d.strftime("%Y-%m-%d"), y_min)
+                x_ticks.append((x, d.strftime("%b %d")))
+            x_today, _ = xy(end_date.strftime("%Y-%m-%d"), y_min)
+            x_ticks.append((x_today, "Today"))
+
+            prefix = prefix_base + ("m" if compact else "")
+            series_groups, legend_items, standings = [], [], []
+            label_entries = []  # end-of-line labels, positioned after a declutter pass below
+            for i, f in enumerate(chart_friends):
+                var = friend_colour(f["label"])
+                pts = history[f["label"]]
+                if not pts:
+                    series_groups.append(f'<g id="{prefix}-series-{i}"></g>')
+                    legend_items.append(
+                        f'<span class="legend-item" data-chart="{prefix_base} {prefix_base}m" data-idx="{i}">'
+                        f'<span class="sw" style="background:var({var})"></span>'
+                        f'<span class="legend-name" style="color:var({var});">{esc(f["label"])}</span></span>'
+                    )
+                    continue
+                coords = [
+                    xy(h["date"], tier_score({"tier": h["tier"], "rank": h.get("rank"), "leaguePoints": h.get("leaguePoints")}))
+                    for h in pts
+                ]
+                series_parts = []
+                if len(coords) >= 2:
+                    path_d = " ".join(f"{'M' if idx == 0 else 'L'}{x:.1f},{y:.1f}" for idx, (x, y) in enumerate(coords))
+                    series_parts.append(
+                        f'<path d="{path_d}" fill="none" stroke="var({var})" stroke-width="2" '
+                        f'stroke-linecap="round" stroke-linejoin="round" />'
+                    )
+                for idx, ((x, y), h) in enumerate(zip(coords, pts)):
+                    change = snapshot_change_label(pts[idx - 1] if idx > 0 else None, h)
+                    title = f"{f['label']} · {h['date']} · {rank_label(h)}".replace("&middot;", "·")
+                    if change:
+                        title += f" ({change})"
+                    series_parts.append(
+                        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{3 if compact else 4}" fill="var({var})" '
+                        f'stroke="var(--surface-1)" stroke-width="1.5"><title>{esc(title)}</title></circle>'
+                    )
+                series_groups.append(f'<g id="{prefix}-series-{i}">{"".join(series_parts)}</g>')
+                if coords:
+                    lx, ly = coords[-1]
+                    # Measured across the window the chart actually draws. Reading
+                    # from pts[0] took in snapshots left of the axis, so the table and
+                    # the line it sits under could disagree.
+                    net = net_change_label(pts[0], pts[-1]) if len(pts) >= 2 else None
+                    label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly, "net": net, "tier": pts[-1].get("tier")})
+                    # Snapshots are anchored to midnight now, so the last point
+                    # on this chart is this morning's reading. "Rank now" has to
+                    # come from the live entry or it would be up to a day stale.
+                    live = (f.get("ranked") or {}).get("solo") or pts[-1]
+                    standings.append({"var": var, "label": f["label"], "tier": live.get("tier"),
+                                      "rankLabel": rank_label(live), "net": net,
+                                      "snapshots": len(pts)})
+                legend_items.append(
+                    f'<span class="legend-item" data-chart="{prefix_base} {prefix_base}m" data-idx="{i}">'
+                    f'<span class="sw" style="background:var({var})"></span>'
+                    f'<span class="legend-name" style="color:var({var});">{esc(f["label"])}</span></span>'
                 )
-            for idx, ((x, y), h) in enumerate(zip(coords, pts)):
-                change = snapshot_change_label(pts[idx - 1] if idx > 0 else None, h)
-                title = f"{f['label']} · {h['date']} · {rank_label(h)}".replace("&middot;", "·")
-                if change:
-                    title += f" ({change})"
-                series_parts.append(
-                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{3 if compact else 4}" fill="var({var})" '
-                    f'stroke="var(--surface-1)" stroke-width="1.5"><title>{esc(title)}</title></circle>'
-                )
-            series_groups.append(f'<g id="{prefix}-series-{i}">{"".join(series_parts)}</g>')
-            if coords:
-                lx, ly = coords[-1]
-                # Measured across the window the chart actually draws. Reading
-                # from pts[0] took in snapshots left of the axis, so the table and
-                # the line it sits under could disagree.
-                in_window = [h for h in pts if h["date"] >= start_date.strftime("%Y-%m-%d")]
-                net = net_change_label(in_window[0], in_window[-1]) if len(in_window) >= 2 else None
-                label_entries.append({"idx": i, "var": var, "label": f["label"], "lx": lx, "ly": ly, "net": net, "tier": pts[-1].get("tier")})
-                # Snapshots are anchored to midnight now, so the last point
-                # on this chart is this morning's reading. "Rank now" has to
-                # come from the live entry or it would be up to a day stale.
-                live = (f.get("ranked") or {}).get("solo") or pts[-1]
-                standings.append({"var": var, "label": f["label"], "tier": live.get("tier"),
-                                  "rankLabel": rank_label(live), "net": net,
-                                  "snapshots": len(pts)})
-            legend_items.append(
-                f'<span class="legend-item" data-chart="daily dailym" data-idx="{i}">'
-                f'<span class="sw" style="background:var({var})"></span>'
-                f'<span class="legend-name" style="color:var({var});">{esc(f["label"])}</span></span>'
+
+            label_groups = []
+
+            # tier_score() is 1000 a tier, not the 400 the LP chart works in.
+            bands_svg = tier_bands(y_min, y_max, PAD_L, W - PAD_R,
+                                   lambda v: xy(start_date.strftime("%Y-%m-%d"), v)[1],
+                                   span=1000)
+            grid_svg = "".join(
+                f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
+                f'<text x="{PAD_L - 6}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
+                for y, label in y_ticks
             )
+            xticks_svg = "".join(
+                f'<text x="{x:.1f}" y="{H - PAD_B + (15 if compact else 18)}" text-anchor="middle" class="chart-tick">{esc(label)}</text>'
+                for x, label in x_ticks
+            )
+            cls = "rank-chart chart-compact" if compact else "rank-chart chart-wide"
+            svg = (f'<svg viewBox="0 0 {W} {H}" class="{cls}" role="img" '
+                   f'aria-label="Ranked Solo/Duo standing over the last {span_days + 1} days">'
+                   f'{bands_svg}{grid_svg}{xticks_svg}'
+                   f'{"".join(series_groups)}{"".join(label_groups)}</svg>')
+            return svg, legend_items, standings
 
-        label_groups = []
+        wide_svg, legend_items, standings = build_svg(False)
+        compact_svg, _lg, _st = build_svg(True)
+        # A window can be too short to hold a line: right after tracking starts,
+        # or if publishing stopped for longer than the window. Better to say
+        # that than to hand back an axis with a few loose dots on it.
+        drawable = max((len(history[f["label"]]) for f in chart_friends), default=0)
+        return {"wide": wide_svg, "compact": compact_svg, "legend": legend_items,
+                "standings": standings, "span": span_days, "start": start_date,
+                "days_with_readings": drawable}
 
-        # tier_score() is 1000 a tier, not the 400 the LP chart works in.
-        bands_svg = tier_bands(y_min, y_max, PAD_L, W - PAD_R,
-                               lambda v: xy(start_date.strftime("%Y-%m-%d"), v)[1],
-                               span=1000)
-        grid_svg = "".join(
-            f'<line x1="{PAD_L}" y1="{y:.1f}" x2="{W - PAD_R}" y2="{y:.1f}" class="chart-grid" />'
-            f'<text x="{PAD_L - 6}" y="{y + 4:.1f}" text-anchor="end" class="chart-tick">{esc(label)}</text>'
-            for y, label in y_ticks
-        )
-        xticks_svg = "".join(
-            f'<text x="{x:.1f}" y="{H - PAD_B + (15 if compact else 18)}" text-anchor="middle" class="chart-tick">{esc(label)}</text>'
-            for x, label in x_ticks
-        )
-        cls = "rank-chart chart-compact" if compact else "rank-chart chart-wide"
-        svg = (f'<svg viewBox="0 0 {W} {H}" class="{cls}" role="img" '
-               f'aria-label="Ranked Solo/Duo standing over the last {span_days + 1} days">'
-               f'{bands_svg}{grid_svg}{xticks_svg}'
-               f'{"".join(series_groups)}{"".join(label_groups)}</svg>')
-        return svg, legend_items, standings
-
-    wide_svg, legend_items, standings = build_svg(False)
-    compact_svg, _lg, _st = build_svg(True)
+    views = [
+        {"key": "season", "label": "Season", "days": None, "prefix": "dsn"},
+        {"key": "d30", "label": "Last 30 days", "days": 29, "prefix": "daily"},
+        {"key": "d7", "label": "Last 7 days", "days": 6, "prefix": "d7"},
+    ]
+    for v in views:
+        v.update(build_view(v["days"], v["prefix"]))
+    # The season view is what the panel opens on, so it is the one whose
+    # numbers the caption and the "nothing has moved" note describe.
+    span_days = views[0]["span"]
 
 
     omitted_note = ""
@@ -3289,31 +3406,62 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
         cls = "up" if n["direction"] > 0 else ("down" if n["direction"] < 0 else "muted")
         return f'<td class="num {cls} nowrap">{esc(text)}</td>'
 
-    standings_html = (
-        f'<table class="chart-stats"><thead><tr><th>Player</th><th>Rank now</th>'
-        f'<th class="num">Over these {span_days + 1} days</th></tr></thead><tbody>'
-        + "".join(
-            f'<tr><td class="cs-name"><span class="sw" style="background:var({s["var"]});"></span>'
-            f'<b style="color:var({s["var"]});">{esc(s["label"])}</b></td>'
-            f'<td class="nowrap">{render_rank_icon(s["tier"], size=18)}{s["rankLabel"]}</td>'
-            f'{daily_move(s)}</tr>'
-            for s in standings
+    def standings_html(view):
+        days = view["span"] + 1
+        return (
+            f'<table class="chart-stats"><thead><tr><th>Player</th><th>Rank now</th>'
+            f'<th class="num">Over these {days} days</th></tr></thead><tbody>'
+            + "".join(
+                f'<tr><td class="cs-name"><span class="sw" style="background:var({s["var"]});"></span>'
+                f'<b style="color:var({s["var"]});">{esc(s["label"])}</b></td>'
+                f'<td class="nowrap">{render_rank_icon(s["tier"], size=18)}{s["rankLabel"]}</td>'
+                f'{daily_move(s)}</tr>'
+                for s in view["standings"]
+            )
+            + '</tbody></table>'
         )
-        + '</tbody></table>'
+
+    # Each range carries its own chart, its own key and its own table, because
+    # all three say something different about the same window. Hidden rather
+    # than rebuilt: they are small, and switching should be instant.
+    def thin_note(v):
+        if v["days_with_readings"] >= 2:
+            return ""
+        return ('<div class="banner" style="margin-top:10px;">Not enough readings in this window '
+                'to draw a line yet &middot; one snapshot is kept per day, so this fills in as the '
+                'days pass.</div>')
+
+    views_html = "".join(
+        f'<div class="chart-view" data-range="{v["key"]}"{"" if n == 0 else " hidden"}>'
+        f'{thin_note(v)}'
+        f'<div class="chart-row">'
+        f'<div class="chart-plot">{v["wide"]}{v["compact"]}</div>'
+        f'<div class="chart-key" role="group" aria-label="Players on this chart">'
+        f'{"".join(v["legend"])}</div>'
+        f'</div>'
+        f'<div class="chart-stats-wrap">{standings_html(v)}</div>'
+        f'</div>'
+        for n, v in enumerate(views)
+    )
+    range_toggle = (
+        '<div class="range-toggle" role="group" aria-label="Chart range">'
+        + "".join(
+            f'<button type="button" class="range-btn{" active" if n == 0 else ""}" '
+            f'data-range="{v["key"]}">{esc(v["label"])}</button>'
+            for n, v in enumerate(views)
+        )
+        + '</div>'
     )
 
     header_days = span_days + 1
     return f'''
     <div class="panel">
       <h2 style="margin-bottom:4px;">Daily rank progress</h2>
-      <div class="muted small" style="margin-bottom:14px;">Ranked Solo/Duo &middot; one reading a day at midnight GMT &middot; last {header_days} day{"s" if header_days != 1 else ""}, tracking since {esc(tracking_since)}</div>
-      <div class="chart-row">
-        <div class="chart-plot">{wide_svg}{compact_svg}</div>
-        <div class="chart-key" role="group" aria-label="Players on this chart">{"".join(legend_items)}</div>
-      </div>
+      <div class="muted small" style="margin-bottom:12px;">Ranked Solo/Duo &middot; one reading a day, the first after midnight GMT &middot; tracking since {esc(tracking_since)}</div>
+      <div class="chart-toggles">{range_toggle}</div>
+      {views_html}
       {omitted_note}
       {sparse_note}
-      <div class="chart-stats-wrap">{standings_html}</div>
       <details class="matches-details" style="margin-top:10px;">
         <summary>Daily Changes</summary>
         <table class="matches-table daily-table">
@@ -5637,19 +5785,34 @@ window.LpChart = (function () {
       return a.label < b.label ? -1 : (a.label > b.label ? 1 : 0);
     });
 
+    // Port of the ordinals in render_lp_chart(): where each game sits in
+    // everyone's list, and where it sits in that player's own. Games, not
+    // rows, so a shared game moves the overall count once.
+    var seenGames = {}, gameCount = 0, perPlayer = {}, orderAll = [], orderOwn = [];
+    events.forEach(function (e, n) {
+      var mid = e.match.matchId || ('#' + n);
+      if (!(mid in seenGames)) seenGames[mid] = gameCount++;
+      orderAll[n] = seenGames[mid];
+      var c = perPlayer[e.label] || 0;
+      orderOwn[n] = c;
+      perPlayer[e.label] = c + 1;
+    });
+
     return events.map(function (e, n) {
       var m = e.match, pt = e.point;
       var move = lpStepLabel(e.prevScore, pt.score, pt.delta, pt.exact);
       var moveCls = (pt.delta || 0) >= 0 ? 'up' : 'down';
       var mates = matesFor(m.matchId, e.label, m.win);
       var party = 1 + mates.length;
-      var rowCls = '', band = '';
+      var rowCls = (orderAll[n] < D.recentGames ? 'in-all ' : '') +
+                   (orderOwn[n] < D.recentGames ? 'in-own ' : '');
+      var band = '';
       if (party > 1) {
         var mid = m.matchId || '';
         var first = n === 0 || (events[n - 1].match.matchId || '') !== mid;
         var last = n === events.length - 1 || (events[n + 1].match.matchId || '') !== mid;
-        rowCls = 'party party-' + Math.min(party, 5) +
-                 (first ? ' g-first' : '') + (last ? ' g-last' : '');
+        rowCls += 'party party-' + Math.min(party, 5) +
+                  (first ? ' g-first' : '') + (last ? ' g-last' : '');
         var vars = [e.varName];
         mates.forEach(function (x) { vars.push(x[1]); });
         vars.sort();
@@ -5666,7 +5829,8 @@ window.LpChart = (function () {
         withCell = '<span class="duo-with" title="Played this game with ' + esc(who) + '">' +
           '<span class="duo-with-icon" aria-hidden="true">\u21c4</span>' + names + '</span>';
       }
-      return '<tr class="' + rowCls + '"' + (band ? ' style="' + band + '"' : '') + '>' +
+      return '<tr class="' + rowCls + '" data-p="' + esc(e.label) + '"' +
+        (band ? ' style="' + band + '"' : '') + '>' +
         '<td class="muted small nowrap">' + esc(whenTextLp(m.gameStartMs)) + '</td>' +
         '<td class="nowrap"><b style="color:var(' + e.varName + ');">' + esc(e.label) + '</b>' +
         '<span class="muted small"> &middot; game ' + esc(e.idx) + '</span></td>' +
@@ -6112,7 +6276,8 @@ window.LpChart = (function () {
     var activeRange = null;
     // Scoped to the zoom control: the projection switch beside it also
     // carries .active, and it has no data-range to restore.
-    var activeBtn = document.querySelector('.range-btn.active[data-range]');
+    var lpPanel = host.closest('.panel');
+    var activeBtn = lpPanel && lpPanel.querySelector('.range-btn.active[data-range]');
     if (activeBtn) activeRange = activeBtn.getAttribute('data-range');
 
     host.innerHTML = chartsHtml(state);
@@ -6953,6 +7118,10 @@ def build_html(data):
   .range-btn:hover {{ color: var(--text-primary); }}
   .range-btn.active {{ background: var(--surface-1); color: var(--text-primary); box-shadow: var(--shadow-sm); }}
   .chart-view[hidden] {{ display: none; }}
+  /* One button per player, so this row is as long as the group is big and
+     cannot stay on one line the way a two-way toggle does. */
+  .who-toggle {{ display: flex; flex-wrap: wrap; margin-bottom: 8px; }}
+  .who-toggle .range-btn {{ padding: 6px 11px; }}
 
   /* "insufficient data" is a sentence where the column expects a symbol, so
      it is sized down to sit in the same row without stretching it. */
@@ -7581,6 +7750,7 @@ def build_html(data):
        inside the pill, which reads as broken rather than as a toggle. */
     .duo-controls .range-toggle {{ width: 100%; }}
     .duo-controls .range-btn {{ flex: 1; padding: 11px 6px; font-size: 12px; }}
+    .who-toggle .range-btn {{ padding: 10px 12px; font-size: 12px; }}
     .duo-matrix {{ border-spacing: 2px; }}
     .duo-cell {{ min-width: 52px; padding: 6px 2px; }}
     .cell-wr {{ font-size: 12px; }}
@@ -7883,6 +8053,103 @@ def build_html(data):
         }});
       }});
 
+      // Recent Games: whose games, and the file for whoever is selected.
+      //
+      // The filter is one attribute on the table; the CSS built alongside it
+      // decides what that means. Nothing here touches a row, which is what
+      // keeps the live-refresh check honest.
+      (function () {{
+        var table = document.querySelector('.lp-table');
+        var cfg = document.getElementById('lp-chart-data');
+        var D_RECENT = cfg ? (JSON.parse(cfg.textContent).recentGames || 100) : 100;
+        var dump = document.querySelector('[data-season-dump]');
+        var dumpLabel = document.querySelector('[data-season-dump-label]');
+        if (!table) return;
+
+        function pad(v, n) {{
+          v = String(v === undefined || v === null ? '' : v);
+          return v.length >= n ? v.slice(0, n) : v + new Array(n - v.length + 1).join(' ');
+        }}
+
+        function seasonText(who) {{
+          var raw = document.getElementById('season-export-data');
+          var rows = raw ? JSON.parse(raw.textContent) : [];
+          var mine = rows.filter(function (r) {{ return r.friend === who; }});
+          // Newest first, to match the table this button sits under.
+          mine.sort(function (a, b) {{
+            return String(b.gameStart || '').localeCompare(String(a.gameStart || ''));
+          }});
+          var out = [
+            'League Friends Dashboard - ' + who + ', whole season',
+            'Generated: ' + new Date().toISOString().slice(0, 19).replace('T', ' '),
+            '',
+            'Every ranked game of the season in all queues, newest first. The LP',
+            'column is not here because LP is only reconstructed for Solo/Duo and',
+            'only from the day rank tracking began; the Games .txt beside this',
+            'button is the file that carries it.',
+            '',
+            pad('when', 20) + pad('queue', 17) + pad('res', 4) + pad('champion', 16) +
+            pad('vs', 16) + pad('role', 8) + pad('k/d/a', 10) + pad('cs/min', 7) + 'mins',
+          ];
+          mine.forEach(function (r) {{
+            out.push(
+              pad(String(r.gameStart || '').replace('T', ' ').slice(0, 19), 20) +
+              pad(r.queue, 17) + pad(r.win ? 'W' : 'L', 4) +
+              pad(r.champion, 16) + pad(r.opponentChampion || '-', 16) +
+              pad(r.position || '-', 8) +
+              pad([r.kills, r.deaths, r.assists].join('/'), 10) +
+              pad(r.csPerMin, 7) + (r.durationMin === undefined ? '' : r.durationMin)
+            );
+          }});
+          out.push('', mine.length + ' games listed.');
+          return out.join('\\n');
+        }}
+
+        var blurb = document.querySelector('[data-recent-blurb]');
+        var blurbAll = blurb ? blurb.textContent : '';
+
+        function select(who) {{
+          table.setAttribute('data-view', who);
+          if (dump) {{
+            dump.hidden = who === 'all';
+            if (dumpLabel && who !== 'all') dumpLabel.textContent = who + ' season .txt';
+          }}
+          // The everyone blurb tells you to pick a name, which reads oddly
+          // once you have.
+          if (blurb) {{
+            blurb.textContent = who === 'all' ? blurbAll
+              : (who + "'s last " + D_RECENT + ' games, newest first. The season file has every '
+                 + 'ranked game they have played, in every queue.');
+          }}
+        }}
+
+        document.querySelectorAll('.range-btn[data-who]').forEach(function (b) {{
+          b.addEventListener('click', function () {{
+            var group = b.closest('.range-toggle');
+            group.querySelectorAll('.range-btn[data-who]').forEach(function (o) {{
+              o.classList.toggle('active', o === b);
+            }});
+            select(b.getAttribute('data-who'));
+          }});
+        }});
+
+        if (dump) {{
+          dump.addEventListener('click', function () {{
+            var who = table.getAttribute('data-view');
+            if (!who || who === 'all') return;
+            var blob = new Blob([seasonText(who)], {{ type: 'text/plain;charset=utf-8' }});
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = who.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_season_' +
+                         new Date().toISOString().slice(0, 10) + '.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(a.href);
+          }});
+        }}
+      }})();
+
       var btn = document.getElementById('export-csv');
       if (!btn) return;
       btn.addEventListener('click', function () {{
@@ -8133,13 +8400,20 @@ def build_html(data):
       }});
 
       // data-range only: the duo panel reuses .range-btn for its sort control.
+      //
+      // The highlight moves within the button's own .range-toggle, not across
+      // the whole panel. The LP panel already held two groups, so switching
+      // zoom used to un-highlight the projection switch beside it, and the
+      // daily panel now has three buttons of its own to keep separate.
       document.querySelectorAll('.range-btn[data-range]').forEach(function (b) {{
         b.addEventListener('click', function () {{
           var want = b.getAttribute('data-range');
-          var panel = b.closest('.panel');
-          panel.querySelectorAll('.range-btn').forEach(function (o) {{
+          var group = b.closest('.range-toggle') || b.closest('.panel');
+          group.querySelectorAll('.range-btn[data-range]').forEach(function (o) {{
             o.classList.toggle('active', o === b);
           }});
+          // The views themselves still live at panel level.
+          var panel = b.closest('.panel');
           panel.querySelectorAll('.chart-view').forEach(function (v) {{
             v.hidden = v.getAttribute('data-range') !== want;
           }});

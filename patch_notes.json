@@ -1,5 +1,35 @@
 [
   {
+    "date": "2026-09-08",
+    "title": "Recent Games is the last 100, and rank progress has three ranges",
+    "items": [
+      {
+        "type": "changed",
+        "text": "Recent Games listed every game since tracking began, which is the right thing to keep and the wrong thing to show: several hundred rows to scroll before reaching anything older than yesterday. It now shows the last 100 games. A game two friends played together counts once, not twice, so the hundred is a hundred games rather than a hundred rows."
+      },
+      {
+        "type": "added",
+        "text": "A name row above the table. Pick anyone to see just their last 100 games, and a button appears to download their whole season as a text file: every ranked game they have played, in every queue, newest first."
+      },
+      {
+        "type": "changed",
+        "text": "Daily rank progress is three charts behind a toggle: the whole season, the last 30 days, and the last 7. A month is the right amount of detail for how the month has gone and the wrong amount for both of the other questions people ask of this chart, so each range now has its own axes rather than sharing one."
+      },
+      {
+        "type": "fixed",
+        "text": "Readings from before a chart's window were pinned to its left edge instead of being left out, stacking a column of dots there. On a seven-day view that would have drawn the whole season as though it happened on the first day."
+      },
+      {
+        "type": "fixed",
+        "text": "Date labels followed a fixed weekly step whatever the window, so the seven-day chart labelled its first day and then nothing until Today. Tick spacing now follows the span it is labelling."
+      },
+      {
+        "type": "fixed",
+        "text": "Switching the LP chart's zoom un-highlighted the projection switch beside it, because the highlight moved across the whole panel rather than within the group that was clicked."
+      }
+    ]
+  },
+  {
     "date": "2026-09-07",
     "title": "A game is worth what that player's games are worth",
     "items": [
