@@ -1,6 +1,28 @@
 [
   {
     "date": "2026-09-08",
+    "title": "Level on LP means level in the table",
+    "items": [
+      {
+        "type": "changed",
+        "text": "Two people on the same rank and the same LP now share a place on the leaderboard rather than one of them sitting arbitrarily above the other. The order between them was never a judgement about who was ahead; it was whichever way the sort happened to leave them, so the table was claiming something it did not know."
+      },
+      {
+        "type": "changed",
+        "text": "The place after a tie skips, the way a league table does: two people level on second are both second and the next one down is fourth. Skipping the third is the point, because it is what says there are two people above them rather than one. Tied players share the medal colour too, and their card carries the same number."
+      },
+      {
+        "type": "changed",
+        "text": "Being level is decided on the rank as shown, not on the single number the table sorts by. That number packs tier, division and LP together on a scale where a Master player's LP runs into the thousands, so two genuinely different ranks can land on the same figure. Good enough to sort by, not something to declare a tie on."
+      },
+      {
+        "type": "fixed",
+        "text": "A refresh renumbers the table, and it now applies the same rule, including for anyone whose lookup failed: they hold the place the build gave them instead of dropping out of a tie they were part of."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-08",
     "title": "Game times are on your clock now",
     "items": [
       {
