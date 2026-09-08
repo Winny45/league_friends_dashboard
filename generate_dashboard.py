@@ -1320,7 +1320,17 @@ def queue_timeline(rank_history, label, queue_key, matches, queue_name,
         first = fine[0]["atMs"]
         older = [h for h in pts if snapshot_at_ms(h) < first]
         pts = older + fine
-    return build_lp_timeline(pts, played)
+
+    # Two passes, because the averages are read off the reconstruction they
+    # then feed back into. The first pass uses the flat prior and exists only
+    # to measure what this player's wins and losses are actually worth; the
+    # second rebuilds the early era around those numbers.
+    seed = label_seed(label)
+    first_pass = build_lp_timeline(pts, played, seed=seed)
+    rate = lp_rate(first_pass)
+    if not rate:
+        return first_pass
+    return build_lp_timeline(pts, played, rate["gain"], rate["drop"], seed)
 
 
 def lp_rate(tl, window=None):
@@ -2076,6 +2086,22 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
 
 NOMINAL_LP = 20  # typical LP swing per ranked game, used as the prior
 
+# Three eras, because the quality of what can be known changes twice.
+#
+# Before tracking began there are no rank readings at all, so a game's LP is
+# not unknown-but-estimable, it is unknowable. Those games carry no LP.
+#
+# From then until readings became hourly, a day's games shared one measurement
+# and splitting them evenly around a flat 20 made every step look the same. In
+# that stretch each game is worth the player's own average for a win or a loss,
+# which is a realistic number, while the segment still lands on the measured
+# rank so the swings across the graph stay true.
+#
+# After that, readings are frequent enough that a segment holds a game or two
+# and the measured difference is close to the game itself.
+TRACKING_START_MS = int(datetime(2026, 8, 19).timestamp() * 1000)
+AVERAGE_ERA_END_MS = int(datetime(2026, 9, 14).timestamp() * 1000)
+
 
 # tier_score() is an ordering key, not a distance: it spends 200 units on a
 # division that only holds 100 LP and 1000 on a tier that only holds 4
@@ -2134,7 +2160,7 @@ def lp_step_label(prev_value, value, delta, exact):
     return amount
 
 
-def segment_deltas(wins, net):
+def segment_deltas(wins, net, avg_win=NOMINAL_LP, avg_loss=NOMINAL_LP, seed=0):
     """Split a known net LP change across the games between two readings.
 
     A win is worth 20 + offset and a loss costs 20 - offset, the same offset
@@ -2161,21 +2187,33 @@ def segment_deltas(wins, net):
         return []
     W = sum(1 for w in wins if w)
     L = len(wins) - W
-    offset = (net - NOMINAL_LP * (W - L)) / (W + L)
-    gain = NOMINAL_LP + offset
-    loss = NOMINAL_LP - offset
+    offset = (net - (avg_win * W - avg_loss * L)) / (W + L)
+    gain = avg_win + offset
+    loss = avg_loss - offset
     # A win never costs LP and a loss never gains it.
     gain, loss = max(gain, 0.0), max(loss, 0.0)
     deltas = [round(gain) if w else -round(loss) for w in wins]
 
-    # Hand the rounding back, one LP at a time, until the total is exact.
+    # Hand the rounding back a point at a time until the total is exact.
+    #
+    # Scattered rather than piled onto the first games. Which game absorbs a
+    # remainder is arbitrary, and always choosing the earliest put a visible
+    # kink at the start of every segment. MINSTD rather than random(), for the
+    # same reason the projection uses it: the JavaScript port has to produce
+    # the same answer, and a genuinely random choice would also redraw the
+    # graph differently on every rebuild for no reason.
     residual = int(round(net - sum(deltas)))
-    i = 0
-    while residual and deltas:
+    state = (abs(int(seed)) * 104729) % 2147483646 + 1
+    guard = 0
+    while residual and deltas and guard < 10000:
+        state = (state * 16807) % 2147483647
+        i = state % len(deltas)
         step = 1 if residual > 0 else -1
-        deltas[i % len(deltas)] += step
-        residual -= step
-        i += 1
+        # Never turn a win into a loss or the reverse while shuffling.
+        if (deltas[i] + step >= 0) if wins[i] else (deltas[i] + step <= 0):
+            deltas[i] += step
+            residual -= step
+        guard += 1
     return deltas
 
 
@@ -2195,7 +2233,16 @@ def reading_at_ms(pt):
         return 0
 
 
-def build_lp_timeline(solo_pts, solo_matches):
+def label_seed(label):
+    """A small stable number per player, so the remainder scatter is the same
+    on every rebuild and the same in both languages."""
+    n = 0
+    for ch in str(label):
+        n = (n * 131 + ord(ch)) % 2147483647
+    return n or 1
+
+
+def build_lp_timeline(solo_pts, solo_matches, avg_win=None, avg_loss=None, seed=0):
     """Per-game LP path for one friend, anchored on their real rank readings.
 
     Games played before the first reading are skipped: there is no known LP to
@@ -2230,8 +2277,17 @@ def build_lp_timeline(solo_pts, solo_matches):
         if not seg:
             continue
         start, end = ladder_lp(prev), ladder_lp(cur)
+        # Which era this segment falls in decides what a game is worth before
+        # the measured difference is shared out. In the averages era a win is
+        # worth what this player's wins are worth; after it, the readings are
+        # close enough together that the flat prior barely matters.
+        if avg_win and avg_loss and hi < AVERAGE_ERA_END_MS:
+            gw, gl = avg_win, avg_loss
+        else:
+            gw, gl = NOMINAL_LP, NOMINAL_LP
         run = start
-        for m, delta in zip(seg, segment_deltas([m["win"] for m in seg], end - start)):
+        for m, delta in zip(seg, segment_deltas([m["win"] for m in seg], end - start,
+                                                gw, gl, seed + idx)):
             run += delta
             idx += 1
             points.append({"idx": idx, "score": run, "delta": delta, "match": m, "exact": False})
@@ -2369,7 +2425,16 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         if len(fine) >= 2:
             fine.sort(key=lambda r: r["atMs"])
             merged = [h for h in pts if snapshot_at_ms(h) < fine[0]["atMs"]] + fine
-        tl = build_lp_timeline(merged, solo_matches)
+        # The same two passes queue_timeline does, and the same two the
+        # JavaScript port does. This built the chart in one pass with the flat
+        # prior while the browser rebuilt it in two with the player's own
+        # averages, so the same data drew two different lines and verifySelf
+        # caught them apart.
+        seed = label_seed(f["label"])
+        tl = build_lp_timeline(merged, solo_matches, seed=seed)
+        rate = lp_rate(tl)
+        if rate:
+            tl = build_lp_timeline(merged, solo_matches, rate["gain"], rate["drop"], seed)
         if len(tl) >= 2:
             timelines[f["label"]] = tl
 
@@ -2726,6 +2791,9 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         "lpPerDivision": LP_PER_DIVISION,
         "divisionsPerTier": DIVISIONS_PER_TIER,
         "nominalLp": NOMINAL_LP,
+        "averageEraEndMs": AVERAGE_ERA_END_MS,
+        "lpRateMinGames": LP_RATE_MIN_GAMES,
+        "lpRateMinSide": LP_RATE_MIN_SIDE,
         # The browser rebuilds this chart on a live refresh and verifySelf
         # compares the two renders byte for byte, so it needs the same readings
         # the Python side merged in.
@@ -5294,28 +5362,61 @@ window.LpChart = (function () {
     return (f % 2 === 0) ? f : f + 1;
   }
 
-  function segmentDeltas(wins, net) {
+  function segmentDeltas(wins, net, avgWin, avgLoss, seed) {
     if (!wins.length) return [];
+    if (avgWin === undefined || avgWin === null) avgWin = D.nominalLp;
+    if (avgLoss === undefined || avgLoss === null) avgLoss = D.nominalLp;
     var W = 0, i;
     for (i = 0; i < wins.length; i++) if (wins[i]) W++;
     var L = wins.length - W;
-    var offset = (net - D.nominalLp * (W - L)) / (W + L);
-    var gain = Math.max(D.nominalLp + offset, 0.0);
-    var loss = Math.max(D.nominalLp - offset, 0.0);
+    var offset = (net - (avgWin * W - avgLoss * L)) / (W + L);
+    var gain = Math.max(avgWin + offset, 0.0);
+    var loss = Math.max(avgLoss - offset, 0.0);
     var deltas = wins.map(function (w) {
       return w ? pyRound(gain) : -pyRound(loss);
     });
     var sum = 0;
     for (i = 0; i < deltas.length; i++) sum += deltas[i];
     var residual = Math.round(net - sum);
-    var n = 0;
-    while (residual !== 0 && deltas.length) {
+    // Same MINSTD walk as the generator, so the same games absorb the same
+    // remainders. Anything else and the two renders disagree by a point here
+    // and there, which is exactly what verifySelf is watching for.
+    var state = (Math.abs(seed | 0) * 104729) % 2147483646 + 1;
+    var guard = 0;
+    while (residual !== 0 && deltas.length && guard < 10000) {
+      state = (state * 16807) % 2147483647;
+      var j = state % deltas.length;
       var step = residual > 0 ? 1 : -1;
-      deltas[n % deltas.length] += step;
-      residual -= step;
-      n++;
+      var ok = wins[j] ? (deltas[j] + step >= 0) : (deltas[j] + step <= 0);
+      if (ok) { deltas[j] += step; residual -= step; }
+      guard++;
     }
     return deltas;
+  }
+
+  function labelSeed(label) {
+    var n = 0;
+    for (var i = 0; i < String(label).length; i++) {
+      n = (n * 131 + String(label).charCodeAt(i)) % 2147483647;
+    }
+    return n || 1;
+  }
+
+  // Port of lp_rate(): the averages the middle era is rebuilt around.
+  function lpRateOf(tl) {
+    var rows = [];
+    for (var i = 1; i < tl.length; i++) {
+      if (tl[i].match) rows.push([!!tl[i].match.win, tl[i].delta || 0]);
+    }
+    var gains = [], drops = [];
+    rows.forEach(function (r) { (r[0] ? gains : drops).push(r[0] ? r[1] : -r[1]); });
+    if (rows.length < D.lpRateMinGames || gains.length < D.lpRateMinSide
+        || drops.length < D.lpRateMinSide) return null;
+    var sg = 0, sd = 0;
+    gains.forEach(function (v) { sg += v; });
+    drops.forEach(function (v) { sd += v; });
+    return { gain: Math.round(sg / gains.length * 10) / 10,
+             drop: Math.round(sd / drops.length * 10) / 10 };
   }
 
   // Must match build_lp_timeline() in the generator exactly.
@@ -5332,7 +5433,7 @@ window.LpChart = (function () {
     return d.getTime() - 1;
   }
 
-  function buildLpTimeline(soloPts, soloMatches) {
+  function buildLpTimeline(soloPts, soloMatches, avgWin, avgLoss, seed) {
     if (soloPts.length < 2) return [];
     var pts = soloPts.slice().sort(function (a, b) { return readingAt(a) - readingAt(b); });
     var played = soloMatches.filter(function (m) { return m.gameStartMs; })
@@ -5350,7 +5451,11 @@ window.LpChart = (function () {
       }
       if (!seg.length) continue;
       var start = ladderLp(prev), end = ladderLp(cur), run = start;
-      var deltas = segmentDeltas(seg.map(function (m) { return !!m.win; }), end - start);
+      var useAvg = avgWin && avgLoss && hi < D.averageEraEndMs;
+      var deltas = segmentDeltas(
+        seg.map(function (m) { return !!m.win; }), end - start,
+        useAvg ? avgWin : D.nominalLp, useAvg ? avgLoss : D.nominalLp,
+        (seed || 0) + idx);
       for (var n = 0; n < seg.length; n++) {
         run += deltas[n];
         idx++;
@@ -5833,7 +5938,13 @@ window.LpChart = (function () {
         var first = fine[0].atMs;
         pts = f.history.filter(function (h) { return readingAt(h) < first; }).concat(fine);
       }
-      var tl = buildLpTimeline(pts, f.matches);
+      // Two passes, as the generator does: the first measures what this
+      // player's wins and losses are worth, the second rebuilds the early era
+      // around those numbers.
+      var seed = labelSeed(f.label);
+      var tl = buildLpTimeline(pts, f.matches, null, null, seed);
+      var rate = lpRateOf(tl);
+      if (rate) tl = buildLpTimeline(pts, f.matches, rate.gain, rate.drop, seed);
       if (tl.length >= 2) { timelines[f.label] = tl; kept.push(f); }
     });
     if (!kept.length) return null;
