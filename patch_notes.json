@@ -14,6 +14,10 @@
       {
         "type": "fixed",
         "text": "With that fixed the two charts still differed by a tenth of a unit at one point out of several thousand. The padded top and bottom of the chart are worked out from the projection line's own floating point walk, and two runtimes need not agree on those to the last bit; that scales every coordinate by an invisible amount and flips whichever one happens to sit on a rounding boundary. The bounds are whole numbers now, which costs nothing on a padded axis and is the same number in both languages."
+      },
+      {
+        "type": "fixed",
+        "text": "One more, and the one that was actually moving LP about. The browser's copy of Python's rounding rule treated any value within a billionth of a half as exactly a half, and sent it to the even neighbour. Neel's average win worked out to 17.499999999999996, three quadrillionths below the half and so a plain round down to 17 in the page; the tolerance called it a half and rounded to 18, so his twenty-sixth game was worth 23 LP on the page and 24 after a refresh. A double either sits on the half or it does not, and the test is exact now. The two charts are byte for byte identical again."
       }
     ]
   },

@@ -5531,9 +5531,19 @@ window.LpChart = (function () {
   // is 20 in one and 21 in the other. Exactly the halves this produces, so
   // the tie has to be broken the same way in both.
   function pyRound(x) {
+    // Python's round() sends a half to the even neighbour and everything else
+    // to the nearer one. A double either sits exactly on the half or it does
+    // not, so the test has to be exact.
+    //
+    // This used to allow a tolerance of 1e-9, which is enormous next to the
+    // gap that actually matters. Neel's average win came out as
+    // 17.499999999999996, three quadrillionths below the half and so a plain
+    // round down to 17 in Python. The tolerance called it a half, sent it to
+    // the even 18, and one of his games was worth a different LP in the page
+    // than in the browser's redraw of it.
     var f = Math.floor(x);
     var d = x - f;
-    if (Math.abs(d - 0.5) > 1e-9) return Math.round(x);
+    if (d !== 0.5) return Math.round(x);
     return (f % 2 === 0) ? f : f + 1;
   }
 
@@ -5590,8 +5600,15 @@ window.LpChart = (function () {
     var sg = 0, sd = 0;
     gains.forEach(function (v) { sg += v; });
     drops.forEach(function (v) { sd += v; });
-    return { gain: Math.round(sg / gains.length * 10) / 10,
-             drop: Math.round(sd / drops.length * 10) / 10 };
+    // round(x, 1), not Math.round(x * 10) / 10. Python rounds a half to the
+    // even neighbour and this rounded it up, so an average landing on a half
+    // came out a tenth apart. A tenth is enough: it moves the offset that
+    // shares a segment's LP between its games, which flips one game's
+    // rounding, and the two renders then disagree by a single LP. Neel's
+    // twenty-sixth game was 23 on the page and 24 in the browser.
+    // fixed() already carries Python's rule, so it is the one to use.
+    return { gain: parseFloat(fixed(sg / gains.length, 1)),
+             drop: parseFloat(fixed(sd / drops.length, 1)) };
   }
 
   // Must match build_lp_timeline() in the generator exactly.
