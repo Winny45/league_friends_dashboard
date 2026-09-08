@@ -2538,7 +2538,14 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         vis_scores += [sc for walk in proj.values() for sc in walk]
         y_min, y_max = min(vis_scores), max(vis_scores)
         pad = max(40, (y_max - y_min) * 0.16)
-        y_min, y_max = y_min - pad, y_max + pad
+        # Whole numbers. The padded bounds scale every coordinate on the chart,
+        # so a difference in their last bits moves everything by an invisible
+        # amount and flips whichever coordinate happens to sit on a rounding
+        # boundary. The projection walk feeds floats into this range, and two
+        # runtimes need not agree on those to the last bit. There is nothing
+        # to be gained from a fractional bound on a padded axis, and a whole
+        # one is the same number in both languages.
+        y_min, y_max = math.floor(y_min - pad), math.ceil(y_max + pad)
         if y_max <= y_min:
             y_max = y_min + 200
         if compact:
@@ -5908,7 +5915,8 @@ window.LpChart = (function () {
     });
     var yMin = Math.min.apply(null, scores), yMax = Math.max.apply(null, scores);
     var pad = Math.max(40, (yMax - yMin) * 0.16);
-    yMin -= pad; yMax += pad;
+    // Whole numbers, for the reason given in render_lp_chart().
+    yMin = Math.floor(yMin - pad); yMax = Math.ceil(yMax + pad);
     if (yMax <= yMin) yMax = yMin + 200;
 
     var W, H, PAD_L, PAD_R, PAD_T, PAD_B;
