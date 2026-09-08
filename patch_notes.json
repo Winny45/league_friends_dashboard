@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-08",
+    "title": "A date meant one instant on the server and another in your browser",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "The LP chart the page shipped and the LP chart your browser redrew after a refresh were built from the same data and did not agree. An old daily snapshot carries only a date, no time, and both sides turned that date into a timestamp in their own local time. The page is built on a UTC machine and read in a browser an hour ahead, so games played late on 19 August fell before the day's anchor on one side and after it on the other. Kirish's line had 133 games in the published chart and 135 after a refresh. Dates without a time are now read as UTC everywhere, which is what they have always meant, since snapshots are keyed by UTC day."
+      },
+      {
+        "type": "fixed",
+        "text": "The merge that joins the hourly readings to the older daily ones was filtering by one clock and sorting by another: a daily anchor read in the morning was judged by the time its rank was last re-read that evening, and dropped. It now uses the same clock the chart itself is cut by."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-08",
     "title": "Recent Games is the last 100, and rank progress has three ranges",
     "items": [
       {
