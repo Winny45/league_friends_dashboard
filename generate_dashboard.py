@@ -164,6 +164,39 @@ def tier_score(ranked_entry):
     return ti * 1000 + rank_component * 200 + lp
 
 
+def rank_key(ranked_entry):
+    """What has to match for two people to be level.
+
+    The rank as displayed, not tier_score(): that score packs the tier,
+    the division and the LP into one number on a scale where a Master player's
+    LP runs into thousands, so two different ranks can land on the same figure.
+    Fine for ordering, not something to declare a tie on.
+
+    Unranked people all return the same key, which is right. The table shows
+    them the same and there is nothing to separate them by.
+    """
+    if not ranked_entry or not ranked_entry.get("tier"):
+        return ("UNRANKED", None, 0)
+    return (ranked_entry["tier"], ranked_entry.get("rank"),
+            ranked_entry.get("leaguePoints", 0) or 0)
+
+
+def standing_places(entries):
+    """Places for an already-sorted list, level people sharing one.
+
+    Competition ranking: two people level on second take second each, and the
+    next one down takes fourth. Skipping the third place is the point. It is
+    what says two people are above them rather than one.
+    """
+    places, prev_key, prev_place = [], None, 0
+    for i, entry in enumerate(entries):
+        key = rank_key(entry)
+        place = prev_place if key == prev_key else i + 1
+        places.append(place)
+        prev_key, prev_place = key, place
+    return places
+
+
 def rank_label(ranked_entry):
     if not ranked_entry or not ranked_entry.get("tier"):
         return "Unranked"
@@ -6442,12 +6475,15 @@ def build_html(data):
     set_readings(data.get("rankReadings") or [])
     set_duo_context(friends_sorted, [f["label"] for f in friends])
 
+    # Places rather than row numbers, so two people on the same LP are shown
+    # level instead of one of them arbitrarily above the other.
+    places = standing_places([f["ranked"].get("solo") for f in friends_sorted])
     leaderboard_rows = "".join(
-        render_leaderboard_row(f, i + 1, weekly_trend_for(rank_history, f["label"], now), now)
+        render_leaderboard_row(f, places[i], weekly_trend_for(rank_history, f["label"], now), now)
         for i, f in enumerate(friends_sorted)
     )
     cards = "".join(
-        render_friend_card(f, i + 1, now, rank_history, tracking_since)
+        render_friend_card(f, places[i], now, rank_history, tracking_since)
         for i, f in enumerate(friends_sorted)
     )
     # Every card is on screen now, so a pill jumps to someone and highlights
@@ -6554,6 +6590,12 @@ def build_html(data):
         "rankScore": RANK_SCORE,
         "baseScores": {f["label"]: ladder_lp(f["ranked"].get("solo") or {})
                        for f in friends_sorted},
+        # The rank as a string, for the same reason rank_key() exists: a
+        # refresh has to decide who is level, and a score cannot answer that.
+        # Kept for anyone whose live lookup fails, so they stay where the
+        # build put them rather than falling out of a tie.
+        "baseRanks": {f["label"]: "|".join(str(x) for x in rank_key(f["ranked"].get("solo")))
+                      for f in friends_sorted},
         "ddragonVersion": data.get("ddragonVersion"),
         "championIcons": data.get("championIconMap", {}),
         "rankedQueues": LIVE_RANKED_QUEUES,
@@ -9095,19 +9137,31 @@ def build_html(data):
           var l = live[label];
           // Anyone whose lookup failed keeps the position the build gave them.
           tr._score = l ? ladderScore(l) : ((CFG.baseScores || {{}})[label] || 0);
+          // Port of rank_key(): what has to match for two people to be level.
+          // A score cannot answer that, so the rank itself is compared.
+          tr._key = l && l.tier
+            ? (l.tier + '|' + (l.rank === undefined || l.rank === null ? 'None' : l.rank) +
+               '|' + (l.leaguePoints || 0))
+            : ((CFG.baseRanks || {{}})[label] || 'UNRANKED|None|0');
         }});
         rows.sort(function (a, b) {{ return b._score - a._score; }});
+        // Port of standing_places(): level people share a place, and the
+        // place after a tie skips.
+        var prevKey = null, prevPlace = 0;
         rows.forEach(function (tr, i) {{
+          var place = tr._key === prevKey ? prevPlace : i + 1;
+          prevKey = tr._key;
+          prevPlace = place;
           body.appendChild(tr);
           var pos = tr.querySelector('.pos');
           if (pos) {{
-            pos.textContent = i + 1;
-            pos.className = i < 3 ? 'pos pos-' + (i + 1) : 'pos';
+            pos.textContent = place;
+            pos.className = place <= 3 ? 'pos pos-' + place : 'pos';
           }}
           // The friend card carries the same standing.
           var card = document.getElementById('friend-' + tr.getAttribute('data-friend-row').toLowerCase());
           var badge = card && card.querySelector('.rank-badge');
-          if (badge) badge.textContent = '#' + (i + 1);
+          if (badge) badge.textContent = '#' + place;
         }});
       }}
 
