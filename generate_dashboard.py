@@ -13,7 +13,7 @@ import json
 import math
 import sys
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 TIER_ORDER = [
@@ -809,10 +809,7 @@ def snapshot_at_ms(h):
         return int(h["liveAtMs"])
     if h.get("atMs"):
         return int(h["atMs"])
-    try:
-        return int(datetime.strptime(h["date"], "%Y-%m-%d").timestamp() * 1000)
-    except (ValueError, KeyError):
-        return 0
+    return day_ms(h.get("date"))
 
 
 def snapshot_rank(h, live=True):
@@ -1325,7 +1322,14 @@ def queue_timeline(rank_history, label, queue_key, matches, queue_name,
         # when tracking began rather than starting three weeks ago.
         fine.sort(key=lambda r: r["atMs"])
         first = fine[0]["atMs"]
-        older = [h for h in pts if snapshot_at_ms(h) < first]
+        # reading_at_ms, not snapshot_at_ms: the same clock build_lp_timeline
+        # sorts and cuts by. snapshot_at_ms prefers a row's liveAtMs, the time
+        # its rank was last re-read during the day, so a daily anchor read in
+        # the morning was judged by an evening timestamp and dropped from the
+        # merge. The browser has no liveAtMs to prefer, kept the row, and drew
+        # a line with an extra segment in it. Filtering by one clock and
+        # ordering by another cannot be right either way round.
+        older = [h for h in pts if reading_at_ms(h) < first]
         pts = older + fine
 
     # Two passes, because the averages are read off the reconstruction they
@@ -2091,6 +2095,25 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
 # estimate, and the UI says so.
 # ---------------------------------------------------------------------------
 
+def day_ms(date_key, end_of_day=False):
+    """A YYYY-MM-DD string as a timestamp, read as UTC.
+
+    Snapshots are keyed by UTC day, so UTC is what the string means. Reading it
+    as local time is what made the same date mean two different instants: the
+    page is built on a UTC runner and read in a browser an hour ahead, so a
+    game played at 23:14 UTC fell before the day's anchor on the server and
+    after it in the browser, and the two drew different lines from the same
+    data.
+    """
+    try:
+        d = datetime.strptime(str(date_key), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return 0
+    if end_of_day:
+        return int((d + timedelta(days=1)).timestamp() * 1000) - 1
+    return int(d.timestamp() * 1000)
+
+
 NOMINAL_LP = 20  # typical LP swing per ranked game, used as the prior
 
 # Three eras, because the quality of what can be known changes twice.
@@ -2106,8 +2129,8 @@ NOMINAL_LP = 20  # typical LP swing per ranked game, used as the prior
 #
 # After that, readings are frequent enough that a segment holds a game or two
 # and the measured difference is close to the game itself.
-TRACKING_START_MS = int(datetime(2026, 8, 19).timestamp() * 1000)
-AVERAGE_ERA_END_MS = int(datetime(2026, 9, 14).timestamp() * 1000)
+TRACKING_START_MS = day_ms("2026-08-19")
+AVERAGE_ERA_END_MS = day_ms("2026-09-14")
 
 
 # tier_score() is an ordering key, not a distance: it spends 200 units on a
@@ -2233,11 +2256,7 @@ def reading_at_ms(pt):
     """
     if pt.get("atMs"):
         return int(pt["atMs"])
-    try:
-        d = datetime.strptime(pt["date"], "%Y-%m-%d")
-        return int((d + timedelta(days=1)).timestamp() * 1000) - 1
-    except (ValueError, KeyError, TypeError):
-        return 0
+    return day_ms(pt.get("date"), end_of_day=True)
 
 
 def label_seed(label):
@@ -2431,7 +2450,8 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         merged = pts
         if len(fine) >= 2:
             fine.sort(key=lambda r: r["atMs"])
-            merged = [h for h in pts if snapshot_at_ms(h) < fine[0]["atMs"]] + fine
+            # Same clock as the segmentation; see queue_timeline().
+            merged = [h for h in pts if reading_at_ms(h) < fine[0]["atMs"]] + fine
         # The same two passes queue_timeline does, and the same two the
         # JavaScript port does. This built the chart in one pass with the flat
         # prior while the browser rebuilt it in two with the player's own
@@ -5573,12 +5593,14 @@ window.LpChart = (function () {
   // where a once-daily snapshot taken in the evening actually sat. Python
   // builds that from the local date; Date.parse on "YYYY-MM-DD" gives UTC
   // midnight, so the offset is applied here to land on the same instant.
+  // Date.UTC, not new Date(y, m, d): the local-time reading put this an hour
+  // off the server's for any reader outside UTC, which is what made the same
+  // history draw two different lines.
   function readingAt(pt) {
     if (pt.atMs) return pt.atMs;
     if (!pt.date) return 0;
     var parts = String(pt.date).split('-');
-    var d = new Date(+parts[0], +parts[1] - 1, +parts[2] + 1);
-    return d.getTime() - 1;
+    return Date.UTC(+parts[0], +parts[1] - 1, +parts[2] + 1) - 1;
   }
 
   function buildLpTimeline(soloPts, soloMatches, avgWin, avgLoss, seed) {
