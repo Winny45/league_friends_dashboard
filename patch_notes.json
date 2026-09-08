@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-09-07",
+    "title": "A game is worth what that player's games are worth",
+    "items": [
+      {
+        "type": "changed",
+        "text": "Per-game LP used a flat 20 as its starting point for everyone, so every step looked alike whoever played it. Each game is now worth what that player's wins and losses are actually worth, taken from their own record, with the remainder scattered so the segment still lands exactly on the measured rank. Winny's wins sit around 19 to 22, Neel's around 20 to 24, because that is what theirs are worth."
+      },
+      {
+        "type": "changed",
+        "text": "Which game absorbs a rounding remainder is chosen by the same seeded generator the projection line uses. It looks arbitrary, which it is, but it is the same arbitrary choice on every rebuild and in both the page and the browser's own redraw, so the graph does not shuffle underneath you."
+      },
+      {
+        "type": "changed",
+        "text": "MMR's recent window and the chart's zoomed view are both fifty games, sharing one constant."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-07",
     "title": "The seven-day trend always has a number now",
     "items": [
       {
