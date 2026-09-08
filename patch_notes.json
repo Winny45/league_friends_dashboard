@@ -10,6 +10,10 @@
       {
         "type": "changed",
         "text": "The two downloadable text files are written when the page is built, so their times stay UTC. They say so at the top now."
+      },
+      {
+        "type": "fixed",
+        "text": "Three more places where the browser rounded a half upwards and the page rounded it to the even neighbour, as Python does. One decides how often the LP chart labels its horizontal axis: with 135 games that works out at round(22.5), so the page numbered its games in twenty-twos and the browser in twenty-threes. Another is the winrate in the table under the chart, where a player sitting on exactly half a percent would have been a point apart. All of them go through the same rule now."
       }
     ]
   },
