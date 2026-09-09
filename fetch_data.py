@@ -627,6 +627,14 @@ def save_scrape_log(log):
     SCRAPE_LOG_PATH.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def day_of_ms(ms):
+    """The UTC day a timestamp falls in."""
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
 def day_end_ms(day_key):
     """The last millisecond of a YYYY-MM-DD day, in UTC.
 
@@ -670,7 +678,7 @@ def save_rank_readings(readings):
         json.dumps(readings, ensure_ascii=False), encoding="utf-8")
 
 
-def backfill_readings_from_history(readings, history):
+def backfill_readings_from_history(readings, history, today_key=None):
     """Carry rank_history.json into the readings log.
 
     The readings log is becoming the single record of rank, and it only goes
@@ -697,6 +705,20 @@ def backfill_readings_from_history(readings, history):
         elif kind == "hourly":
             r["kind"] = "legacy" if r.get("src") == "history" else "played"
 
+    # A day has one end. Runs before this skipped today left a legacy row an
+    # hour, all claiming to be the same day's last reading; only the last of
+    # them can be, so the rest go.
+    latest_legacy = {}
+    for r in readings:
+        if r.get("kind") != "legacy":
+            continue
+        key = (r["label"], r["queue"], day_of_ms(r.get("atMs")))
+        if key not in latest_legacy or r["atMs"] > latest_legacy[key]["atMs"]:
+            latest_legacy[key] = r
+    keep_legacy = {id(r) for r in latest_legacy.values()}
+    readings[:] = [r for r in readings
+                   if r.get("kind") != "legacy" or id(r) in keep_legacy]
+
     seen_daily = {(r["label"], r["queue"], r.get("day"))
                   for r in readings if r.get("kind") == "daily"}
     seen_at = {(r["label"], r["queue"], r["atMs"]) for r in readings}
@@ -708,6 +730,12 @@ def backfill_readings_from_history(readings, history):
         if not label or not queue or not day:
             continue
         if not h.get("tier"):
+            continue
+        # Today's row is still being written to. Its live half is re-stamped
+        # every run, so carrying it over would add a row an hour for ever and
+        # quietly turn this back into the heartbeat it is deliberately not.
+        # Today is the new rules' job anyway; this is only for finished days.
+        if today_key and day >= today_key:
             continue
         # A row written before the anchors carried a time has only its date,
         # and the dashboard already places those at the end of their day: that
@@ -1041,7 +1069,8 @@ def main():
     save_rank_history(rank_history)
 
     now_ms = int(datetime.now().timestamp() * 1000)
-    rank_readings = backfill_readings_from_history(load_rank_readings(), rank_history)
+    rank_readings = backfill_readings_from_history(load_rank_readings(), rank_history,
+                                                   today_key)
     rank_readings = record_rank_readings(rank_readings, results, now_ms, today_key)
     save_rank_readings(rank_readings)
     import collections as _c

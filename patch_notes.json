@@ -30,6 +30,10 @@
       {
         "type": "changed",
         "text": "Each row now says why it is there in its own terms: a daily anchor, or played. Rows from before this was one log keep the rule they were written under rather than being relabelled as something they were not, so a reading carried over from the old daily file says end of day rather than claiming somebody played."
+      },
+      {
+        "type": "fixed",
+        "text": "The step that carries the old daily file into the log was doing it for today as well, and today's row is re-stamped every run, so it added a row an hour to the file and would have turned the log back into the every-hour record it is deliberately not. It only carries finished days over now, and the duplicate rows the first couple of hours left behind are collapsed back to one per day."
       }
     ]
   },
