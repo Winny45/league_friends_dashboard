@@ -238,11 +238,26 @@ _ICON_CTX = {"version": None, "map": {}, "slugs": set(), "fold": {}}
 # meant changing five signatures to carry one list that never varies within a
 # render, which is what the other context globals here are for.
 _READINGS = []
+_READINGS_ALL = []
 
 
 def set_readings(readings):
-    global _READINGS
-    _READINGS = list(readings or [])
+    """Split the log into what the charts read and what the log file shows.
+
+    The whole log is one record now: a daily anchor per player per queue, an
+    hourly row wherever somebody played, and the old daily history folded in
+    behind them. The downloadable file shows all of it, which is the point of
+    having one record.
+
+    The charts still read the narrower set, because they are still built from
+    rank_history.json and would otherwise be handed the same measurements
+    twice under two names. Switching them over is a change to make on its own
+    and check on its own, not a thing that happens the moment a row appears.
+    """
+    global _READINGS, _READINGS_ALL
+    _READINGS_ALL = list(readings or [])
+    _READINGS = [r for r in _READINGS_ALL
+                 if r.get("kind") != "daily" and r.get("src") != "history"]
 
 
 def set_icon_context(version, icon_map):
@@ -3035,7 +3050,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
 
     table_rows = "".join(lp_row(e) for e in lp_events)
     lp_debug_text = build_lp_debug_text(lp_events, rank_history, tracking_since)
-    snapshot_text = build_snapshot_text(rank_history, _READINGS, tracking_since)
+    snapshot_text = build_snapshot_text(_READINGS_ALL, tracking_since)
 
     return f'''
     <div class="panel">
@@ -3081,52 +3096,64 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     </div>'''
 
 
-def build_snapshot_text(rank_history, readings, tracking_since):
+def build_snapshot_text(readings, tracking_since):
     """Every rank reading ever recorded, per player, newest first.
+
+    One log, one row per measurement. There used to be three sources in here
+    and the difference between them was an accident of the order they were
+    built in rather than anything about the data: a daily snapshot, the same
+    snapshot re-read later that day, and the per-refresh readings on top. They
+    are all the same act, which is looking up somebody's rank and writing down
+    what it said, so they are all one row shape now.
+
+    The reason column says why a row exists, which is the only thing that
+    actually differs. A daily row is the anchor for its day and is written
+    whether or not anything moved, because the daily chart and the seven-day
+    trend need a point on quiet days. A played row is written because that
+    player played that queue since their last reading, which is the only time
+    LP can have moved.
 
     The per-game file explains how LP was split between games. This one is the
     measurements themselves, which is what you check when you doubt the split:
-    if a reading here is wrong, everything derived from it is wrong too, and
-    that is worth being able to see on its own.
+    if a reading here is wrong, everything derived from it is wrong too.
     """
+    REASONS = {"daily": "daily anchor", "hourly": "played"}
+    QUEUE_NAMES = {"solo": "Ranked Solo/Duo", "flex": "Ranked Flex", "fives": "Ranked 5s"}
+
     lines = [
-        "League Friends Dashboard - rank and LP snapshots",
+        "League Friends Dashboard - rank readings",
         "Generated: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " (times below are UTC)",
         "Rank tracking began: " + str(tracking_since),
         "",
-        "Every reading taken of every player's rank, in all three ranked queues.",
-        "These are measured directly from Riot and are not derived from anything.",
-        "Daily rows are the snapshot kept for each day; hourly rows are the",
-        "per-refresh readings, kept for the recent window.",
+        "Every reading taken of every player's rank, in all three ranked queues,",
+        "measured directly from Riot and derived from nothing.",
+        "",
+        "A daily anchor is written once per player per queue per day, whether or",
+        "not anything moved. Everything else is written because that player",
+        "played that queue since their last reading, so the more somebody plays",
+        "the more rows they have, and a quiet night leaves a gap on purpose: a",
+        "rank that has not moved has nothing to record.",
         "",
     ]
 
-    QUEUE_NAMES = {"solo": "Ranked Solo/Duo", "flex": "Ranked Flex", "fives": "Ranked 5s"}
-    rows = []
-    for h in rank_history:
-        rows.append(("daily", h.get("label"), h.get("queue"),
-                     snapshot_at_ms(h), snapshot_rank(h, live=False)))
-        if h.get("liveTier"):
-            rows.append(("daily/live", h.get("label"), h.get("queue"),
-                         int(h["liveAtMs"]) if h.get("liveAtMs") else snapshot_at_ms(h),
-                         snapshot_rank(h, live=True)))
-    for r in (readings or []):
-        rows.append(("hourly", r.get("label"), r.get("queue"), int(r.get("atMs") or 0), r))
-
     by_player = {}
-    for kind, label, queue, ms, entry in rows:
-        by_player.setdefault(label or "?", []).append((ms, kind, queue, entry))
+    for r in (readings or []):
+        by_player.setdefault(r.get("label") or "?", []).append(r)
 
     total = 0
     for label in sorted(by_player):
-        entries = sorted(by_player[label], key=lambda x: -x[0])
-        lines += ["=" * 74, label, "=" * 74,
-                  f"{'taken':17} {'queue':17} {'rank':26} {'ladder LP':>9}  source"]
-        for ms, kind, queue, entry in entries:
+        entries = sorted(by_player[label], key=lambda r: -int(r.get("atMs") or 0))
+        lines += ["=" * 78, label, "=" * 78,
+                  f"{'taken':17} {'queue':17} {'rank':26} {'ladder LP':>9}  reason"]
+        for r in entries:
+            ms = int(r.get("atMs") or 0)
             when = datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M") if ms else "unknown"
-            lines.append(f"{when:17} {QUEUE_NAMES.get(queue, queue or '?'):17} "
-                         f"{html.unescape(rank_label(entry)):26} "
-                         f"{ladder_lp(entry):>9}  {kind}")
+            reason = REASONS.get(r.get("kind"), r.get("kind") or "reading")
+            if r.get("src") == "history":
+                reason += " (from the old daily file)"
+            lines.append(f"{when:17} {QUEUE_NAMES.get(r.get('queue'), r.get('queue') or '?'):17} "
+                         f"{html.unescape(rank_label(r)):26} "
+                         f"{ladder_lp(r):>9}  {reason}")
             total += 1
         lines.append("")
 

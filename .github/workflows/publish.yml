@@ -4,7 +4,8 @@
 # Two kinds of state have to survive between runs, and they are kept in
 # different places on purpose:
 #
-#   rank_history.json is irreplaceable. Riot does not expose past ranks, so
+#   rank_history.json and rank_readings.json are irreplaceable. Riot does not
+#   expose past ranks, so
 #   the whole Rank progress tab is built from snapshots this job has taken.
 #   It goes in a private repo, with real history, and it is tiny.
 #
@@ -32,8 +33,9 @@ on:
     # "an hour is missed only if all four triggers are dropped".
     #
     # The gate job below is what stops this being four times the work: it
-    # reads the live page and, on a scheduled run, stops here if that page is
-    # less than fifty-five minutes old.
+    # reads the live page and stops here unless the current clock hour has no
+    # build in it yet. The first trigger of each hour therefore does the work
+    # and the other three cost seconds.
     - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
@@ -98,11 +100,28 @@ jobs:
             exit 0
           fi
 
-          if [ "$age" -ge 3300 ]; then
+          # One build per clock hour, rather than one per fifty-five minutes.
+          #
+          # An age threshold drifts. The gate opened fifty-five minutes after
+          # the last build, the next quarter-hour tick picked it up, and a few
+          # minutes of run time were added on top, so each reading landed a
+          # little later than the one before and the whole series slid around
+          # the clock. Rank readings are the record of when someone's LP moved
+          # and they are easier to read against each other when they sit at a
+          # predictable time.
+          #
+          # Comparing hours instead pins it: the first trigger after the hour
+          # turns over does the work, every hour, at about two minutes past.
+          # Both sides in UTC, since the page carries an epoch and the runner
+          # is on UTC anyway.
+          built_hour="$(date -u -d "@$(( built / 1000 ))" +%Y%m%d%H)"
+          now_hour="$(date -u +%Y%m%d%H)"
+          if [ "$built_hour" != "$now_hour" ]; then
+            echo "Last build was in hour $built_hour, this is $now_hour; rebuilding."
             echo "go=true" >> "$GITHUB_OUTPUT"
           else
             echo "go=false" >> "$GITHUB_OUTPUT"
-            echo "Fresh enough; skipping this trigger."
+            echo "Already built this hour; skipping this trigger."
           fi
 
   publish:
@@ -195,7 +214,21 @@ jobs:
       - name: Bring the stored state into the working copy
         run: |
           cp .state/rank_history.json ./rank_history.json
-          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json \n                   rank_readings.json; do
+          # The readings log lives beside the history, not with the caches. It
+          # used to sit on the cache branch, which is force-pushed as an
+          # orphan commit every run because a rebuildable cache has no history
+          # worth keeping. This file is the opposite of rebuildable: Riot has
+          # no endpoint for a past rank, so a single bad write on a branch
+          # with no history would take the record with it.
+          if [ -f .state/rank_readings.json ]; then
+            cp .state/rank_readings.json ./rank_readings.json
+          elif [ -f .cache/rank_readings.json ]; then
+            # First run after the move: take the last copy off the cache
+            # branch so nothing recorded there is lost.
+            echo "Taking rank_readings.json off the cache branch for the last time."
+            cp .cache/rank_readings.json ./rank_readings.json
+          fi
+          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json; do
             if [ -f ".cache/$f" ]; then cp ".cache/$f" "./$f"; fi
           done
           ls -l *.json
@@ -265,7 +298,7 @@ jobs:
       - name: Save the fetch caches
         if: always()
         run: |
-          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json \n                   rank_readings.json; do
+          for f in matches_cache.json scrape_log.json champions_cache.json key_state.json; do
             if [ -f "$f" ]; then cp "$f" ".cache/$f"; fi
           done
           cd .cache
@@ -287,18 +320,23 @@ jobs:
 
       # Last, so a failed fetch or a failed deploy leaves the stored history
       # exactly as it was.
-      - name: Save the rank history
+      - name: Save the rank history and readings
         run: |
           cp rank_history.json .state/rank_history.json
+          # Guarded: a run that never reached the fetch has nothing to save,
+          # and should leave the stored log alone rather than fail here.
+          if [ -f rank_readings.json ]; then
+            cp rank_readings.json .state/rank_readings.json
+          fi
           cd .state
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Only this one file, by name. A bare `git add -A` here would be the
+          # Only these files, by name. A bare `git add -A` here would be the
           # one line that could commit fetched player data by accident.
-          git add rank_history.json
+          git add rank_history.json rank_readings.json
           if git diff --cached --quiet; then
-            echo "No new rank snapshots."
+            echo "No new rank readings."
           else
-            git commit -m "Rank snapshots $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git commit -m "Rank readings $(date -u '+%Y-%m-%d %H:%M UTC')"
             git push
           fi
