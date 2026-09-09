@@ -23,7 +23,7 @@ import time
 import urllib.request
 import urllib.error
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Riot IDs can contain characters outside the Windows console's default
 # codepage (e.g. Turkish dotless-i in some display names) — without this,
@@ -92,7 +92,17 @@ RANK_READINGS_PATH = Path("rank_readings.json")
 # Kept for three weeks, which covers the seven day trend and the recent part
 # of the per-game chart with room to spare. Older readings collapse to the
 # daily snapshots, which are kept forever.
-RANK_READINGS_KEEP_DAYS = 21
+# As long as the daily history, because these are becoming the whole record
+# rather than a recent detail on top of it. Rows are only written when someone
+# plays, plus one anchor per player per day, so a season is a few thousand.
+RANK_READINGS_KEEP_DAYS = RANK_HISTORY_KEEP_DAYS
+
+# A match's queue name back to the key ranks are stored under.
+QUEUE_KEY_BY_MATCH_NAME = {
+    "Ranked Solo/Duo": "solo",
+    "Ranked Flex": "flex",
+    "Ranked 5s": "fives",
+}
 
 # Kept in sync with the identically-named constants/logic in
 # generate_dashboard.py's tier_score() — duplicated here (rather than
@@ -617,6 +627,20 @@ def save_scrape_log(log):
     SCRAPE_LOG_PATH.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def day_end_ms(day_key):
+    """The last millisecond of a YYYY-MM-DD day, in UTC.
+
+    UTC because that is what the day keys mean: snapshots roll over at
+    midnight GMT wherever this happens to run. Reading them in local time is
+    what put the page and the browser an hour apart once before.
+    """
+    try:
+        d = datetime.strptime(str(day_key), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return 0
+    return int((d + timedelta(days=1)).timestamp() * 1000) - 1
+
+
 def load_rank_history():
     """Riot's API only ever returns *current* rank — there's no historical
     endpoint — so the only way to chart rank over time is to snapshot it
@@ -646,35 +670,128 @@ def save_rank_readings(readings):
         json.dumps(readings, ensure_ascii=False), encoding="utf-8")
 
 
-def record_rank_readings(readings, results, now_ms):
-    """Append this refresh's reading for every friend and queue.
+def backfill_readings_from_history(readings, history):
+    """Carry rank_history.json into the readings log.
 
-    Deduplicated on (player, queue, rank, LP): a reading identical to the one
-    before it says only that nothing happened since, and keeping it would
-    triple the file to record that nobody played overnight. What matters for
-    splitting LP is where the value changed.
+    The readings log is becoming the single record of rank, and it only goes
+    back to when per-refresh readings were added. Everything before that lives
+    in the daily history, which cannot be re-fetched: Riot has no endpoint for
+    a past rank, so a day not written down is gone. This copies it across.
+
+    Each history row holds two measurements. The frozen one is that day's
+    anchor, taken on the first run after midnight. The live one is the last
+    time that rank was re-read during the day, which is a real reading in its
+    own right and is kept as one.
+
+    Idempotent, keyed on the day for anchors and on the timestamp for the
+    rest, so it can run on every fetch and only ever adds what is missing.
     """
-    latest = {}
+    seen_daily = {(r["label"], r["queue"], r.get("day"))
+                  for r in readings if r.get("kind") == "daily"}
+    seen_at = {(r["label"], r["queue"], r["atMs"]) for r in readings}
+    added = 0
+
+    for h in history:
+        label, queue = h.get("label"), h.get("queue")
+        day = h.get("date")
+        if not label or not queue or not day:
+            continue
+        if not h.get("tier"):
+            continue
+        # A row written before the anchors carried a time has only its date,
+        # and the dashboard already places those at the end of their day: that
+        # is where a once-daily reading taken in the evening actually sat.
+        # Copying them to the same instant means switching the charts over to
+        # this log later moves nothing that was already drawn.
+        at_ms = int(h["atMs"]) if h.get("atMs") else day_end_ms(day)
+        if (label, queue, day) not in seen_daily:
+            readings.append({"label": label, "queue": queue, "atMs": at_ms,
+                             "kind": "daily", "day": day, "src": "history",
+                             "tier": h["tier"],
+                             "rank": h.get("rank"),
+                             "leaguePoints": h.get("leaguePoints", 0)})
+            seen_daily.add((label, queue, day))
+            seen_at.add((label, queue, at_ms))
+            added += 1
+
+        # The day's last re-reading, where it says something the anchor did not.
+        live_at = int(h["liveAtMs"]) if h.get("liveAtMs") else None
+        if (h.get("liveTier") and live_at and live_at != at_ms
+                and (label, queue, live_at) not in seen_at):
+            readings.append({"label": label, "queue": queue, "atMs": live_at,
+                             "kind": "hourly", "src": "history",
+                             "tier": h["liveTier"],
+                             "rank": h.get("liveRank"),
+                             "leaguePoints": h.get("liveLeaguePoints", 0)})
+            seen_at.add((label, queue, live_at))
+            added += 1
+
+    if added:
+        print(f"  carried {added} reading(s) over from the daily history")
+    return readings
+
+
+def queues_played_since(result, latest):
+    """Which of a player's ranked queues have seen a game since their last
+    reading in that queue."""
+    played = set()
+    for m in result.get("seasonMatches", []):
+        if m.get("remake"):
+            continue
+        queue_key = QUEUE_KEY_BY_MATCH_NAME.get(m.get("queue"))
+        if not queue_key:
+            continue
+        prev = latest.get((result["label"], queue_key))
+        since = prev["atMs"] if prev else 0
+        if (m.get("gameStartMs") or 0) > since:
+            played.add(queue_key)
+    return played
+
+
+def record_rank_readings(readings, results, now_ms, today_key):
+    """The one record of where everyone's rank has been.
+
+    Two kinds of row, and the difference is what each is for.
+
+    A daily row is an anchor: one per player per queue per UTC day, written on
+    the first run after midnight whether or not anything moved. The daily
+    chart and the seven-day trend are built from these, so they have to exist
+    on the days nobody played. Without that, a quiet week leaves nothing to
+    compare and the trend has no answer.
+
+    An hourly row is written only when that player actually played that queue
+    since their own last reading. A row saying a rank is exactly what it was
+    an hour ago records nothing: LP only moves when somebody plays, so that is
+    when it is worth writing one down. The busiest player ends up with the
+    most rows, which is the shape this data should have.
+    """
+    latest, has_daily_today = {}, set()
     for r in readings:
         key = (r["label"], r["queue"])
+        if r.get("kind") == "daily" and r.get("day") == today_key:
+            has_daily_today.add(key)
         if key not in latest or r["atMs"] > latest[key]["atMs"]:
             latest[key] = r
 
     for r in results:
         ranked = r.get("ranked") or {}
+        played = queues_played_since(r, latest)
         for queue_key in ("solo", "flex", "fives"):
             entry = ranked.get(queue_key)
             if not entry or not entry.get("tier"):
                 continue
+            # The anchor comes first and is unconditional. After that, only a
+            # player who has played earns a row.
+            daily = (r["label"], queue_key) not in has_daily_today
+            if not daily and queue_key not in played:
+                continue
             row = {"label": r["label"], "queue": queue_key, "atMs": int(now_ms),
+                   "kind": "daily" if daily else "hourly",
                    "tier": entry["tier"], "rank": entry.get("rank"),
                    "leaguePoints": entry.get("leaguePoints", 0)}
-            prev = latest.get((r["label"], queue_key))
-            same = (prev and prev.get("tier") == row["tier"]
-                    and prev.get("rank") == row["rank"]
-                    and prev.get("leaguePoints") == row["leaguePoints"])
-            if same:
-                continue
+            if daily:
+                row["day"] = today_key
+                has_daily_today.add((r["label"], queue_key))
             readings.append(row)
 
     cutoff_ms = now_ms - RANK_READINGS_KEEP_DAYS * 86400 * 1000
@@ -913,10 +1030,13 @@ def main():
     save_rank_history(rank_history)
 
     now_ms = int(datetime.now().timestamp() * 1000)
-    rank_readings = record_rank_readings(load_rank_readings(), results, now_ms)
+    rank_readings = backfill_readings_from_history(load_rank_readings(), rank_history)
+    rank_readings = record_rank_readings(rank_readings, results, now_ms, today_key)
     save_rank_readings(rank_readings)
+    dailies = sum(1 for r in rank_readings if r.get("kind") == "daily")
     print(f"  {len(rank_readings)} rank readings kept "
-          f"(last {RANK_READINGS_KEEP_DAYS} days, changes only)")
+          f"({dailies} daily anchors, {len(rank_readings) - dailies} from games played, "
+          f"last {RANK_READINGS_KEEP_DAYS} days)")
     tracking_since = min((h["date"] for h in rank_history), default=today_key)
     chart_cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     rank_history_30d = [h for h in rank_history if h["date"] >= chart_cutoff]

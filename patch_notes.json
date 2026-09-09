@@ -1,5 +1,35 @@
 [
   {
+    "date": "2026-09-09",
+    "title": "One record of rank, taken on the hour",
+    "items": [
+      {
+        "type": "changed",
+        "text": "The snapshots file had three kinds of row in it: a daily snapshot, the same snapshot re-read later that day, and the per-refresh readings on top. The difference between them was an accident of the order they were built in, not anything about the data. They are all the same act, which is looking up somebody's rank and writing down what it said, so the file is now one log with one row shape."
+      },
+      {
+        "type": "changed",
+        "text": "Each row says why it exists, which is the only thing that really differed. A daily anchor is written once per player per queue per day whether or not anything moved, because the daily chart and the seven-day trend need a point on quiet days. Everything else is written because that player played that queue since their last reading."
+      },
+      {
+        "type": "changed",
+        "text": "That last part is new: a reading used to be kept whenever the number changed, and is now kept when somebody actually played. It is the same idea told properly, since LP only moves when a game is played, and it means the busiest player has the most rows. Gaps are still gaps on purpose. A rank that has not moved overnight has nothing to record, and the file says so rather than repeating itself two hundred times."
+      },
+      {
+        "type": "changed",
+        "text": "Readings are now taken on the hour instead of drifting. The rebuild used to happen once the published page was fifty-five minutes old, so each reading landed a little later than the last and the series slid around the clock, ending up at odd times like 32 minutes past. It now happens on the first trigger after the hour turns over, which is about two minutes past, every hour."
+      },
+      {
+        "type": "fixed",
+        "text": "The readings log was being kept with the rebuildable caches, on a branch that is thrown away and rewritten from scratch every run. It is not rebuildable: Riot has no endpoint for a past rank, so one bad write there would have taken the record with it. It now lives beside the rank history, where every version is kept."
+      },
+      {
+        "type": "fixed",
+        "text": "The old daily history is copied into the log so nothing from before per-refresh readings existed is lost, placed at exactly the times the charts already read those days at."
+      }
+    ]
+  },
+  {
     "date": "2026-09-08",
     "title": "Level on LP means level in the table",
     "items": [
