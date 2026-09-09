@@ -26,6 +26,10 @@
       {
         "type": "fixed",
         "text": "The old daily history is copied into the log so nothing from before per-refresh readings existed is lost, placed at exactly the times the charts already read those days at."
+      },
+      {
+        "type": "changed",
+        "text": "Each row now says why it is there in its own terms: a daily anchor, or played. Rows from before this was one log keep the rule they were written under rather than being relabelled as something they were not, so a reading carried over from the old daily file says end of day rather than claiming somebody played."
       }
     ]
   },

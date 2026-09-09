@@ -3117,7 +3117,15 @@ def build_snapshot_text(readings, tracking_since):
     measurements themselves, which is what you check when you doubt the split:
     if a reading here is wrong, everything derived from it is wrong too.
     """
-    REASONS = {"daily": "daily anchor", "hourly": "played"}
+    # What each row is doing here. The last two are historical: rows written
+    # before this became one log, kept under the rule they were written by
+    # rather than relabelled as something they were not.
+    REASONS = {
+        "daily": "daily anchor",
+        "played": "played",
+        "changed": "LP changed (older rule)",
+        "legacy": "end of day (older rule)",
+    }
     QUEUE_NAMES = {"solo": "Ranked Solo/Duo", "flex": "Ranked Flex", "fives": "Ranked 5s"}
 
     lines = [
@@ -3134,6 +3142,9 @@ def build_snapshot_text(readings, tracking_since):
         "the more rows they have, and a quiet night leaves a gap on purpose: a",
         "rank that has not moved has nothing to record.",
         "",
+        "Rows marked (older rule) predate this being one log. They are real",
+        "readings, kept under the rule they were written by.",
+        "",
     ]
 
     by_player = {}
@@ -3149,8 +3160,6 @@ def build_snapshot_text(readings, tracking_since):
             ms = int(r.get("atMs") or 0)
             when = datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M") if ms else "unknown"
             reason = REASONS.get(r.get("kind"), r.get("kind") or "reading")
-            if r.get("src") == "history":
-                reason += " (from the old daily file)"
             lines.append(f"{when:17} {QUEUE_NAMES.get(r.get('queue'), r.get('queue') or '?'):17} "
                          f"{html.unescape(rank_label(r)):26} "
                          f"{ladder_lp(r):>9}  {reason}")

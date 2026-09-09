@@ -686,6 +686,17 @@ def backfill_readings_from_history(readings, history):
     Idempotent, keyed on the day for anchors and on the timestamp for the
     rest, so it can run on every fetch and only ever adds what is missing.
     """
+    # Name the rows that predate the reason column, so nothing in the log has
+    # to be guessed at. Untagged rows were kept whenever the value changed.
+    # "hourly" was a first pass at this that said when a row was written
+    # rather than why, which is the thing worth knowing.
+    for r in readings:
+        kind = r.get("kind")
+        if not kind:
+            r["kind"] = "changed"
+        elif kind == "hourly":
+            r["kind"] = "legacy" if r.get("src") == "history" else "played"
+
     seen_daily = {(r["label"], r["queue"], r.get("day"))
                   for r in readings if r.get("kind") == "daily"}
     seen_at = {(r["label"], r["queue"], r["atMs"]) for r in readings}
@@ -719,7 +730,7 @@ def backfill_readings_from_history(readings, history):
         if (h.get("liveTier") and live_at and live_at != at_ms
                 and (label, queue, live_at) not in seen_at):
             readings.append({"label": label, "queue": queue, "atMs": live_at,
-                             "kind": "hourly", "src": "history",
+                             "kind": "legacy", "src": "history",
                              "tier": h["liveTier"],
                              "rank": h.get("liveRank"),
                              "leaguePoints": h.get("liveLeaguePoints", 0)})
@@ -786,7 +797,7 @@ def record_rank_readings(readings, results, now_ms, today_key):
             if not daily and queue_key not in played:
                 continue
             row = {"label": r["label"], "queue": queue_key, "atMs": int(now_ms),
-                   "kind": "daily" if daily else "hourly",
+                   "kind": "daily" if daily else "played",
                    "tier": entry["tier"], "rank": entry.get("rank"),
                    "leaguePoints": entry.get("leaguePoints", 0)}
             if daily:
@@ -1033,10 +1044,10 @@ def main():
     rank_readings = backfill_readings_from_history(load_rank_readings(), rank_history)
     rank_readings = record_rank_readings(rank_readings, results, now_ms, today_key)
     save_rank_readings(rank_readings)
-    dailies = sum(1 for r in rank_readings if r.get("kind") == "daily")
-    print(f"  {len(rank_readings)} rank readings kept "
-          f"({dailies} daily anchors, {len(rank_readings) - dailies} from games played, "
-          f"last {RANK_READINGS_KEEP_DAYS} days)")
+    import collections as _c
+    kinds = _c.Counter(r.get("kind") for r in rank_readings)
+    print(f"  {len(rank_readings)} rank readings kept (last {RANK_READINGS_KEEP_DAYS} days): "
+          + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())))
     tracking_since = min((h["date"] for h in rank_history), default=today_key)
     chart_cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     rank_history_30d = [h for h in rank_history if h["date"] >= chart_cutoff]
