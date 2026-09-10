@@ -242,22 +242,17 @@ _READINGS_ALL = []
 
 
 def set_readings(readings):
-    """Split the log into what the charts read and what the log file shows.
+    """The one record of rank, read whole.
 
-    The whole log is one record now: a daily anchor per player per queue, an
-    hourly row wherever somebody played, and the old daily history folded in
-    behind them. The downloadable file shows all of it, which is the point of
-    having one record.
-
-    The charts still read the narrower set, because they are still built from
-    rank_history.json and would otherwise be handed the same measurements
-    twice under two names. Switching them over is a change to make on its own
-    and check on its own, not a thing that happens the moment a row appears.
+    A daily anchor per player per queue, a row wherever somebody played, and
+    the old daily history folded in behind them. Everything on the page is
+    built from this now, so there is nothing to hold back: every row is a
+    measurement of somebody's rank at a known time, whatever caused it to be
+    written down, and the charts want all of them.
     """
     global _READINGS, _READINGS_ALL
     _READINGS_ALL = list(readings or [])
-    _READINGS = [r for r in _READINGS_ALL
-                 if r.get("kind") != "daily" and r.get("src") != "history"]
+    _READINGS = _READINGS_ALL
 
 
 def set_icon_context(version, icon_map):
@@ -2157,6 +2152,19 @@ def end_label_groups(label_entries, prefix, gutter_x=None):
 # point where a snapshot exists is exact; the intermediate points are an
 # estimate, and the UI says so.
 # ---------------------------------------------------------------------------
+
+def ms_to_day(ms):
+    """The UTC day a timestamp falls in.
+
+    UTC, because that is the day boundary everything here is keyed on: a
+    reading taken at 23:30 in London belongs to the day it was taken in GMT,
+    which is the day the anchor for it was written under.
+    """
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return ""
+
 
 def day_ms(date_key, end_of_day=False):
     """A YYYY-MM-DD string as a timestamp, read as UTC.
@@ -6492,11 +6500,96 @@ window.LpChart = (function () {
 '''
 
 
+def daily_history_from_readings(readings):
+    """The daily history, rebuilt from the readings log.
+
+    rank_history.json used to be a file of its own, holding one row per player
+    per queue per day: the rank at the start of the day, plus the last time it
+    was re-read before the day was out. Both of those are readings, and the
+    log has them, so the file was a second copy of a subset of one record.
+
+    This puts the same rows back together out of the log, in the same shape,
+    so the daily chart, the seven-day trend and everything else that reads a
+    day at a time carry on unchanged. Nothing downstream had to learn about
+    any of this.
+
+    The anchor is the row written as that day's anchor, or failing that the
+    first reading of the day, which is the same thing for every day recorded
+    before anchors were named. The live half is the last reading of the day,
+    left off when it is the anchor itself.
+    """
+    by_day = {}
+    for r in readings or []:
+        if not r.get("tier"):
+            continue
+        day = r.get("day") or ms_to_day(r.get("atMs"))
+        if not day:
+            continue
+        by_day.setdefault((r.get("label"), r.get("queue"), day), []).append(r)
+
+    history = []
+    for (label, queue, day), rows in by_day.items():
+        rows.sort(key=lambda r: int(r.get("atMs") or 0))
+        anchor = next((r for r in rows if r.get("kind") == "daily"), rows[0])
+        last = rows[-1]
+        row = {"date": day, "label": label, "queue": queue,
+               "atMs": int(anchor.get("atMs") or 0), "tier": anchor["tier"],
+               "rank": anchor.get("rank"),
+               "leaguePoints": anchor.get("leaguePoints", 0)}
+        if last is not anchor:
+            row.update(liveTier=last["tier"], liveRank=last.get("rank"),
+                       liveLeaguePoints=last.get("leaguePoints", 0),
+                       liveAtMs=int(last.get("atMs") or 0))
+        history.append(row)
+
+    history.sort(key=lambda h: (h["date"], h["label"] or "", h["queue"] or ""))
+    return history
+
+
+def compare_derived_history(derived, stored):
+    """Say whether the derived history matches the file it replaces.
+
+    Printed at build time while both still exist. The daily file is the one
+    thing here Riot cannot re-serve, so it keeps being written until this has
+    agreed with it for long enough to believe, and this is what says so.
+    """
+    def key(h):
+        return (h.get("label"), h.get("queue"), h.get("date"))
+
+    def value(h):
+        return (h.get("tier"), h.get("rank"), h.get("leaguePoints", 0))
+
+    d = {key(h): value(h) for h in derived}
+    st = {key(h): value(h) for h in stored}
+    if not st:
+        print("  no stored daily history to compare against")
+        return
+    missing = sorted(set(st) - set(d))
+    differing = sorted(k for k in set(st) & set(d) if st[k] != d[k])
+    extra = sorted(set(d) - set(st))
+    if not missing and not differing:
+        print(f"  daily history derived from readings matches the stored file "
+              f"on all {len(st)} of its rows ({len(extra)} extra rows the file "
+              f"had trimmed)")
+        return
+    print(f"  ! derived daily history disagrees with the stored file: "
+          f"{len(missing)} missing, {len(differing)} differing")
+    for k in (missing + differing)[:8]:
+        print(f"    {k}: stored={st.get(k)} derived={d.get(k)}")
+
+
 def build_html(data):
     friends = data.get("friends", [])
     friends_sorted = sorted(friends, key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)
     now = datetime.now()
-    rank_history = data.get("rankHistory", [])
+    # The readings log is the record; the daily history is a view of it. The
+    # stored file is still written, and still compared against, until this has
+    # been right for long enough to delete the writer.
+    stored_history = data.get("rankHistory", [])
+    readings = data.get("rankReadings") or []
+    rank_history = daily_history_from_readings(readings) if readings else stored_history
+    if readings:
+        compare_derived_history(rank_history, stored_history)
     # Read before the cards now: they price a win and a loss from these
     # snapshots, and have to say which window that is.
     tracking_since = data.get("rankTrackingSince", "recently")
