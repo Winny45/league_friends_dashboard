@@ -1,5 +1,23 @@
 [
   {
+    "date": "2026-09-10",
+    "title": "Everything reads from the one log now",
+    "items": [
+      {
+        "type": "changed",
+        "text": "The daily chart, the seven-day trend and every rank figure on the page are built from the readings log rather than from the separate daily file. The daily view of it is worked out from the log when the page is built: a day's anchor is the reading written as its anchor, and the day's last reading is the other half, which is exactly what the old file held. Nothing on the page had to learn about any of this, and nothing about it moved."
+      },
+      {
+        "type": "changed",
+        "text": "The LP per game chart now uses every reading in the log, including the end-of-day ones carried over from the old file. Those are real measurements of somebody's rank at a known time, and each one is another point where the graph knows what the rank actually was rather than sharing one measured change between more games. Expect slightly different per-game numbers on the older stretches, and better ones."
+      },
+      {
+        "type": "changed",
+        "text": "The old daily file is still written, and the build compares what it derives against it every time and says whether they agree. It is the one thing here Riot cannot re-serve, so it keeps being written until that comparison has been right for long enough to believe. Nothing reads it any more."
+      }
+    ]
+  },
+  {
     "date": "2026-09-09",
     "title": "One record of rank, taken on the hour",
     "items": [
