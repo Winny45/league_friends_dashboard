@@ -2339,14 +2339,35 @@ def label_seed(label):
     return n or 1
 
 
+def match_end_ms(m):
+    """When a game finished, which is when its LP moved.
+
+    Segments used to be cut on when a game started, and a game lasts half an
+    hour. A game beginning at 16:33 and ending at 17:04 had its LP counted
+    against the reading taken at 17:02, which could not contain it, while the
+    reading at 18:02, which did, was made to answer for games that started
+    after it. Kirish's wins came out at +6 and +7 for that reason, with his
+    losses paying for them.
+
+    Falls back to the start for a record with no duration, which is what the
+    oldest cached matches look like. That is the behaviour those rows had
+    before, so nothing about them changes.
+    """
+    start = m.get("gameStartMs") or 0
+    minutes = m.get("durationMin")
+    if not minutes:
+        return start
+    return start + int(float(minutes) * 60000)
+
+
 def segment_games(pts, played):
     """The games that fall between each consecutive pair of readings."""
     segs, i = [], 0
     for prev, cur in zip(pts, pts[1:]):
         lo, hi = reading_at_ms(prev), reading_at_ms(cur)
         seg = []
-        while i < len(played) and played[i]["gameStartMs"] <= hi:
-            if played[i]["gameStartMs"] > lo:
+        while i < len(played) and match_end_ms(played[i]) <= hi:
+            if match_end_ms(played[i]) > lo:
                 seg.append(played[i])
             i += 1
         segs.append(seg)
@@ -2411,8 +2432,10 @@ def build_lp_timeline(solo_pts, solo_matches, avg_win=None, avg_loss=None, seed=
         return []
 
     pts = sorted(solo_pts, key=reading_at_ms)
+    # Ordered by when each game finished, because that is the order their LP
+    # arrived in and the order the single walk below relies on.
     played = sorted((m for m in solo_matches if m.get("gameStartMs")),
-                    key=lambda m: m["gameStartMs"])
+                    key=match_end_ms)
     pts = drop_stale_readings(pts, played)
     if len(pts) < 2:
         return []
@@ -2424,8 +2447,8 @@ def build_lp_timeline(solo_pts, solo_matches, avg_win=None, avg_loss=None, seed=
     for prev, cur in zip(pts, pts[1:]):
         lo, hi = reading_at_ms(prev), reading_at_ms(cur)
         seg = []
-        while i < len(played) and played[i]["gameStartMs"] <= hi:
-            if played[i]["gameStartMs"] > lo:
+        while i < len(played) and match_end_ms(played[i]) <= hi:
+            if match_end_ms(played[i]) > lo:
                 seg.append(played[i])
             i += 1
         if not seg:
@@ -2983,8 +3006,13 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                      "leaguePoints": h.get("leaguePoints")}
                     for h in solo_history_by_label[f["label"]]
                 ],
+                # endMs is worked out here rather than in the browser so both
+                # sides cut their segments on the very same instant. Deriving
+                # it twice from a fractional number of minutes is how the two
+                # renders end up a millisecond, and then a whole game, apart.
                 "matches": [
                     {"dateKey": m.get("dateKey"), "gameStartMs": m.get("gameStartMs"),
+                     "endMs": match_end_ms(m),
                      "win": bool(m.get("win")), "champion": m.get("champion"),
                      "matchId": m.get("matchId")}
                     for m in f.get("seasonMatches", []) if m.get("queue") == "Ranked Solo/Duo"
@@ -5776,13 +5804,18 @@ window.LpChart = (function () {
     return Date.UTC(+parts[0], +parts[1] - 1, +parts[2] + 1) - 1;
   }
 
-  // Port of segment_games().
+  // Port of match_end_ms(). The generator ships the instant so neither side
+  // has to work it out from a fractional number of minutes and disagree.
+  function matchEnd(m) { return m.endMs || m.gameStartMs || 0; }
+
+  // Port of segment_games(). Cut on when a game finished: that is when its LP
+  // moved, and a game lasts half an hour.
   function segmentGames(pts, played) {
     var segs = [], i = 0;
     for (var k = 0; k + 1 < pts.length; k++) {
       var lo = readingAt(pts[k]), hi = readingAt(pts[k + 1]), seg = [];
-      while (i < played.length && played[i].gameStartMs <= hi) {
-        if (played[i].gameStartMs > lo) seg.push(played[i]);
+      while (i < played.length && matchEnd(played[i]) <= hi) {
+        if (matchEnd(played[i]) > lo) seg.push(played[i]);
         i++;
       }
       segs.push(seg);
@@ -5822,7 +5855,7 @@ window.LpChart = (function () {
     if (soloPts.length < 2) return [];
     var pts = soloPts.slice().sort(function (a, b) { return readingAt(a) - readingAt(b); });
     var played = soloMatches.filter(function (m) { return m.gameStartMs; })
-      .sort(function (a, b) { return a.gameStartMs - b.gameStartMs; });
+      .sort(function (a, b) { return matchEnd(a) - matchEnd(b); });
     pts = dropStaleReadings(pts, played);
     if (pts.length < 2) return [];
 
@@ -5832,8 +5865,8 @@ window.LpChart = (function () {
       var prev = pts[k], cur = pts[k + 1];
       var lo = readingAt(prev), hi = readingAt(cur);
       var seg = [];
-      while (i < played.length && played[i].gameStartMs <= hi) {
-        if (played[i].gameStartMs > lo) seg.push(played[i]);
+      while (i < played.length && matchEnd(played[i]) <= hi) {
+        if (matchEnd(played[i]) > lo) seg.push(played[i]);
         i++;
       }
       if (!seg.length) continue;

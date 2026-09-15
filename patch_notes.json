@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-09-15",
+    "title": "A game belongs to the hour it finished in",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Per-game LP was being shared out against the wrong readings. Games were filed by when they started, and a game lasts half an hour, so one beginning at 16:33 and ending at 17:04 was counted against the reading taken at 17:02, which could not possibly contain it. Its LP then landed on whichever games came next. That is why some wins read +6 and +7 while the losses around them paid for them."
+      },
+      {
+        "type": "changed",
+        "text": "Games are filed by when they finished, which is when LP actually moves. Kirish's run of wins on 14 September reads +20 each now instead of +6, +7 and +6, and his two losses before them are -21 rather than -10 and -11. Across the whole season this takes the games sitting in a stretch that moved less than half of what it should from 28 down to 3."
+      },
+      {
+        "type": "changed",
+        "text": "A game that finished after the most recent reading waits for the reading that includes it, rather than being given a made-up value now. It appears on the next refresh with its real number."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-15",
     "title": "Readings the games contradict are no longer believed",
     "items": [
       {
