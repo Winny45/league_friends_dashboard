@@ -1,5 +1,27 @@
 [
   {
+    "date": "2026-09-15",
+    "title": "Readings the games contradict are no longer believed",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Some games were worth 0 LP and the ones after them were worth double. Four of Brett's losses on 15 September read 0, 0, -34 and -34 when every one of them was about -17. The reading taken between them said his LP was unchanged after two defeats, which cannot be true of two defeats: one game was still being played and the other had finished minutes earlier than Riot's ranked entry had noticed. The chart treated that reading as measured fact and charged the next two games for it."
+      },
+      {
+        "type": "fixed",
+        "text": "The games now get a say. Wins raise LP and losses lower it, always, so a run of nothing but wins that did not gain, or nothing but losses that did not lose, has a boundary that had not caught up, and it is dropped. The segment runs on to the next reading that the games do not contradict. Nothing is invented: every reading left is still a measurement, there is just one fewer of them. Brett's four losses now read -17 each and land exactly on the rank he was measured at."
+      },
+      {
+        "type": "changed",
+        "text": "A reading is also no longer taken while a game is still settling. If somebody has a game in progress, or one that finished in the last ten minutes, that queue is skipped for the hour and picked up on the next one. Nothing is lost by waiting, and the reading is worth having only once it can answer where they actually stand."
+      },
+      {
+        "type": "changed",
+        "text": "This came in with the change to recording a reading whenever somebody played. The rule before it kept a reading only when the number moved, which threw these away by accident. Keeping them is right, since they are real measurements, and the fix belongs where the chart decides what a measurement means rather than in what gets written down."
+      }
+    ]
+  },
+  {
     "date": "2026-09-10",
     "title": "Everything reads from the one log now",
     "items": [

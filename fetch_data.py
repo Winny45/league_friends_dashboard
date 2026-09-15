@@ -770,21 +770,44 @@ def backfill_readings_from_history(readings, history, today_key=None):
     return readings
 
 
-def queues_played_since(result, latest):
-    """Which of a player's ranked queues have seen a game since their last
-    reading in that queue."""
-    played = set()
+# How long after a game ends before its LP can be relied on. Riot's ranked
+# entry does not update the moment a game does, and a reading taken in that
+# window is a true record of what Riot said and a false record of where the
+# player stands. Reading an hour later costs nothing; reading too early puts
+# a boundary in the LP chart that the games themselves contradict.
+RANK_READING_SETTLE_MINUTES = 10
+
+
+def queues_played_since(result, latest, now_ms):
+    """Which queues have a new game whose LP has had time to land.
+
+    A queue with a game still being played, or only just finished, is left out
+    however much was played in it. The point of a reading is to say where
+    somebody stands, and mid-game there is no answer to that yet: the entry
+    still holds the LP from before. Recording it anyway told the chart that
+    two defeats had cost nothing, which it then made up for by charging the
+    next two games double.
+
+    Skipping is safe because nothing is lost. The games stay newer than the
+    last stored reading, so the next hour writes the reading instead.
+    """
+    played, unsettled = set(), set()
+    settle_ms = RANK_READING_SETTLE_MINUTES * 60 * 1000
     for m in result.get("seasonMatches", []):
         if m.get("remake"):
             continue
         queue_key = QUEUE_KEY_BY_MATCH_NAME.get(m.get("queue"))
         if not queue_key:
             continue
+        start = m.get("gameStartMs") or 0
+        end = start + int((m.get("durationMin") or 0) * 60 * 1000)
+        if end + settle_ms > now_ms:
+            unsettled.add(queue_key)
         prev = latest.get((result["label"], queue_key))
         since = prev["atMs"] if prev else 0
-        if (m.get("gameStartMs") or 0) > since:
+        if start > since:
             played.add(queue_key)
-    return played
+    return played - unsettled
 
 
 def record_rank_readings(readings, results, now_ms, today_key):
@@ -814,7 +837,7 @@ def record_rank_readings(readings, results, now_ms, today_key):
 
     for r in results:
         ranked = r.get("ranked") or {}
-        played = queues_played_since(r, latest)
+        played = queues_played_since(r, latest, now_ms)
         for queue_key in ("solo", "flex", "fives"):
             entry = ranked.get(queue_key)
             if not entry or not entry.get("tier"):

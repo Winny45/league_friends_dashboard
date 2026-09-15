@@ -2339,6 +2339,60 @@ def label_seed(label):
     return n or 1
 
 
+def segment_games(pts, played):
+    """The games that fall between each consecutive pair of readings."""
+    segs, i = [], 0
+    for prev, cur in zip(pts, pts[1:]):
+        lo, hi = reading_at_ms(prev), reading_at_ms(cur)
+        seg = []
+        while i < len(played) and played[i]["gameStartMs"] <= hi:
+            if played[i]["gameStartMs"] > lo:
+                seg.append(played[i])
+            i += 1
+        segs.append(seg)
+    return segs
+
+
+def drop_stale_readings(pts, played):
+    """Throw out readings the games say cannot be right.
+
+    A reading is a measurement of what Riot reported at that instant, and that
+    is not the same as what had happened by that instant. Riot's ranked entry
+    lags behind a game finishing, and a reading is often taken while a game is
+    still being played. Either way the reading is true and using it as the end
+    of a segment is not: the games in that segment are told their LP did not
+    move, and the move lands on whoever comes next.
+
+    That is what put four of Brett's losses at 0, 0, -34 and -34 when every one
+    of them was about -17. The reading between them said his LP was unchanged
+    after two defeats, which cannot be true of two defeats.
+
+    So the games get a say. Wins raise LP and losses lower it, always, so a
+    segment of nothing but wins that did not gain, or nothing but losses that
+    did not lose, has a boundary that had not caught up. Drop it and let the
+    segment run on to the next reading, which is the last one the games do not
+    contradict. Nothing is invented here: the readings that remain are still
+    measurements, and there is just one fewer of them.
+    """
+    pts = list(pts)
+    while len(pts) > 2:
+        segs = segment_games(pts, played)
+        for n, seg in enumerate(segs):
+            # The last reading has nothing to merge into. A stale one there
+            # only means the newest games are still settling, and the next
+            # build will have the reading that settles them.
+            if not seg or n + 1 >= len(pts) - 1:
+                continue
+            net = ladder_lp(pts[n + 1]) - ladder_lp(pts[n])
+            wins = sum(1 for m in seg if m["win"])
+            if (wins == len(seg) and net <= 0) or (wins == 0 and net >= 0):
+                del pts[n + 1]
+                break
+        else:
+            break
+    return pts
+
+
 def build_lp_timeline(solo_pts, solo_matches, avg_win=None, avg_loss=None, seed=0):
     """Per-game LP path for one friend, anchored on their real rank readings.
 
@@ -2359,6 +2413,9 @@ def build_lp_timeline(solo_pts, solo_matches, avg_win=None, avg_loss=None, seed=
     pts = sorted(solo_pts, key=reading_at_ms)
     played = sorted((m for m in solo_matches if m.get("gameStartMs")),
                     key=lambda m: m["gameStartMs"])
+    pts = drop_stale_readings(pts, played)
+    if len(pts) < 2:
+        return []
 
     points = [{"idx": 0, "score": ladder_lp(pts[0]), "delta": None,
                "match": None, "exact": True}]
@@ -5719,11 +5776,55 @@ window.LpChart = (function () {
     return Date.UTC(+parts[0], +parts[1] - 1, +parts[2] + 1) - 1;
   }
 
+  // Port of segment_games().
+  function segmentGames(pts, played) {
+    var segs = [], i = 0;
+    for (var k = 0; k + 1 < pts.length; k++) {
+      var lo = readingAt(pts[k]), hi = readingAt(pts[k + 1]), seg = [];
+      while (i < played.length && played[i].gameStartMs <= hi) {
+        if (played[i].gameStartMs > lo) seg.push(played[i]);
+        i++;
+      }
+      segs.push(seg);
+    }
+    return segs;
+  }
+
+  // Port of drop_stale_readings(). Riot's ranked entry lags a game finishing
+  // and a reading is often taken mid-game, so a reading can be a true record
+  // of what Riot said and still be the wrong place to end a segment. Wins
+  // raise LP and losses lower it, so a run of nothing but wins that did not
+  // gain, or nothing but losses that did not lose, has a boundary that had
+  // not caught up. Drop it and let the segment reach the next reading.
+  function dropStaleReadings(pts, played) {
+    pts = pts.slice();
+    while (pts.length > 2) {
+      var segs = segmentGames(pts, played), dropped = -1;
+      for (var n = 0; n < segs.length; n++) {
+        var seg = segs[n];
+        // The last reading has nothing to merge into.
+        if (!seg.length || n + 1 >= pts.length - 1) continue;
+        var net = ladderLp(pts[n + 1]) - ladderLp(pts[n]);
+        var wins = 0;
+        for (var j = 0; j < seg.length; j++) if (seg[j].win) wins++;
+        if ((wins === seg.length && net <= 0) || (wins === 0 && net >= 0)) {
+          dropped = n + 1;
+          break;
+        }
+      }
+      if (dropped < 0) break;
+      pts.splice(dropped, 1);
+    }
+    return pts;
+  }
+
   function buildLpTimeline(soloPts, soloMatches, avgWin, avgLoss, seed) {
     if (soloPts.length < 2) return [];
     var pts = soloPts.slice().sort(function (a, b) { return readingAt(a) - readingAt(b); });
     var played = soloMatches.filter(function (m) { return m.gameStartMs; })
       .sort(function (a, b) { return a.gameStartMs - b.gameStartMs; });
+    pts = dropStaleReadings(pts, played);
+    if (pts.length < 2) return [];
 
     var points = [{ idx: 0, score: ladderLp(pts[0]), delta: null, match: null, exact: true }];
     var idx = 0, i = 0;
