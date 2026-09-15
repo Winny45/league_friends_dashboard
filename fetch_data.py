@@ -805,7 +805,13 @@ def queues_played_since(result, latest, now_ms):
             unsettled.add(queue_key)
         prev = latest.get((result["label"], queue_key))
         since = prev["atMs"] if prev else 0
-        if start > since:
+        # Compared on when the game ended, not when it began. A game starting
+        # at 23:59 and ending at 00:27 is older than the reading taken at
+        # 00:02 by its start and newer by its finish, and it is the finish
+        # that matters: that reading cannot contain its LP. Asking about the
+        # start meant no later reading was ever written for it, so the game
+        # sat outside every segment and never appeared at all.
+        if end > since:
             played.add(queue_key)
     return played - unsettled
 

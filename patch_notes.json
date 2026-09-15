@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-15",
+    "title": "A game played over midnight no longer disappears",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Kirish's game at 12:59 AM was missing from Rank progress, and would have stayed missing. A reading is taken when somebody has played since their last one, and that was being judged on when the game started. This game started at 11:59 PM, a couple of minutes before the reading taken at midnight, and finished at 12:27 AM, well after it. By its start it looked older than the reading, so no new reading was ever written; by its finish it was newer, and the midnight reading could not contain its LP. The game fell between the two and never appeared."
+      },
+      {
+        "type": "changed",
+        "text": "The question is now asked about when the game finished, which is the same correction made to how the chart files games. The reading lands on the next hour once the result has settled, and the game turns up with its real LP. It is the same mistake in two places: a game is not an instant, it is half an hour, and which side of a reading it falls on depends on which end you ask about."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-15",
     "title": "A game belongs to the hour it finished in",
     "items": [
       {
