@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-09-29",
+    "title": "James joins, and the page stops falling over when somebody has no rank",
+    "items": [
+      {
+        "type": "added",
+        "text": "James is on the dashboard. He has no ranked standing in any queue at the moment, so he shows as Unranked and sits at the bottom of the leaderboard, and he is left off the LP per game chart until he has a rank for his games to be measured against. His season history is all there on his card."
+      },
+      {
+        "type": "fixed",
+        "text": "Adding him broke the build outright. The row of name buttons asked for each player's Solo/Duo tier and fell back to an empty record when they had none, but that fallback was written inside a template where braces start an expression rather than escaping, so it read as a set containing an empty record and raised unhashable type: dict. It could only ever run for somebody with no Solo/Duo rank, so it sat there harmlessly until the first unranked friend arrived."
+      }
+    ]
+  },
+  {
     "date": "2026-09-15",
     "title": "A game played over midnight no longer disappears",
     "items": [

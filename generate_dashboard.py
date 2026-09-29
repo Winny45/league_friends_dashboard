@@ -79,6 +79,20 @@ FRIEND_PALETTE = [
 ]
 
 
+def solo_tier(f):
+    """A friend's Solo/Duo tier, or None when they have not placed.
+
+    Exists because the obvious inline version cannot be written inside an
+    f-string. Braces there open an expression rather than escaping, so the
+    "or {}" fallback parses as a set holding an empty dict and raises
+    "unhashable type: dict" the moment it is evaluated. It was only ever
+    evaluated for somebody with no Solo/Duo rank, so the page built fine for
+    years and broke on the first unranked friend added to it.
+    """
+    solo = (f.get("ranked") or {}).get("solo")
+    return (solo or {}).get("tier")
+
+
 def tier_var(tier):
     """CSS custom property name for a tier, e.g. 'DIAMOND' -> '--tier-diamond'."""
     return f"--tier-{(tier or 'unranked').lower()}"
@@ -6763,7 +6777,7 @@ def build_html(data):
         f'<button class="pill" type="button" id="pill-{f["label"].lower()}"'
         f' aria-pressed="false" data-friend="{f["label"].lower()}">'
         f'{render_avatar(f, size=20)}'
-        f'{render_rank_icon((f["ranked"].get("solo") or {{}}).get("tier"), size=15)}'
+        f'{render_rank_icon(solo_tier(f), size=15)}'
         f'{esc(f["label"])}</button>'
         for f in friends_sorted
     )
