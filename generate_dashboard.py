@@ -6770,17 +6770,42 @@ def build_html(data):
     # An explicit All, then one button per person. Picking someone shows
     # only them; All brings everyone back. Each button carries that player's
     # face, which is their most mastered champion.
+    def friend_pill(f, shame=False):
+        return (
+            f'<button class="pill{" pill-shame" if shame else ""}" type="button"'
+            f' id="pill-{f["label"].lower()}"'
+            f' aria-pressed="false" data-friend="{f["label"].lower()}">'
+            f'{render_avatar(f, size=20)}'
+            f'{render_rank_icon(solo_tier(f), size=15)}'
+            f'{esc(f["label"])}</button>'
+        )
+
+    # Last on the ladder is sent down to their own line. Places, not the raw
+    # order, so a tie for bottom puts both of them in it rather than picking
+    # whichever the sort happened to leave there.
+    #
+    # It needs somebody to be below: with one friend, or everybody level,
+    # there is no bottom to be at and the pit is left out entirely.
+    last_place = max(places) if places else 0
+    pit = [f for f, place in zip(friends_sorted, places) if place == last_place]
+    if len(pit) >= len(friends_sorted):
+        pit = []
+    pit_labels = {f["label"] for f in pit}
+
     friend_pills = (
         '<button class="pill pill-all active" type="button" data-friend=""'
         ' aria-pressed="true">All friends</button>'
-    ) + "".join(
-        f'<button class="pill" type="button" id="pill-{f["label"].lower()}"'
-        f' aria-pressed="false" data-friend="{f["label"].lower()}">'
-        f'{render_avatar(f, size=20)}'
-        f'{render_rank_icon(solo_tier(f), size=15)}'
-        f'{esc(f["label"])}</button>'
-        for f in friends_sorted
-    )
+    ) + "".join(friend_pill(f) for f in friends_sorted
+                if f["label"] not in pit_labels)
+
+    pit_pills = ""
+    if pit:
+        pit_pills = (
+            '<div class="friend-pit">'
+            '<span class="pit-label">Pit of shame</span>'
+            + "".join(friend_pill(f, shame=True) for f in pit)
+            + '</div>'
+        )
 
     awards = compute_awards(friends_sorted, now)
     awards_panel = render_season_highlights_panel(friends_sorted, now)
@@ -8002,9 +8027,37 @@ def build_html(data):
     transition: transform .16s ease, background .16s ease, border-color .16s ease;
   }}
   .pill:hover {{ background: var(--surface-2); color: var(--text-primary); transform: translateY(-1px); }}
+  /* Bottom of the ladder, on a line of its own under the rest. Red is what
+     losing looks like everywhere else here, so it is what this looks like
+     too. The label sits beside the name rather than over it: one centred
+     line reads as a caption, two read as a second row of players. */
+  .friend-pit {{
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px; flex-wrap: wrap; margin: -6px 0 18px;
+  }}
+  .pit-label {{
+    font-size: 10.5px; font-weight: 800; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--critical);
+  }}
+  .pill-shame {{
+    border-color: color-mix(in srgb, var(--critical) 55%, var(--border));
+    background: color-mix(in srgb, var(--critical) 12%, var(--surface-1));
+    color: var(--critical);
+  }}
+  .pill-shame:hover {{
+    background: color-mix(in srgb, var(--critical) 20%, var(--surface-1));
+    color: var(--critical);
+  }}
   .pill.active {{
     background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 62%, var(--accent-2)));
     border-color: transparent; color: #fff; box-shadow: 0 2px 10px var(--halo);
+  }}
+  /* Selecting them should not promote them out of it. */
+  .pill-shame.active, .pill-shame.active:hover {{
+    background: linear-gradient(135deg, var(--critical),
+                                color-mix(in srgb, var(--critical) 66%, #000));
+    border-color: transparent; color: #fff;
+    box-shadow: 0 2px 10px color-mix(in srgb, var(--critical) 38%, transparent);
   }}
 
   /* Rows updated by the client-side live-ranks refresh, so it's obvious
@@ -8379,6 +8432,7 @@ def build_html(data):
 
     <section class="tab-panel" id="panel-friends" role="tabpanel" aria-labelledby="tab-friends" tabindex="-1" data-tab-panel="friends" hidden>
       <div class="friend-pills" role="tablist" aria-label="Choose a player">{friend_pills}</div>
+      {pit_pills}
       {cards}
     </section>
     </main>

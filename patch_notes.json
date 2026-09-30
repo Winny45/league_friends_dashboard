@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-09-30",
+    "title": "The pit of shame",
+    "items": [
+      {
+        "type": "added",
+        "text": "Whoever is last on the ladder gets their own line under the row of names on the Friends tab, centred, in red, labelled PIT OF SHAME. Picking them still works the same way, and selecting them keeps the red rather than promoting them back to the ordinary blue."
+      },
+      {
+        "type": "changed",
+        "text": "It goes by place rather than by where the sort happened to leave people, so two players level on the bottom both go in rather than one of them being picked arbitrarily. If everybody is level, or there is only one player, there is no bottom to be at and no pit is drawn."
+      }
+    ]
+  },
+  {
     "date": "2026-09-29",
     "title": "James joins, and the page stops falling over when somebody has no rank",
     "items": [
