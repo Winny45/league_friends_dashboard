@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-30",
+    "title": "Rory is orange",
+    "items": [
+      {
+        "type": "changed",
+        "text": "Rory's colour is orange, on the charts, the legends and everywhere else his name is coloured. He was a pale steel blue before."
+      },
+      {
+        "type": "changed",
+        "text": "Brett takes the steel Rory left. His copper and Rory's orange sit next to each other in every legend, and at the width a chart line is actually drawn the two are one colour with a bit of shading, which makes two players' lines read as one. Trying to separate them by making one vivid and the other earthy did not survive being looked at. Moving Brett to a cool colour leaves exactly one warm line on the page, which makes it unmistakably Rory's."
+      }
+    ]
+  },
+  {
+    "date": "2026-09-30",
     "title": "The pit of shame",
     "items": [
       {

@@ -64,11 +64,15 @@ FRIEND_PALETTE = [
     {"light": "#0e8ea6", "dark": "#2ec4de"},  # 0 Winny   cyan
     {"light": "#b83a68", "dark": "#e0699a"},  # 1 Shas     pink
     {"light": "#2a78d6", "dark": "#3987e5"},  # 2 Kirish   blue
-    # Slot 3 sits next to slot 4 in every legend, so the two cannot both be
-    # warm: orange beside copper reads as one colour at a glance. Rory is not
-    # orange, so the warm slot is Brett's and slot 3 stays cool.
-    {"light": "#4f7a95", "dark": "#8bb0c9"},  # 3 Rory     steel
-    {"light": "#96522a", "dark": "#c4753c"},  # 4 Brett    copper
+    # Rory is orange, and slot 3 sits next to slot 4 in every legend, so slot
+    # 4 cannot be warm as well. Making one vivid and the other earthy was
+    # tried and does not work: at the width a chart line is actually drawn,
+    # a bright orange and a copper are one colour with a bit of shading, and
+    # the two lines read as one player having a mixed week. Brett takes the
+    # cool slot Rory left instead, which leaves exactly one warm colour on
+    # the page and makes it unmistakably Rory's.
+    {"light": "#c2610a", "dark": "#ff9b33"},  # 3 Rory     orange
+    {"light": "#4f7a95", "dark": "#8bb0c9"},  # 4 Brett    steel
     {"light": "#5a49b8", "dark": "#9085e9"},  # 5 Neel     violet
     # Two accounts belonging to one person, so they are deliberately the same
     # hue: the pair should read as related rather than as two strangers who
