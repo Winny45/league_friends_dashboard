@@ -2230,6 +2230,16 @@ AVERAGE_ERA_END_MS = day_ms("2026-09-14")
 LP_PER_DIVISION = 100
 DIVISIONS_PER_TIER = 4
 
+# Challenger at 0 LP: the highest rank the chart will draw a line to.
+#
+# The projection is a random walk, and over a few hundred games it wanders
+# into ranks that do not exist. That dragged the top of the axis with it, so
+# the real lines were squashed into a smudge along the bottom and the tier
+# labels read Challenger six times over, once per 400 points of nowhere.
+# ladder_decompose() clamps to the last tier, so every one of those rows
+# honestly believed it was Challenger.
+LADDER_CEILING = (len(TIER_ORDER) - 1) * DIVISIONS_PER_TIER * LP_PER_DIVISION
+
 
 def ladder_lp(entry):
     """Absolute ladder position of a rank snapshot, measured in real LP."""
@@ -2528,7 +2538,10 @@ def project_scores(start, n, p_win, gain, drop, seed):
     for _ in range(n):
         state = (state * 16807) % 2147483647
         score = score + gain if state / 2147483647.0 < p_win else score - drop
-        score = max(score, 0.0)
+        # Held between unranked and Challenger. Clamping the walk rather than
+        # the axis means a guess that runs out of ladder flattens along the
+        # top, which is the truth of it: there is nowhere further to climb.
+        score = min(max(score, 0.0), float(LADDER_CEILING))
         out.append(score)
     return out
 
@@ -2703,8 +2716,8 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
                 if not params:
                     continue
                 proj[pf["label"]] = project_scores(pv[-1]["score"], left, *params, seed=pi + 1)
-        vis_scores = [p["score"] for v in view.values() for p in v]
-        vis_scores += [sc for walk in proj.values() for sc in walk]
+        played_scores = [p["score"] for v in view.values() for p in v]
+        vis_scores = played_scores + [sc for walk in proj.values() for sc in walk]
         y_min, y_max = min(vis_scores), max(vis_scores)
         pad = max(40, (y_max - y_min) * 0.16)
         # Whole numbers. The padded bounds scale every coordinate on the chart,
@@ -2715,8 +2728,21 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         # to be gained from a fractional bound on a padded axis, and a whole
         # one is the same number in both languages.
         y_min, y_max = math.floor(y_min - pad), math.ceil(y_max + pad)
+        # The cap binds the guess, never the record: a real Challenger still
+        # gets an axis tall enough to hold them.
+        y_max = min(y_max, max(LADDER_CEILING, math.ceil(max(played_scores or [0]))))
         if y_max <= y_min:
             y_max = y_min + 200
+        # Zoomed to one player, the range can be narrow enough to fall between
+        # two division lines and come out with no horizontal reference at all.
+        # Widening it to the divisions either side guarantees a line top and
+        # bottom. On the full chart the range already spans several, so this
+        # changes nothing there.
+        if math.floor(y_max / LP_PER_DIVISION) <= math.ceil(y_min / LP_PER_DIVISION):
+            y_min = int(math.floor(y_min / LP_PER_DIVISION) * LP_PER_DIVISION)
+            y_max = int(math.ceil(y_max / LP_PER_DIVISION) * LP_PER_DIVISION)
+            if y_max <= y_min:
+                y_max = y_min + LP_PER_DIVISION
         if compact:
             W = 360
             H = max(240, min(420, 20 * len(chart_friends) + 190))
@@ -2752,9 +2778,18 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             if ti >= len(TIER_ORDER):
                 continue
             if tick % tier_span == 0:
-                y_ticks.append((xy(0, tick)[1], TIER_ORDER[ti].capitalize(), True))
+                y_ticks.append((xy(0, tick)[1], TIER_ORDER[ti].capitalize(), True, ti, division))
             elif show_divisions:
-                y_ticks.append((xy(0, tick)[1], rank_by_score.get(division, ""), False))
+                y_ticks.append((xy(0, tick)[1], rank_by_score.get(division, ""),
+                                False, ti, division))
+
+        # A view zoomed inside a single tier has no tier line to read the
+        # divisions against, and a lone "I" does not say which tier's I it is.
+        # Where that happens the divisions carry their tier themselves.
+        if y_ticks and not any(t[2] for t in y_ticks):
+            y_ticks = [(y, (TIER_ORDER[ti].capitalize() + " " + lbl).strip(), False, ti, dv)
+                       for (y, lbl, _is_tier, ti, dv) in y_ticks]
+        y_ticks = [(y, lbl, is_tier) for (y, lbl, is_tier, _ti, _dv) in y_ticks]
 
         step = max(1, round(max_games / (3 if compact else 6)))
         tick_idxs = list(range(0, max_games + 1, step))
@@ -2919,7 +2954,8 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
             # Names every render this legend drives: wide/compact for both the
             # full and zoomed views. Absent ids are skipped harmlessly, so this
             # stays correct whether or not the zoom variant was built.
-            f'<span class="legend-item" data-chart="lp lpm lpt lpmt" data-idx="{i}">'
+            f'<span class="legend-item" data-chart="lp lpm lpt lpmt" data-idx="{i}" '
+            f'data-label="{esc(f["label"])}">'
             f'<span class="sw" style="background:var({friend_colour(f["label"])})"></span>'
             f'<span class="legend-name" style="color:var({friend_colour(f["label"])});">'
             f'{esc(f["label"])}</span>'
@@ -2953,6 +2989,18 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     # The projection is a guess, and a guess is not always what you want on
     # screen. Toggled with a class on the container so it applies to both
     # renders, both zoom levels, and anything the browser redraws later.
+    # What a click on a name does. Two readings of the same gesture and no
+    # default that suits both: hiding is what you want on a crowded chart,
+    # isolating is what you want when you are following one line.
+    legend_mode_toggle = (
+        '<div class="range-toggle" role="group" aria-label="What clicking a name does">'
+        '<button type="button" class="range-btn active" data-legend-mode="hide" '
+        'aria-pressed="true">Click to hide</button>'
+        '<button type="button" class="range-btn" data-legend-mode="solo" '
+        'aria-pressed="false">Click to isolate</button>'
+        '</div>'
+    )
+
     proj_toggle = (
         '<div class="range-toggle" role="group" aria-label="Projection">'
         '<button type="button" class="range-btn active" data-proj="on" aria-pressed="true">'
@@ -2994,6 +3042,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
         "lpPerDivision": LP_PER_DIVISION,
         "divisionsPerTier": DIVISIONS_PER_TIER,
         "nominalLp": NOMINAL_LP,
+        "ladderCeiling": LADDER_CEILING,
         "recentGames": RECENT_GAMES,
         "averageEraEndMs": AVERAGE_ERA_END_MS,
         "lpRateMinGames": LP_RATE_MIN_GAMES,
@@ -3167,7 +3216,7 @@ def render_lp_chart(friends_sorted, rank_history, now, tracking_since):
     <div class="panel">
       <h2 style="margin-bottom:4px;">LP per game</h2>
       <div class="muted small" style="margin-bottom:12px;">Ranked Solo/Duo &middot; every game since rank tracking began on {esc(tracking_since)}</div>
-      <div class="chart-toggles">{zoom_toggle}{proj_toggle}</div>
+      <div class="chart-toggles">{zoom_toggle}{proj_toggle}{legend_mode_toggle}</div>
       <div class="chart-row">
         <div class="chart-plot" data-lp-charts>{charts_svg}</div>
         <div class="chart-key" role="group" aria-label="Players on this chart">{"".join(legend_items)}</div>
@@ -3493,7 +3542,8 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
                 if not pts:
                     series_groups.append(f'<g id="{prefix}-series-{i}"></g>')
                     legend_items.append(
-                        f'<span class="legend-item" data-chart="{prefix_base} {prefix_base}m" data-idx="{i}">'
+                        f'<span class="legend-item" data-chart="{prefix_base} {prefix_base}m" data-idx="{i}" '
+                        f'data-label="{esc(f["label"])}">'
                         f'<span class="sw" style="background:var({var})"></span>'
                         f'<span class="legend-name" style="color:var({var});">{esc(f["label"])}</span></span>'
                     )
@@ -3534,7 +3584,8 @@ def render_rank_chart(friends_sorted, rank_history, now, tracking_since):
                                       "rankLabel": rank_label(live), "net": net,
                                       "snapshots": len(pts)})
                 legend_items.append(
-                    f'<span class="legend-item" data-chart="{prefix_base} {prefix_base}m" data-idx="{i}">'
+                    f'<span class="legend-item" data-chart="{prefix_base} {prefix_base}m" data-idx="{i}" '
+                        f'data-label="{esc(f["label"])}">'
                     f'<span class="sw" style="background:var({var})"></span>'
                     f'<span class="legend-name" style="color:var({var});">{esc(f["label"])}</span></span>'
                 )
@@ -5959,7 +6010,9 @@ window.LpChart = (function () {
     for (var k = 0; k < n; k++) {
       st = (st * 16807) % 2147483647;
       score = (st / 2147483647.0 < pWin) ? score + gain : score - drop;
+      // Held between unranked and Challenger; see project_scores().
       if (score < 0) score = 0;
+      if (score > D.ladderCeiling) score = D.ladderCeiling;
       out.push(score);
     }
     return out;
@@ -6139,8 +6192,17 @@ window.LpChart = (function () {
   function buildSvg(state, compact, tail) {
     var friends = state.friends, timelines = state.timelines;
     var prefix = (compact ? 'lpm' : 'lp') + (tail ? 't' : '');
+    // Hiding somebody takes them out of the maths, not just out of the ink.
+    // Both axes are built from whoever is left, so isolating one player
+    // zooms to their range instead of leaving them a flat line across the
+    // bottom of a chart still scaled to somebody three tiers above them.
+    // The generator never hides anyone, so with nothing hidden this is the
+    // same render it has always produced.
+    var hidden = state.hidden || {};
+    var shown = friends.filter(function (f) { return !hidden[f.label]; });
+    if (!shown.length) shown = friends;
     var view = {}, i;
-    friends.forEach(function (f) {
+    shown.forEach(function (f) {
       var tl = timelines[f.label];
       var pts = (tail && tl.length > tail + 1) ? tl.slice(tl.length - (tail + 1)) : tl;
       var base = pts[0].idx, startI = tl.length - pts.length;
@@ -6161,7 +6223,11 @@ window.LpChart = (function () {
     var proj = {};
     if (!tail) {
       friends.forEach(function (pf, pi) {
-        var pv = view[pf.label], left = maxGames - (pv.length - 1);
+        var pv = view[pf.label];
+        // Seeded on the position in the full list, so a player's dashed line
+        // is the same walk whoever else is on screen.
+        if (!pv) return;
+        var left = maxGames - (pv.length - 1);
         if (left <= 0) return;
         var params = projectionParams(timelines[pf.label]);
         if (!params) return;
@@ -6169,9 +6235,9 @@ window.LpChart = (function () {
                                        params[0], params[1], params[2], pi + 1);
       });
     }
-    var scores = [];
+    var scores = [], playedScores = [];
     Object.keys(view).forEach(function (k) {
-      view[k].forEach(function (p) { scores.push(p.score); });
+      view[k].forEach(function (p) { scores.push(p.score); playedScores.push(p.score); });
     });
     Object.keys(proj).forEach(function (k) {
       proj[k].forEach(function (sc) { scores.push(sc); });
@@ -6180,7 +6246,17 @@ window.LpChart = (function () {
     var pad = Math.max(40, (yMax - yMin) * 0.16);
     // Whole numbers, for the reason given in render_lp_chart().
     yMin = Math.floor(yMin - pad); yMax = Math.ceil(yMax + pad);
+    // The cap binds the guess, never the record; see render_lp_chart().
+    var playedTop = playedScores.length ? Math.ceil(Math.max.apply(null, playedScores)) : 0;
+    yMax = Math.min(yMax, Math.max(D.ladderCeiling, playedTop));
     if (yMax <= yMin) yMax = yMin + 200;
+    // Widened to the divisions either side when it would otherwise fall
+    // between two; see render_lp_chart().
+    if (Math.floor(yMax / D.lpPerDivision) <= Math.ceil(yMin / D.lpPerDivision)) {
+      yMin = Math.floor(yMin / D.lpPerDivision) * D.lpPerDivision;
+      yMax = Math.ceil(yMax / D.lpPerDivision) * D.lpPerDivision;
+      if (yMax <= yMin) yMax = yMin + D.lpPerDivision;
+    }
 
     var W, H, PAD_L, PAD_R, PAD_T, PAD_B;
     if (compact) {
@@ -6207,8 +6283,21 @@ window.LpChart = (function () {
       if (tick < yMin || tick > yMax) continue;
       var dec = ladderDecompose(tick);
       if (dec[0] >= D.tierOrder.length) continue;
-      if (tick % tierSpan === 0) yTicks.push([xy(0, tick)[1], cap(D.tierOrder[dec[0]]), true]);
-      else if (showDivisions) yTicks.push([xy(0, tick)[1], rankBySc(dec[1]), false]);
+      if (tick % tierSpan === 0) {
+        yTicks.push([xy(0, tick)[1], cap(D.tierOrder[dec[0]]), true, dec[0], dec[1]]);
+      } else if (showDivisions) {
+        yTicks.push([xy(0, tick)[1], rankBySc(dec[1]), false, dec[0], dec[1]]);
+      }
+    }
+    // Zoomed inside one tier there is no tier line to read the divisions
+    // against, so they carry their tier; see render_lp_chart().
+    var anyTier = yTicks.some(function (t) { return t[2]; });
+    if (yTicks.length && !anyTier) {
+      yTicks = yTicks.map(function (t) {
+        return [t[0], (cap(D.tierOrder[t[3]]) + ' ' + t[1]).replace(/\s+$/, ''), false];
+      });
+    } else {
+      yTicks = yTicks.map(function (t) { return [t[0], t[1], t[2]]; });
     }
 
     var step = Math.max(1, pyRound(maxGames / (compact ? 3 : 6)));
@@ -6231,6 +6320,12 @@ window.LpChart = (function () {
     friends.forEach(function (f, fi) {
       var varName = colourFor(f.label);
       var tl = view[f.label];
+      // Still emit the group: the legend finds its series by id, and an empty
+      // one keeps those ids pointing at the right person.
+      if (!tl) {
+        seriesGroups.push('<g id="' + prefix + '-series-' + fi + '"></g>');
+        return;
+      }
       var coords = tl.map(function (p) { return xy(p.idx, p.score); });
       var parts = [];
       var d = coords.map(function (c, n) {
@@ -6410,7 +6505,13 @@ window.LpChart = (function () {
              tiers: s.tiers, standings: s.standings };
   }
 
+  // What the viewer has switched off, by name. Lives here rather than in the
+  // DOM because it has to survive the chart being rebuilt.
+  var HIDDEN = {};
+  var LAST_FRIENDS = null;
+
   function chartsHtml(state) {
+    if (state.hidden === undefined) state.hidden = HIDDEN;
     var longest = 0;
     state.friends.forEach(function (f) {
       longest = Math.max(longest, state.timelines[f.label].length - 1);
@@ -6472,6 +6573,8 @@ window.LpChart = (function () {
     if (!D) return { ok: false, reason: 'no data' };
     var state = computeState(JSON.parse(JSON.stringify(D.friends)));
     if (!state) return { ok: false, reason: 'no timelines' };
+    // Against the published chart, which has nobody hidden.
+    state.hidden = {};
     var host = document.querySelector('[data-lp-charts]');
     if (!host) return { ok: false, reason: 'no host' };
     // Both sides must be read back through the DOM: innerHTML rewrites
@@ -6506,6 +6609,38 @@ window.LpChart = (function () {
       if (bad) return bad;
     }
     return { ok: true, bytes: norm(host.innerHTML).length };
+  }
+
+  // Redraw the chart with whoever is currently switched off left out of it.
+  //
+  // A redraw rather than hiding the lines in place, because the point is the
+  // scale: with one player showing, both axes should be theirs. Hiding a
+  // group only takes the ink away and leaves the axes describing people who
+  // are no longer on screen.
+  function setHidden(labels) {
+    HIDDEN = {};
+    (labels || []).forEach(function (l) { HIDDEN[l] = true; });
+    if (!D) return;
+    var source = LAST_FRIENDS || D.friends;
+    var state = computeState(JSON.parse(JSON.stringify(source)));
+    if (!state) return;
+    var host = document.querySelector('[data-lp-charts]');
+    if (!host) return;
+    // Which zoom the viewer had open; the redraw rebuilds every view.
+    var panel = host.closest('.panel');
+    var activeBtn = panel && panel.querySelector('.range-btn.active[data-range]');
+    var want = activeBtn && activeBtn.getAttribute('data-range');
+    state.hidden = HIDDEN;
+    host.innerHTML = chartsHtml(state);
+    if (want) {
+      host.querySelectorAll('.chart-view').forEach(function (v) {
+        v.hidden = v.getAttribute('data-range') !== want;
+      });
+    }
+  }
+
+  function hiddenLabels() {
+    return Object.keys(HIDDEN);
   }
 
   // Every game time on the page, in the reader's clock rather than the clock
@@ -6577,6 +6712,7 @@ window.LpChart = (function () {
       return copy;
     });
     if (!touched && !ranked) return 0;
+    LAST_FRIENDS = friends;
     var state = computeState(friends);
     if (!state) return 0;
     var host = document.querySelector('[data-lp-charts]');
@@ -6647,6 +6783,7 @@ window.LpChart = (function () {
 
   return { init: init, verifySelf: verifySelf, rerender: rerender,
            localiseTimes: localiseTimes,
+           setHidden: setHidden, hiddenLabels: hiddenLabels,
            blend: blendVars, colourFor: colourFor };
 })();
 '''
@@ -8987,20 +9124,89 @@ def build_html(data):
         el.addEventListener('mouseleave', function () {{ focus(false); }});
       }});
 
-      document.querySelectorAll('.legend-item[data-idx]').forEach(function (el) {{
-        el.addEventListener('click', function () {{
-          var idx = el.getAttribute('data-idx');
-          // One legend drives both the wide and compact renders of the chart.
-          var charts = (el.getAttribute('data-chart') || 'daily').split(' ');
-          var first = document.getElementById(charts[0] + '-series-' + idx);
-          var willHide = !(first && first.style.display === 'none');
+      // Clicking a name either takes that person off the chart or leaves only
+      // them on it, and which one is a switch above the legend. Hiding is the
+      // obvious reading when a chart is crowded; isolating is the obvious one
+      // when you are trying to read a single line out of eight. Neither is
+      // the right default for both, so the viewer says.
+      var LEGEND_MODE = 'hide';
+
+      // Hidden names per legend group, keyed on the group's own data-chart.
+      // The LP chart and each range of the daily chart keep their own, so
+      // switching one does not quietly rearrange the others.
+      var legendHidden = {{}};
+
+      function legendGroupKey(el) {{
+        return el.getAttribute('data-chart') || 'daily';
+      }}
+
+      function isLpLegend(charts) {{
+        return charts[0].slice(0, 2) === 'lp';
+      }}
+
+      // The LP chart redraws itself so the axes fit who is left. The daily
+      // chart has no renderer in the browser, so there the lines are simply
+      // shown and hidden and the axes stay as the server drew them.
+      function applyLegend(key, charts, group) {{
+        var hidden = legendHidden[key] || {{}};
+        group.forEach(function (item) {{
+          var label = item.getAttribute('data-label') || '';
+          var off = !!hidden[label];
+          item.style.opacity = off ? '0.35' : '1';
+          item.setAttribute('aria-pressed', off ? 'false' : 'true');
+          if (isLpLegend(charts)) return;
+          var idx = item.getAttribute('data-idx');
           charts.forEach(function (c) {{
             var series = document.getElementById(c + '-series-' + idx);
-            var label = document.getElementById(c + '-label-' + idx);
-            if (series) series.style.display = willHide ? 'none' : '';
-            if (label) label.style.display = willHide ? 'none' : '';
+            var lbl = document.getElementById(c + '-label-' + idx);
+            if (series) series.style.display = off ? 'none' : '';
+            if (lbl) lbl.style.display = off ? 'none' : '';
           }});
-          el.style.opacity = willHide ? '0.35' : '1';
+        }});
+        if (isLpLegend(charts) && window.LpChart && LpChart.setHidden) {{
+          LpChart.setHidden(Object.keys(hidden).filter(function (l) {{ return hidden[l]; }}));
+        }}
+      }}
+
+      document.querySelectorAll('.legend-item[data-idx]').forEach(function (el) {{
+        el.addEventListener('click', function () {{
+          var charts = (el.getAttribute('data-chart') || 'daily').split(' ');
+          var key = legendGroupKey(el);
+          var group = [].slice.call(
+            document.querySelectorAll('.legend-item[data-chart="' + key + '"]'));
+          var me = el.getAttribute('data-label') || '';
+          var hidden = legendHidden[key] || (legendHidden[key] = {{}});
+
+          if (LEGEND_MODE === 'solo') {{
+            // Already the only one showing? Then this click puts everyone
+            // back, so the same button both isolates and undoes itself.
+            var onlyMe = group.every(function (item) {{
+              var l = item.getAttribute('data-label') || '';
+              return (l === me) ? !hidden[l] : !!hidden[l];
+            }});
+            group.forEach(function (item) {{
+              var l = item.getAttribute('data-label') || '';
+              hidden[l] = onlyMe ? false : (l !== me);
+            }});
+          }} else {{
+            hidden[me] = !hidden[me];
+          }}
+          applyLegend(key, charts, group);
+        }});
+      }});
+
+      // The switch itself.
+      document.querySelectorAll('.range-btn[data-legend-mode]').forEach(function (b) {{
+        b.addEventListener('click', function () {{
+          LEGEND_MODE = b.getAttribute('data-legend-mode');
+          var groupEl = b.closest('.range-toggle');
+          groupEl.querySelectorAll('.range-btn[data-legend-mode]').forEach(function (o) {{
+            var on = o === b;
+            o.classList.toggle('active', on);
+            o.setAttribute('aria-pressed', on ? 'true' : 'false');
+          }});
+          // Changing the rule does not change what is on screen, so a chart
+          // left with one player showing stays that way until clicked again.
         }});
       }});
     }})();

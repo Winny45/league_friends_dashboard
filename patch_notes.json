@@ -1,5 +1,27 @@
 [
   {
+    "date": "2026-10-04",
+    "title": "Clicking a name can isolate instead of hide, and the ladder stops at Challenger",
+    "items": [
+      {
+        "type": "added",
+        "text": "A switch above the LP per game chart for what clicking a name in the key does. Click to hide takes that person off, which is what you want when the chart is crowded. Click to isolate leaves only them, which is what you want when you are trying to follow one line out of eight. Clicking an isolated player again puts everyone back. The daily chart's key follows the same switch, and the two keep their own state so switching one does not rearrange the other."
+      },
+      {
+        "type": "added",
+        "text": "With one player showing, the chart rescales to them. Both axes are rebuilt from whoever is left rather than the lines simply being hidden, so an Emerald player is no longer a flat scribble along the bottom of an axis still stretched to fit somebody three tiers above them."
+      },
+      {
+        "type": "changed",
+        "text": "A view zoomed inside a single tier names its own divisions. There is no tier line in shot to read them against, and a lone I does not say which tier's I it is, so it reads Emerald I rather than I. A range narrow enough to fall between two division lines is widened to the ones either side, so there is always a horizontal reference."
+      },
+      {
+        "type": "fixed",
+        "text": "The chart no longer draws ranks that do not exist. The projection is a random walk and over a few hundred games it wandered far past Challenger, dragging the top of the axis with it: the real lines were squashed into a smudge along the bottom and the tier labels read Challenger six times over, once per 400 points of nowhere. The walk now flattens at Challenger, which is the truth of it, and the axis stops there. A genuine Challenger would still get an axis tall enough to hold them."
+      }
+    ]
+  },
+  {
     "date": "2026-09-30",
     "title": "Rory is orange",
     "items": [
