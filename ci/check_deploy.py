@@ -41,4 +41,18 @@ if problems:
         print(f"! {p}")
     sys.exit("Refusing to publish.")
 
+# The primary-accounts-only companion, when the config names any second
+# account. Same checks: it is published to the same public URL space and a
+# key leaking onto it would leak just as far.
+companion = pathlib.Path("deploy/main.html")
+if companion.exists():
+    alt = companion.read_text(encoding="utf-8")
+    if re.search(r"RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", alt):
+        sys.exit("! a live-looking Riot API key is in deploy/main.html. Refusing to publish.")
+    if len(alt) < 500_000:
+        sys.exit(f"! deploy/main.html is only {len(alt)} bytes. Refusing to publish.")
+    print(f"deploy/main.html looks publishable: {len(alt)} bytes, no key.")
+else:
+    print("note: no deploy/main.html, so no second accounts are configured.")
+
 print(f"deploy/index.html looks publishable: {len(html)} bytes, no key, assets present.")

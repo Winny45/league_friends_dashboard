@@ -1072,6 +1072,11 @@ def main():
                 if friend.get("suspended_until"):
                     summary["suspendedUntil"] = friend["suspended_until"]
                     summary["suspendedNote"] = friend.get("suspended_note", "")
+                # A smurf or alt. Riot has no idea two accounts are one
+                # person, so the config has to say, and the dashboard builds
+                # a second copy of itself with these left out.
+                if friend.get("second"):
+                    summary["second"] = True
                 results.append(summary)
         except Exception as e:
             print(f"  ! error fetching {friend.get('label')}: {e}")

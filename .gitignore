@@ -12,6 +12,7 @@ config.json
 # Generated output built from real accounts
 data.json
 dashboard.html
+dashboard-main.html
 # og.png is the link-preview card, rendered from real labels and ranks.
 og.png
 icon-180.png
@@ -46,6 +47,8 @@ auto_update.prev.log
 
 # Built inside the runner (and locally by a rehearsal), never committed.
 deploy/index.html
+# Built beside it: the same page with second accounts left out.
+deploy/main.html
 deploy/og.png
 deploy/icon-180.png
 .state/

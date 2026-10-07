@@ -6867,7 +6867,35 @@ def compare_derived_history(derived, stored):
         print(f"    {k}: stored={st.get(k)} derived={d.get(k)}")
 
 
-def build_html(data):
+def second_account_labels(data):
+    """Who the config says is somebody's alt."""
+    return {f.get("label") for f in data.get("friends", []) if f.get("second")}
+
+
+def without_second_accounts(data):
+    """The same data with the alt accounts taken out of it, or None.
+
+    Taken out at the door rather than hidden at each panel. Everything on the
+    page is derived from these three lists, so removing a player here removes
+    them from the leaderboard, the group totals, the champion rankings, the
+    duo pairings, the awards, both charts and the downloadable files, without
+    a single one of those having to know that second accounts exist.
+
+    Deep copy, because the two builds otherwise share every match dict and a
+    pass that annotates one would be annotating the other's too.
+    """
+    seconds = second_account_labels(data)
+    if not seconds:
+        return None
+    out = json.loads(json.dumps(data))
+    out["friends"] = [f for f in out.get("friends", []) if f.get("label") not in seconds]
+    for key in ("rankHistory", "rankReadings"):
+        if out.get(key):
+            out[key] = [r for r in out[key] if r.get("label") not in seconds]
+    return out
+
+
+def build_html(data, alt_href=None, alt_label=""):
     friends = data.get("friends", [])
     friends_sorted = sorted(friends, key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)
     now = datetime.now()
@@ -8483,6 +8511,7 @@ def build_html(data):
         <button id="refresh-data" class="hbtn hosted-only" type="button" hidden title="Re-fetch everyone's games from the Riot API">⟳ Refresh data</button>
         <button id="set-key" class="hbtn hosted-only" type="button" hidden title="Update the Riot API key stored on the server, used by Refresh data">🔑 Server key</button>
         <button id="export-csv" class="hbtn" type="button" title="Download this season's match data as a CSV">⬇ <span class="btn-long">Export CSV</span><span class="btn-short">CSV</span></button>
+        {f'<a id="alt-accounts" class="hbtn" href="{esc(alt_href)}" data-alt-page title="{esc(alt_label)}">⇄ <span class="btn-long">{esc(alt_label)}</span><span class="btn-short">Alts</span></a>' if alt_href else ""}
         {'<button id="patch-notes" class="hbtn" type="button" title="What&#39;s new on this dashboard" aria-label="What&#39;s new on this dashboard">✨<span class="note-dot" id="note-dot" hidden></span></button>' if notes_html else ""}
       </div>
     </header>
@@ -8763,6 +8792,16 @@ def build_html(data):
           }});
         }}
       }})();
+
+      // The two builds are separate pages, so the switch is a link. Carry the
+      // hash across it: swapping to the other page should leave you on the
+      // tab you were reading, not back at the top of the leaderboard.
+      var altLink = document.querySelector('[data-alt-page]');
+      if (altLink) {{
+        altLink.addEventListener('click', function () {{
+          if (location.hash) altLink.href = altLink.getAttribute('href') + location.hash;
+        }});
+      }}
 
       var btn = document.getElementById('export-csv');
       if (!btn) return;
@@ -10544,8 +10583,30 @@ def main():
     data = json.loads(data_path.read_text(encoding="utf-8"))
     data.setdefault("siteUrl", load_site_url())
     report_and_filter_queues(data)
-    out_path.write_text(build_html(data), encoding="utf-8")
+
+    # Two builds of the same page: everybody, and primary accounts only. A
+    # second copy rather than something the browser switches off, because
+    # every number on the page is computed here and recomputing them in
+    # JavaScript would be the same work done twice in two languages. The
+    # switch in the header is a link from one to the other.
+    main_only = without_second_accounts(data)
+    alt_path = out_path.with_name(
+        "main.html" if out_path.stem == "index" else out_path.stem + "-main" + out_path.suffix)
+
+    out_path.write_text(
+        build_html(data,
+                   alt_href=alt_path.name if main_only else None,
+                   alt_label="Hide second accounts"),
+        encoding="utf-8")
     print(f"Wrote {out_path}")
+
+    if main_only:
+        alt_path.write_text(
+            build_html(main_only, alt_href=out_path.name,
+                       alt_label="Show second accounts"),
+            encoding="utf-8")
+        hidden = ", ".join(sorted(second_account_labels(data)))
+        print(f"Wrote {alt_path} (without {hidden})")
 
     friends_sorted = sorted(data.get("friends", []),
                             key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)

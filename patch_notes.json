@@ -1,5 +1,27 @@
 [
   {
+    "date": "2026-10-07",
+    "title": "A switch for second accounts",
+    "items": [
+      {
+        "type": "added",
+        "text": "A switch in the header that takes second accounts off the dashboard. Shas2nd is the one marked at the moment, so turning it on leaves the six primary accounts. It is not a filter over the top: every number is recalculated without them, so the leaderboard renumbers, the group totals drop, the combined winrate and the champion count move, pairs involving a second account disappear from duo synergy, and both charts lose the line. The switch keeps you on the tab you were reading."
+      },
+      {
+        "type": "changed",
+        "text": "Which accounts count as second accounts is set in the config rather than guessed from the name, because Riot has no idea that two accounts belong to one person and nothing in the data says so."
+      },
+      {
+        "type": "changed",
+        "text": "Technically this is a second copy of the whole page rather than something the browser switches off. Every figure on the dashboard is worked out when the page is built, so hiding a player in the browser would mean writing all of that arithmetic a second time in another language, and the two would drift. Building the page twice costs a few seconds and is right by construction."
+      },
+      {
+        "type": "changed",
+        "text": "Past release notes still name second accounts where they always did. Those are a record of what changed and when, not live data, and editing them to match a switch would make them untrue."
+      }
+    ]
+  },
+  {
     "date": "2026-10-06",
     "title": "Brett is orange",
     "items": [

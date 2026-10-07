@@ -262,17 +262,13 @@ jobs:
           fi
 
       - name: Rebuild the page
-        run: python generate_dashboard.py
+        # Straight into deploy/, so the two builds link to each other by the
+        # names they are actually published under and nothing has to be
+        # copied twice. The share images land beside them for the same reason.
+        run: python generate_dashboard.py data.json deploy/index.html
 
       - name: Assemble the deploy directory
         run: |
-          cp dashboard.html deploy/index.html
-          # Tolerant on purpose: the share images are decoration, and a
-          # missing link preview is not a reason to stop publishing a page
-          # that is otherwise correct.
-          for f in og.png icon-180.png; do
-            if [ -f "$f" ]; then cp "$f" deploy/; else echo "note: $f was not built"; fi
-          done
           ls -l deploy
 
       - name: Check the page before it goes public
