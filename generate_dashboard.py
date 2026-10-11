@@ -79,7 +79,12 @@ FRIEND_PALETTE = [
     # happen to share the top of a leaderboard. They are five slots apart, so
     # they never sit adjacent in a legend where the likeness would confuse.
     {"light": "#c26e92", "dark": "#f2a9c6"},  # 6 Shas2nd  pale pink
-    {"light": "#8a4fb0", "dark": "#b884d8"},  # 7 spare    orchid
+    {"light": "#8a4fb0", "dark": "#b884d8"},  # 7 James    orchid
+    # Brett's alt, so a softer version of his orange for the same reason
+    # Shas2nd is a softer pink: the pair should read as one person with two
+    # accounts. Four slots from his, and far enough apart in lightness that
+    # they are still two lines rather than one line in two moods.
+    {"light": "#cf8a4a", "dark": "#ffc98a"},  # 8 Brett2nd pale apricot
 ]
 
 

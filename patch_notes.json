@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-10-11",
+    "title": "Brett has a second account now",
+    "items": [
+      {
+        "type": "added",
+        "text": "Dragonlord58 joins as Brett2nd, marked as Brett's second account. The switch in the header that hides second accounts now hides both his and Shas's, and every number on the page is recalculated without them."
+      },
+      {
+        "type": "changed",
+        "text": "A ninth colour, because the palette had exactly eight and a ninth player would have been dropped from both charts with an apologetic note underneath. Brett2nd is a softer version of Brett's orange for the same reason Shas2nd is a softer pink: the pair should read as one person with two accounts rather than two strangers. Checked at the width a chart line is actually drawn, which is where two similar colours stop being two colours."
+      }
+    ]
+  },
+  {
     "date": "2026-10-07",
     "title": "A switch for second accounts",
     "items": [
