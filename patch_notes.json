@@ -1,6 +1,28 @@
 [
   {
     "date": "2026-10-15",
+    "title": "The Friends tab opens as a list, and the trend column says the number first",
+    "items": [
+      {
+        "type": "changed",
+        "text": "With everybody showing, the friend cards fold down to a header: name, rank, peak, seven-day trend and the last ten games. Nine full seasons end to end was several screens of scrolling to find one person, and the buttons above already do the finding. Click any card, or any name, to open that season in full."
+      },
+      {
+        "type": "changed",
+        "text": "The seven-day trend is a figure with a destination under it rather than one running sentence. It was the widest column in the table and the least scannable, because the number you came for was buried mid-paragraph. The approximate marker is a footnote beside the figure now instead of sitting at the end of the line looking like a typo."
+      },
+      {
+        "type": "fixed",
+        "text": "The duo matrix keeps its names on screen. Nine players across and nine down is wider and taller than the window, and the moment the header row scrolled away every cell became an unlabelled percentage."
+      },
+      {
+        "type": "fixed",
+        "text": "The tab strip no longer cuts Friends in half on a phone. Rank progress and Duo synergy are Ranks and Duos at that width, and all four fit without scrolling."
+      }
+    ]
+  },
+  {
+    "date": "2026-10-15",
     "title": "The dashboard gets its shape back, starting with the phone",
     "items": [
       {

@@ -2050,12 +2050,18 @@ def render_trend_arrow(trend, compact=False):
         return ('<span class="tr-flat" title="No movement recorded">&#9651;</span>'
                 if compact else '<span class="muted small">–</span>')
     # A rank change alone says a division moved but not how far, so the LP
-    # travelled goes in front of it. Within a division the text already is an
-    # LP figure.
+    # travelled goes with it. Within a division the text already is an LP
+    # figure and there is nowhere to have moved to.
+    #
+    # Kept as two parts rather than one sentence: the widest column in the
+    # table was also the least scannable, because every row read as a
+    # paragraph with the number you came for buried in the middle of it.
     text = trend["text"]
+    where = ""
     if trend.get("moved") and trend.get("lp") is not None:
         lp = trend["lp"]
-        text = f"{'+' if lp >= 0 else '−'}{abs(lp)} LP, {text}"
+        where = text
+        text = f"{'+' if lp >= 0 else '−'}{abs(lp)} LP"
     # The spec asks for the approximate marker on the friend cards and on the
     # overview table; only the cards had it. A tilde beside the arrow, with the
     # reason in the tooltip.
@@ -2066,6 +2072,7 @@ def render_trend_arrow(trend, compact=False):
             f"exactly seven days ago" if _off
             else "Measured against the nearest rank reading")
     approx = f'<span class="tr-approx" title="{esc(_why)}">~</span>' if trend.get("approx") else ""
+    where_html = f'<span class="tr-where">{esc(where)}</span>' if where else ""
     if compact:
         if trend["direction"] > 0:
             return f'<span class="tr-up" title="{esc(text)}">&#9650;</span>'
@@ -2073,9 +2080,13 @@ def render_trend_arrow(trend, compact=False):
             return f'<span class="tr-down" title="{esc(text)}">&#9660;</span>'
         return f'<span class="tr-flat" title="{esc(text)}">&#9651;</span>'
     if trend["direction"] > 0:
-        return f'<span class="small" style="color:var(--good);">▲ {esc(text)}</span>{approx}'
+        return (f'<span class="tr-cell"><span class="tr-top">'
+                f'<span class="tr-lp" style="color:var(--good);">▲ {esc(text)}</span>'
+                f'{approx}</span>{where_html}</span>')
     if trend["direction"] < 0:
-        return f'<span class="small" style="color:var(--critical);">▼ {esc(text)}</span>{approx}'
+        return (f'<span class="tr-cell"><span class="tr-top">'
+                f'<span class="tr-lp" style="color:var(--critical);">▼ {esc(text)}</span>'
+                f'{approx}</span>{where_html}</span>')
     return '<span class="muted small">–</span>'
 
 
@@ -7298,6 +7309,7 @@ def build_html(data, alt_href=None, alt_label=""):
   /* Two labels per button: the full one on desktop, a clipped one on phones,
      where four buttons no longer fit across 375px. */
   .btn-short {{ display: none; }}
+  .tab-short {{ display: none; }}
   .hbtn:disabled {{ opacity: .55; cursor: not-allowed; transform: none; }}
   .hbtn:hover:not(:disabled) {{ transform: translateY(-1px); box-shadow: var(--shadow-md); background: var(--surface-2); }}
   .hbtn:active:not(:disabled) {{ transform: translateY(0); }}
@@ -7355,6 +7367,28 @@ def build_html(data, alt_href=None, alt_label=""):
     padding: 12px 16px; margin-bottom: 20px; font-size: 13px; color: var(--text-secondary);
   }}
   .banner code {{ background: rgba(128,128,128,0.16); padding: 1px 5px; border-radius: 4px; }}
+
+  /* ---- Friend cards, collapsed ---------------------------------------
+     Everything below the header folds away while all nine are on screen, so
+     the tab opens as a comparable list rather than as several screens of one
+     person's season. Clicking a card opens it. */
+  .cards-collapsed .card > :not(.card-art):not(.card-head):not(.card-mid) {{ display: none; }}
+  .cards-collapsed .card {{ cursor: pointer; }}
+  .cards-collapsed .card:hover {{ border-color: var(--accent); }}
+  .cards-collapsed .card .card-head {{ padding-bottom: var(--sp-4); }}
+  /* Recent form stays: a row of win and loss dots is the one thing in the
+     body worth reading nine times over, and it costs a single line. The
+     queue bars and the rings are detail for when you have picked somebody. */
+  .cards-collapsed .card .card-queues {{ display: block; }}
+  .cards-collapsed .card .card-queues > :not(.form-line) {{ display: none; }}
+  .cards-collapsed .card .card-rings {{ display: none; }}
+  .cards-collapsed .card .form-line {{ margin-top: 0; }}
+  .cards-collapsed .card::after {{
+    content: "Open full season";
+    position: absolute; right: var(--sp-5); bottom: var(--sp-3);
+    font-size: 11px; font-weight: 600; color: var(--muted);
+  }}
+  .cards-collapsed .card:hover::after {{ color: var(--accent); }}
 
   /* ---- Panels ------------------------------------------------------- */
   /* A visible edge and a real lift. A panel used to differ from the page by
@@ -7771,6 +7805,18 @@ def build_html(data, alt_href=None, alt_label=""):
   .who-toggle {{ display: flex; flex-wrap: wrap; margin-bottom: 8px; }}
   .who-toggle .range-btn {{ padding: 6px 11px; }}
 
+  /* The seven-day trend, as a figure with a destination under it rather than
+     a sentence. The LP is what people scan for, so it leads and carries the
+     colour; where it took them is support. */
+  .tr-cell {{ display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.3; }}
+  /* The marker belongs beside the figure, not on a line of its own, which is
+     what a column flex does to a loose child. */
+  .tr-top {{ display: inline-flex; align-items: baseline; }}
+  .tr-lp {{ font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }}
+  .tr-where {{ font-size: 11px; color: var(--muted); white-space: nowrap; }}
+  /* The approximate marker is a footnote, not part of the figure. */
+  .tr-approx {{ font-size: 10px; color: var(--muted); margin-left: 3px; vertical-align: top; }}
+
   /* "insufficient data" is a sentence where the column expects a symbol, so
      it is sized down to sit in the same row without stretching it. */
   .tr-insufficient {{ font-size: 11px; font-style: italic; opacity: .75; white-space: nowrap; }}
@@ -7832,6 +7878,18 @@ def build_html(data, alt_href=None, alt_label=""):
   }}
   .duo-matrix thead th {{ text-align: center; }}
   .duo-matrix tbody th {{ text-align: right; }}
+  /* The names stay put while the grid scrolls. A nine by nine matrix is
+     taller and wider than the window, and the moment the header row left the
+     screen every cell became an unlabelled percentage. */
+  .duo-matrix thead th {{
+    position: sticky; top: 0; z-index: 3;
+    background: var(--surface-1);
+  }}
+  .duo-matrix tbody th {{
+    position: sticky; left: 0; z-index: 2;
+    background: var(--surface-1);
+  }}
+  .duo-matrix thead th:first-child {{ z-index: 4; }}
   .duo-cell {{
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 4px;
     text-align: center; background: var(--surface-2); min-width: 62px;
@@ -8422,7 +8480,11 @@ def build_html(data, alt_href=None, alt_label=""):
     }}
     .header-actions .hbtn {{ padding: 9px 10px; min-height: 38px; font-size: 12px; }}
     /* Four words do not fit beside a title on a 375px screen. */
-    .tabs .tab-btn {{ padding: 10px 12px; font-size: 13px; }}
+    .tabs .tab-btn {{ padding: 10px 11px; font-size: 12.5px; }}
+    /* The tab strip scrolled sideways and clipped "Friends" off the end.
+       Shorter words fit without scrolling at all. */
+    .tabs .tab-btn .tab-long {{ display: none; }}
+    .tabs .tab-btn .tab-short {{ display: inline; }}
     .status-strip .meta-chip:not(:last-child)::after {{ margin: 0 var(--sp-2); }}
     .meta-chip::after {{ content: "·"; margin-left: 4px; opacity: .5; }}
     .meta-chip:last-child::after {{ content: ""; }}
@@ -8513,6 +8575,8 @@ def build_html(data, alt_href=None, alt_label=""):
     .leaderboard tbody td:nth-child(4),
     .leaderboard tbody td:nth-child(5) {{ font-size: 12px; color: var(--text-secondary); }}
     .leaderboard tbody td:nth-child(6) {{ font-size: 11.5px; }}
+    /* Left edge, in line with the rest of the block. */
+    .leaderboard tbody td:nth-child(6) .tr-cell {{ align-items: flex-start; }}
     .leaderboard tbody tr:last-child {{ border-bottom: 0; }}
     .card-mid {{ grid-template-columns: minmax(0, 1fr); }}
     /* Two fixed 168px rings plus their gap want 354px, which is wider than
@@ -8654,8 +8718,8 @@ def build_html(data, alt_href=None, alt_label=""):
     <main id="main" tabindex="-1">
     <div class="tabs" role="tablist" aria-label="Dashboard sections">
       <button class="tab-btn active" type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" tabindex="0" data-tab="overview">Overview</button>
-      <button class="tab-btn" type="button" role="tab" id="tab-rank" aria-controls="panel-rank" aria-selected="false" tabindex="-1" data-tab="rank">Rank progress</button>
-      {'<button class="tab-btn" type="button" role="tab" id="tab-duo" aria-controls="panel-duo" aria-selected="false" tabindex="-1" data-tab="duo">Duo synergy</button>' if duo_synergy_panel else ""}
+      <button class="tab-btn" type="button" role="tab" id="tab-rank" aria-controls="panel-rank" aria-selected="false" tabindex="-1" data-tab="rank"><span class="tab-long">Rank progress</span><span class="tab-short">Ranks</span></button>
+      {'<button class="tab-btn" type="button" role="tab" id="tab-duo" aria-controls="panel-duo" aria-selected="false" tabindex="-1" data-tab="duo"><span class="tab-long">Duo synergy</span><span class="tab-short">Duos</span></button>' if duo_synergy_panel else ""}
       <button class="tab-btn" type="button" role="tab" id="tab-friends" aria-controls="panel-friends" aria-selected="false" tabindex="-1" data-tab="friends">Friends</button>
     </div>
 
@@ -8684,7 +8748,7 @@ def build_html(data, alt_href=None, alt_label=""):
 
     {f'<section class="tab-panel" id="panel-duo" role="tabpanel" aria-labelledby="tab-duo" tabindex="-1" data-tab-panel="duo" hidden>{duo_synergy_panel}</section>' if duo_synergy_panel else ""}
 
-    <section class="tab-panel" id="panel-friends" role="tabpanel" aria-labelledby="tab-friends" tabindex="-1" data-tab-panel="friends" hidden>
+    <section class="tab-panel cards-collapsed" id="panel-friends" role="tabpanel" aria-labelledby="tab-friends" tabindex="-1" data-tab-panel="friends" hidden>
       <div class="friend-pills" role="tablist" aria-label="Choose a player">{friend_pills}</div>
       {pit_pills}
       {cards}
@@ -10446,11 +10510,28 @@ def build_html(data, alt_href=None, alt_label=""):
         return true;
       }}
 
+      // Clicking a collapsed card opens that player. The pills do the same
+      // job; this just makes the obvious gesture work too.
+      cards.forEach(function (c) {{
+        c.addEventListener('click', function (e) {{
+          var panel = c.closest('[data-tab-panel="friends"]');
+          if (!panel || !panel.classList.contains('cards-collapsed')) return;
+          if (e.target.closest('a, button, details, summary')) return;
+          showFriend(c.id.replace('friend-', ''), true);
+        }});
+      }});
+
       // An empty label means All: every card shown, the All button lit.
       // Otherwise only that person's card is shown.
       function showFriend(label, scroll) {{
         var all = !label;
         if (!all && friendNames.indexOf(label) <= 0) return false;
+        // With everybody showing, the cards collapse to their headers. Nine
+        // full seasons stacked end to end is several screens of scrolling to
+        // find one person, and the pills above already do the finding; what
+        // the list is good for is comparing, which needs them short.
+        var panel = document.querySelector('[data-tab-panel="friends"]');
+        if (panel) panel.classList.toggle('cards-collapsed', all);
         cards.forEach(function (c) {{
           c.hidden = !all && c.id !== 'friend-' + label;
         }});
