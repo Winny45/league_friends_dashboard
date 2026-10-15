@@ -7155,14 +7155,32 @@ def build_html(data, alt_href=None, alt_label=""):
      values and every new rule two chances to be wrong. */
   :root {{
     color-scheme: dark;
-    --surface-1: #14161d;
-    --surface-2: #1b1f28;
-    --page: #090a0e;
-    --text-primary: #f1f3f7;
-    --text-secondary: #b4bbc9;
-    --muted: #7c8698;
-    --gridline: #262b35;
-    --border: rgba(255,255,255,0.09);
+    /* Four steps, far enough apart to be seen. The old scale ran from #090a0e
+       to #1b1f28, which is about ten levels of lightness across the whole
+       page, so a panel did not read as sitting on anything and a row inside
+       it did not read as sitting in the panel. Everything looked like one
+       flat sheet with text on it. */
+    --page: #0a0c12;
+    --surface-1: #161a24;     /* panels */
+    --surface-2: #1f2430;     /* rows, chips, controls */
+    --surface-3: #2a3040;     /* hover and pressed */
+    --text-primary: #f2f4f8;
+    --text-secondary: #aeb6c6;
+    --muted: #788296;
+    --gridline: #2a3040;
+    --border: rgba(255,255,255,0.08);
+    /* For the edge of a panel, which needs to be seen against the page. */
+    --border-strong: rgba(255,255,255,0.14);
+
+    /* One spacing rhythm, so panels, rows and controls agree on what a gap
+       is instead of each carrying its own hand-picked pixel value. */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 24px;
+    --sp-6: 32px;
+    --sp-7: 48px;
     --accent: #4c8dff;
     --accent-2: #17d3c1;
     --gold: #e6c15c;
@@ -7200,8 +7218,9 @@ def build_html(data, alt_href=None, alt_label=""):
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
     --shadow-md: 0 6px 18px rgba(0,0,0,0.45);
     --shadow-lg: 0 18px 44px rgba(0,0,0,0.55);
-    --radius: 14px;
+    --radius: 16px;
     --radius-sm: 10px;
+    --radius-lg: 22px;
     --halo: rgba(76,141,255,0.16);
     {tier_vars_dark}
     {friend_vars_dark}
@@ -7244,15 +7263,20 @@ def build_html(data, alt_href=None, alt_label=""):
     box-shadow: 0 6px 18px var(--halo);
   }}
   header.top h1 {{
-    margin: 0 0 5px; font-size: 27px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1;
+    margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1;
   }}
-  .meta-row {{ display: flex; flex-wrap: wrap; gap: 6px; }}
-  .meta-chip {{
-    font-size: 11px; font-weight: 500; color: var(--text-secondary);
-    background: var(--surface-1); border: 1px solid var(--border);
-    border-radius: 999px; padding: 3px 10px; white-space: nowrap;
+  /* One line of small print under the header, with middots between the
+     facts instead of a border around each of them. */
+  .status-strip {{
+    display: flex; flex-wrap: wrap; align-items: center;
+    row-gap: var(--sp-1); margin: calc(var(--sp-3) * -1) 0 var(--sp-5);
+    font-size: 12px; color: var(--muted);
   }}
-  .meta-chip b {{ font-weight: 700; color: var(--text-primary); }}
+  .status-strip .meta-chip:not(:last-child)::after {{
+    content: "·"; margin: 0 var(--sp-3); color: var(--gridline);
+  }}
+  .meta-chip {{ white-space: nowrap; }}
+  .meta-chip b {{ font-weight: 600; color: var(--text-secondary); }}
   /* Amber under six hours, red under one. The chip is only worth the space
      it takes if it changes appearance before the key actually dies. */
   .key-age.soon b {{ color: var(--warn, #e0a63c); }}
@@ -7333,11 +7357,15 @@ def build_html(data, alt_href=None, alt_label=""):
   .banner code {{ background: rgba(128,128,128,0.16); padding: 1px 5px; border-radius: 4px; }}
 
   /* ---- Panels ------------------------------------------------------- */
+  /* A visible edge and a real lift. A panel used to differ from the page by
+     one shade and nothing else, which is why the whole thing read as a single
+     flat sheet rather than as cards of content. */
   .panel {{
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 22px; margin-bottom: 20px; box-shadow: var(--shadow-sm);
+    background: var(--surface-1); border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: var(--sp-5); margin-bottom: var(--sp-5); box-shadow: var(--shadow-md);
   }}
-  h2 {{ font-size: 18px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }}
+  h2 {{ font-size: 19px; margin: 0; font-weight: 700; letter-spacing: -0.015em; }}
   .panel > h2:first-child {{ display: flex; align-items: center; gap: 9px; }}
   .panel > h2:first-child::before {{
     content: ""; width: 3px; height: 17px; border-radius: 2px; flex-shrink: 0;
@@ -7347,7 +7375,9 @@ def build_html(data, alt_href=None, alt_label=""):
   table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
   th {{ text-align: left; color: var(--muted); font-weight: 600; font-size: 11px;
     text-transform: uppercase; letter-spacing: 0.05em; padding: 8px; border-bottom: 1px solid var(--gridline); }}
-  td {{ padding: 10px 8px; border-bottom: 1px solid var(--gridline); }}
+  td {{ padding: 11px 8px; border-bottom: 1px solid var(--gridline); }}
+  /* The header row of any table reads as a label, not as data. */
+  thead th {{ background: transparent; }}
   tbody tr {{ transition: background .14s ease; }}
   tbody tr:hover {{ background: var(--surface-2); }}
   tbody tr:last-child td {{ border-bottom: none; }}
@@ -8382,8 +8412,18 @@ def build_html(data, alt_href=None, alt_label=""):
     .brand-mark {{ width: 38px; height: 38px; border-radius: 11px; font-size: 18px; }}
     /* Meta chips collapse to one line of plain text · three pill rows pushed
        the actual content most of a screen down. */
-    .meta-row {{ gap: 4px; }}
-    .meta-chip {{ border: none; background: none; padding: 0; font-size: 11px; }}
+    .status-strip {{ font-size: 11px; margin-bottom: var(--sp-4); }}
+    /* All five controls on one line. They used to wrap after four and leave
+       the last one stranded on a row of its own, which read as a mistake. */
+    .brand {{ flex: 1 1 100%; }}
+    .header-actions {{
+      flex: 1 1 100%; flex-wrap: nowrap; gap: var(--sp-1);
+      justify-content: flex-start;
+    }}
+    .header-actions .hbtn {{ padding: 9px 10px; min-height: 38px; font-size: 12px; }}
+    /* Four words do not fit beside a title on a 375px screen. */
+    .tabs .tab-btn {{ padding: 10px 12px; font-size: 13px; }}
+    .status-strip .meta-chip:not(:last-child)::after {{ margin: 0 var(--sp-2); }}
     .meta-chip::after {{ content: "·"; margin-left: 4px; opacity: .5; }}
     .meta-chip:last-child::after {{ content: ""; }}
 
@@ -8438,6 +8478,42 @@ def build_html(data, alt_href=None, alt_label=""):
 
     .chart-wide {{ display: none; }}
     .chart-compact {{ display: block; }}
+
+    /* ---- The leaderboard, as rows rather than a table ----------------
+       Six columns do not fit a phone. They used to overflow into a
+       horizontal scroll, which put winrate, record and the seven-day trend
+       off the right-hand edge behind a gesture nobody makes: the three
+       things the table exists to tell you were the three you could not see.
+       Each player becomes a small block instead, name and rank on top and
+       the numbers underneath. */
+    .leaderboard {{ table-layout: auto; }}
+    .leaderboard thead {{ display: none; }}
+    .table-scroll:has(.leaderboard) {{ overflow-x: visible; }}
+    .leaderboard, .leaderboard tbody, .leaderboard tr {{ display: block; width: 100%; }}
+    .leaderboard tbody tr {{
+      display: grid;
+      grid-template-columns: 26px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--sp-1) var(--sp-3);
+      padding: var(--sp-3) var(--sp-1);
+      border-bottom: 1px solid var(--gridline);
+    }}
+    .leaderboard tbody td {{
+      display: block; border: 0; padding: 0; width: auto !important;
+      white-space: normal;
+    }}
+    /* Place, spanning the block so the name and its numbers sit beside it. */
+    .leaderboard tbody td:nth-child(1) {{ grid-area: 1 / 1 / 4 / 2; align-self: start; }}
+    .leaderboard tbody td:nth-child(2) {{ grid-area: 1 / 2 / 2 / 3; }}
+    .leaderboard tbody td:nth-child(3) {{ grid-area: 1 / 3 / 2 / 4; text-align: right; }}
+    .leaderboard tbody td:nth-child(4) {{ grid-area: 2 / 2 / 3 / 3; text-align: left; }}
+    .leaderboard tbody td:nth-child(5) {{ grid-area: 2 / 3 / 3 / 4; text-align: right; }}
+    .leaderboard tbody td:nth-child(6) {{ grid-area: 3 / 2 / 4 / 4; text-align: left; }}
+    /* The numbers are support, so they read quieter than the name. */
+    .leaderboard tbody td:nth-child(4),
+    .leaderboard tbody td:nth-child(5) {{ font-size: 12px; color: var(--text-secondary); }}
+    .leaderboard tbody td:nth-child(6) {{ font-size: 11.5px; }}
+    .leaderboard tbody tr:last-child {{ border-bottom: 0; }}
     .card-mid {{ grid-template-columns: minmax(0, 1fr); }}
     /* Two fixed 168px rings plus their gap want 354px, which is wider than
        the inside of a card on a 375px phone, so they wrapped and sat one on
@@ -8498,15 +8574,7 @@ def build_html(data, alt_href=None, alt_label=""):
     <header class="top">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">{BRAND_MARK_SVG}</div>
-        <div>
-          <h1>League Friends Dashboard</h1>
-          <div class="meta-row">
-            <span class="meta-chip">Platform <b>{esc(data.get("platform", "?"))}</b></span>
-            <span class="meta-chip" data-updated{f' data-generated-ms="{int(data["generatedAtMs"])}"' if data.get("generatedAtMs") else ""}>Data from <b data-generated-text>{esc(data.get("generatedAt", ""))}</b></span>
-            {render_key_age(data.get("apiKey"))}
-            {f'<span class="meta-chip">Season since <b>{esc(data.get("seasonStart"))}</b></span>' if data.get("seasonStart") else ""}
-          </div>
-        </div>
+        <h1>League Friends Dashboard</h1>
       </div>
       <div class="header-actions">
         <!-- Hosted-only controls: revealed by JS once /api/status answers, so
@@ -8520,6 +8588,17 @@ def build_html(data, alt_href=None, alt_label=""):
         {'<button id="patch-notes" class="hbtn" type="button" title="What&#39;s new on this dashboard" aria-label="What&#39;s new on this dashboard">✨<span class="note-dot" id="note-dot" hidden></span></button>' if notes_html else ""}
       </div>
     </header>
+
+    <!-- Platform, freshness, season, key: reference, not navigation. It used
+         to be four pill-shaped chips directly under the title, which on a
+         phone wrapped to four lines and pushed the first real number most of
+         a screen down. Same facts, one quiet line. -->
+    <div class="status-strip">
+      <span class="meta-chip">{esc(data.get("platform", "?"))}</span>
+      <span class="meta-chip" data-updated{f' data-generated-ms="{int(data["generatedAtMs"])}"' if data.get("generatedAtMs") else ""}>updated <b data-generated-text>{esc(data.get("generatedAt", ""))}</b></span>
+      {render_key_age(data.get("apiKey"))}
+      {f'<span class="meta-chip">season from <b>{esc(data.get("seasonStart"))}</b></span>' if data.get("seasonStart") else ""}
+    </div>
 
     <div id="refresh-status" class="refresh-status" hidden>
       <div class="refresh-bar"><div class="refresh-bar-fill" id="refresh-bar-fill"></div></div>

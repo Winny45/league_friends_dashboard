@@ -1,5 +1,23 @@
 [
   {
+    "date": "2026-10-15",
+    "title": "The dashboard gets its shape back, starting with the phone",
+    "items": [
+      {
+        "type": "changed",
+        "text": "The leaderboard is no longer a six-column table on a phone. It used to overflow into a sideways scroll, which put winrate, record and the seven-day trend off the right-hand edge behind a gesture nobody makes: the three things the table exists to tell you were the three you could not see. Each player is a small block now, name and rank on top, the numbers underneath, nothing hidden."
+      },
+      {
+        "type": "changed",
+        "text": "The header is one row. Platform, freshness, season and key expiry used to be four pill-shaped chips sitting directly under the title; on a phone they wrapped to four lines and pushed the first real number most of a screen down. They are one quiet line of small print now, and the five buttons sit on a single row instead of wrapping and stranding the last one on its own."
+      },
+      {
+        "type": "changed",
+        "text": "Panels look like panels. The page, a panel and a row inside it used to sit within about ten levels of lightness of each other, so nothing read as being on top of anything and the whole dashboard looked like one flat sheet with text on it. There is a proper scale behind it now, a visible edge on each panel, and one spacing rhythm rather than a hand-picked gap per element."
+      }
+    ]
+  },
+  {
     "date": "2026-10-11",
     "title": "Brett has a second account now",
     "items": [
