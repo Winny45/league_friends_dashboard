@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-10-15",
+    "title": "Season highlights moves to a Records tab",
+    "items": [
+      {
+        "type": "changed",
+        "text": "Season highlights has a tab of its own called Records, between Duo synergy and Friends. It was the last thing on the Overview, under the leaderboard, the group totals, the champion table and the week at a glance, which is a long way to scroll for the part people actually enjoy."
+      },
+      {
+        "type": "changed",
+        "text": "The tab only appears when there is something to put in it, the same way Duo synergy does, and it has its own address, so a link ending in records opens straight to it."
+      }
+    ]
+  },
+  {
+    "date": "2026-10-15",
     "title": "The rings answer to a tap",
     "items": [
       {

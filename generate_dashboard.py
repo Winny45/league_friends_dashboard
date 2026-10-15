@@ -8733,6 +8733,7 @@ def build_html(data, alt_href=None, alt_label=""):
       <button class="tab-btn active" type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" tabindex="0" data-tab="overview">Overview</button>
       <button class="tab-btn" type="button" role="tab" id="tab-rank" aria-controls="panel-rank" aria-selected="false" tabindex="-1" data-tab="rank"><span class="tab-long">Rank progress</span><span class="tab-short">Ranks</span></button>
       {'<button class="tab-btn" type="button" role="tab" id="tab-duo" aria-controls="panel-duo" aria-selected="false" tabindex="-1" data-tab="duo"><span class="tab-long">Duo synergy</span><span class="tab-short">Duos</span></button>' if duo_synergy_panel else ""}
+      {'<button class="tab-btn" type="button" role="tab" id="tab-records" aria-controls="panel-records" aria-selected="false" tabindex="-1" data-tab="records">Records</button>' if awards_panel else ""}
       <button class="tab-btn" type="button" role="tab" id="tab-friends" aria-controls="panel-friends" aria-selected="false" tabindex="-1" data-tab="friends">Friends</button>
     </div>
 
@@ -8752,7 +8753,6 @@ def build_html(data, alt_href=None, alt_label=""):
       </div>
 
       {week_glance_panel}
-      {awards_panel}
     </section>
 
     <section class="tab-panel" id="panel-rank" role="tabpanel" aria-labelledby="tab-rank" tabindex="-1" data-tab-panel="rank" hidden>
@@ -8760,6 +8760,8 @@ def build_html(data, alt_href=None, alt_label=""):
     </section>
 
     {f'<section class="tab-panel" id="panel-duo" role="tabpanel" aria-labelledby="tab-duo" tabindex="-1" data-tab-panel="duo" hidden>{duo_synergy_panel}</section>' if duo_synergy_panel else ""}
+
+    {f'<section class="tab-panel" id="panel-records" role="tabpanel" aria-labelledby="tab-records" tabindex="-1" data-tab-panel="records" hidden>{awards_panel}</section>' if awards_panel else ""}
 
     <section class="tab-panel cards-collapsed" id="panel-friends" role="tabpanel" aria-labelledby="tab-friends" tabindex="-1" data-tab-panel="friends" hidden>
       <div class="friend-pills" role="tablist" aria-label="Choose a player">{friend_pills}</div>
