@@ -7368,6 +7368,19 @@ def build_html(data, alt_href=None, alt_label=""):
   }}
   .banner code {{ background: rgba(128,128,128,0.16); padding: 1px 5px; border-radius: 4px; }}
 
+  /* A ring is interactive and nothing about it says so. On a pointer that
+     does not matter: you find out by moving the mouse across it. Without one
+     you have to be told, so the prompt appears only where hover is absent,
+     and goes once the ring has been asked. */
+  @media (hover: none) {{
+    .donut[data-donut]::after {{
+      content: "Tap a segment";
+      display: block; text-align: center; margin-top: var(--sp-1);
+      font-size: 10.5px; color: var(--muted);
+    }}
+    .donut[data-donut].donut-open::after {{ content: "Tap away to clear"; }}
+  }}
+
   /* ---- Friend cards, collapsed ---------------------------------------
      Everything below the header folds away while all nine are on screen, so
      the tab opens as a comparable list rather than as several screens of one
@@ -9178,13 +9191,27 @@ def build_html(data, alt_href=None, alt_label=""):
             '<tspan x="' + x + '" dy="1.5em" class="dc-small">' + head + '</tspan>' +
             (tail ? '<tspan x="' + x + '" dy="1.15em" class="dc-small">' + tail + '</tspan>' : '');
         }}
-        function reset() {{ centre.innerHTML = original; }}
+        function reset() {{ centre.innerHTML = original; d.classList.remove('donut-open'); }}
         d.querySelectorAll('.donut-arc').forEach(function (arc) {{
           arc.addEventListener('mouseenter', function () {{ show(arc); }});
           arc.addEventListener('focus', function () {{ show(arc); }});
           arc.addEventListener('blur', reset);
+          // A phone has no pointer to hover with, and tapping an SVG shape
+          // does not reliably focus it, so without this the only way to read
+          // these rings was to own a mouse. The answer still goes in the
+          // hole; this is just another way of asking for it.
+          arc.addEventListener('click', function (e) {{
+            e.stopPropagation();
+            show(arc);
+            d.classList.add('donut-open');
+          }});
         }});
         d.addEventListener('mouseleave', reset);
+        // Tapping anywhere else puts the title back, so a ring left open is
+        // never mistaken for the ring's own label.
+        document.addEventListener('click', function (e) {{
+          if (!d.contains(e.target)) reset();
+        }});
       }});
 
       document.querySelectorAll('.range-btn[data-proj]').forEach(function (b) {{

@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-10-15",
+    "title": "The rings answer to a tap",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Game types and Roles played could only be read with a mouse. A ring answers in its own hole when you hover a segment, and a phone has nothing to hover with; tapping an SVG shape does not reliably focus it either, so on a phone the two rings were decoration. They answer to a tap now, and tapping away puts the title back."
+      },
+      {
+        "type": "changed",
+        "text": "Where there is no pointer, each ring says Tap a segment underneath. On a mouse you find out a ring is interactive by moving across it, which is why the prompt only appears where that cannot happen. No legend: a legend is a second copy of the same figures, takes more room than the ring it explains, and makes you match colours by eye."
+      }
+    ]
+  },
+  {
+    "date": "2026-10-15",
     "title": "The Friends tab opens as a list, and the trend column says the number first",
     "items": [
       {
