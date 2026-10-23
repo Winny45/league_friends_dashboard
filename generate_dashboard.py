@@ -85,6 +85,11 @@ FRIEND_PALETTE = [
     # accounts. Four slots from his, and far enough apart in lightness that
     # they are still two lines rather than one line in two moods.
     {"light": "#cf8a4a", "dark": "#ffc98a"},  # 8 Brett2nd pale apricot
+    # Kirish's alt, a softer version of his blue by the same rule as the other
+    # two pairs. The care here is Rory, who holds a desaturated grey-blue two
+    # slots up: this one stays saturated and goes light, so the pair reads as
+    # two blues of different weight rather than as Rory twice.
+    {"light": "#5b92d8", "dark": "#9fc9ff"},  # 9 Kirish2nd pale sky
 ]
 
 

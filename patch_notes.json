@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-10-23",
+    "title": "Kirish has a second account now",
+    "items": [
+      {
+        "type": "added",
+        "text": "KMan123123 joins as Kirish2nd, marked as Kirish's second account, so the switch in the header that hides second accounts now hides three: his, Brett's and Shas's."
+      },
+      {
+        "type": "changed",
+        "text": "A tenth colour. The palette had exactly nine slots for nine players and a tenth would have been dropped from both charts. Kirish2nd is a lighter version of Kirish's blue, the same way the other two pairs work, with the care being Rory: he holds a greyed blue already, so this one stays saturated and goes pale, and the three read as three rather than as Rory twice. Checked at the width a chart line is drawn."
+      }
+    ]
+  },
+  {
     "date": "2026-10-15",
     "title": "Season highlights moves to a Records tab",
     "items": [
