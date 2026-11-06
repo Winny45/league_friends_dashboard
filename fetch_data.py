@@ -184,6 +184,19 @@ class RiotClient:
     def get_account_by_riot_id(self, game_name, tag_line):
         return self._get(self.routing, f"/riot/account/v1/accounts/by-riot-id/{urllib.parse.quote(game_name)}/{urllib.parse.quote(tag_line)}")
 
+    def get_account_by_puuid(self, puuid):
+        # Used only to recover from a rename, so a failure here is not fatal:
+        # it just means we fall back to "account not found". A PUUID is
+        # encrypted with the API key that issued it, so one stored under a
+        # previous key comes back as 400 "Exception decrypting ..." rather
+        # than 404, and _get raises on 400. Swallow that.
+        if not puuid:
+            return None
+        try:
+            return self._get(self.routing, f"/riot/account/v1/accounts/by-puuid/{urllib.parse.quote(puuid)}")
+        except RuntimeError:
+            return None
+
     def get_summoner_by_puuid(self, puuid):
         return self._get(self.platform, f"/lol/summoner/v4/summoners/by-puuid/{puuid}")
 
@@ -330,6 +343,19 @@ def extract_match_entry(m, puuid, match_id):
     }
 
 
+def _logged_puuid(scrape_log: dict, label: str):
+    """The PUUID this label was last scraped under, or None.
+
+    The scrape log is keyed by PUUID and carries the label, which makes it the
+    one place that already remembers who a friend is independently of what
+    they currently call themselves.
+    """
+    for puuid, entry in scrape_log.items():
+        if isinstance(entry, dict) and entry.get("label") == label:
+            return puuid
+    return None
+
+
 def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: int,
                       season_start_epoch: float, season_start_key: str, max_season_matches: int,
                       match_cache: dict, scrape_log: dict, force_resync: bool = False,
@@ -341,8 +367,26 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
     print(f"Fetching {label} ({riot_id})...")
     account = client.get_account_by_riot_id(game_name, tag_line)
     if not account:
-        print(f"  ! could not find account for {riot_id} - skipping")
-        return None
+        # A Riot ID is a display name, not an identifier. Players rename, and
+        # the old name stops resolving the moment they do. The PUUID behind it
+        # does not change, and the scrape log has been keyed by PUUID since the
+        # first run, so a rename is recoverable rather than fatal.
+        #
+        # This is not hypothetical. One player renamed both of his accounts on
+        # the same day. Every run after that tripped the "not all friends came
+        # back" guard, so the workflow mailed a failure every fifteen minutes
+        # for five days while the page sat frozen, and the only way to find his
+        # new name was to read it out of someone else's match history.
+        renamed = client.get_account_by_puuid(_logged_puuid(scrape_log, label))
+        if renamed and renamed.get("gameName"):
+            riot_id = f"{renamed['gameName']}#{renamed['tagLine']}"
+            game_name, tag_line = renamed["gameName"], renamed["tagLine"]
+            account = renamed
+            print(f"  ! renamed since the last run, now {riot_id} - carrying on with the new name")
+            print(f"  ! update \"{label}\" in config.json to stop this lookup happening every run")
+        else:
+            print(f"  ! could not find account for {riot_id} - skipping")
+            return None
     puuid = account["puuid"]
 
     summoner = client.get_summoner_by_puuid(puuid) or {}

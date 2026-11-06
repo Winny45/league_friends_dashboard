@@ -239,6 +239,10 @@ jobs:
         run: python ci/make_config.py
 
       - name: Fetch from Riot
+        id: fetch
+        # Reported by the step below rather than failing the job here, so one
+        # ongoing problem does not mail a failure every fifteen minutes.
+        continue-on-error: true
         # A warm run fetches a handful of new matches and takes about a
         # minute. A cold one, or a backfill, can legitimately take an hour,
         # which is why the job's own cap is generous. But with nothing
@@ -261,20 +265,71 @@ jobs:
             python fetch_data.py
           fi
 
+      # A Riot ID is a display name, not an identifier. When one player renamed
+      # both of his accounts, every run tripped fetch_data.py's "not all
+      # friends came back" guard: the job failed every fifteen minutes for
+      # five days, which is some 460 identical emails about one problem that
+      # needed saying once.
+      #
+      # So a failure is reported the first time it is seen each day and kept
+      # quiet after that, and the next publish is skipped so a stale page is
+      # never redeployed as if it were fresh. The marker lives in the state
+      # repo because it has to outlive the runner, and is cleared the moment
+      # the fetch works again so the next distinct problem reports at once.
+      - name: Report a fetch failure once a day, not every run
+        id: triage
+        run: |
+          set -uo pipefail
+          marker=.state/fetch_alert.txt
+          save() {
+            (
+              cd .state
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add -A fetch_alert.txt
+              git diff --cached --quiet || { git commit -q -m "$1"; git push -q; }
+            )
+          }
+
+          if [ "${{ steps.fetch.outcome }}" = "success" ]; then
+            echo "publish=yes" >> "$GITHUB_OUTPUT"
+            if [ -f "$marker" ]; then
+              rm -f "$marker"
+              save "Fetch healthy again"
+              echo "Fetch recovered. Reporting is re-armed."
+            fi
+            exit 0
+          fi
+
+          echo "publish=no" >> "$GITHUB_OUTPUT"
+          today=$(date -u +%Y-%m-%d)
+          if [ -f "$marker" ] && [ "$(cat "$marker")" = "$today" ]; then
+            echo "::warning::Fetch failed again. Already reported today, so this run is kept quiet. See the Fetch from Riot step for the reason."
+            exit 0
+          fi
+          echo "$today" > "$marker"
+          save "Fetch failing as of $today"
+          echo "::error::Fetch from Riot failed. Today's further failures will not be reported."
+          exit 1
+
       - name: Rebuild the page
+        if: steps.triage.outputs.publish == 'yes'
         # Straight into deploy/, so the two builds link to each other by the
         # names they are actually published under and nothing has to be
         # copied twice. The share images land beside them for the same reason.
         run: python generate_dashboard.py data.json deploy/index.html
 
       - name: Assemble the deploy directory
+        if: steps.triage.outputs.publish == 'yes'
         run: |
           ls -l deploy
 
       - name: Check the page before it goes public
+        if: steps.triage.outputs.publish == 'yes'
         run: python ci/check_deploy.py
 
       - name: Publish to Vercel
+        if: steps.triage.outputs.publish == 'yes'
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

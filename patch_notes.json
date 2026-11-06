@@ -1,5 +1,23 @@
 [
   {
+    "date": "2026-11-06",
+    "title": "Kirish renamed both his accounts, and the site now copes with that",
+    "items": [
+      {
+        "type": "fixed",
+        "text": "Kirish renamed both of his accounts on 1 November. Riot looks accounts up by name, so both stopped resolving that morning, and the whole dashboard froze there: the fetch refuses to write a file that would silently drop a player, so nobody's data had updated in five days. Both are pointing at the right accounts again and his history is intact, because none of it was ever filed under the old names."
+      },
+      {
+        "type": "changed",
+        "text": "A rename no longer breaks anything. The id Riot actually identifies an account by never changes, and the fetch log has been keyed by it since the first run, so when a name stops resolving the fetch looks the account up by that id instead, picks the new name up from Riot and carries on. The name in the config is only a starting point now."
+      },
+      {
+        "type": "changed",
+        "text": "A problem that lasts is reported once a day instead of once every fifteen minutes. This one sent about 460 identical failure emails for a single thing that needed saying once. The page is also held back while a fetch is failing rather than being redeployed unchanged, so the build time on the page always means the data behind it is that fresh."
+      }
+    ]
+  },
+  {
     "date": "2026-10-23",
     "title": "Kirish has a second account now",
     "items": [
