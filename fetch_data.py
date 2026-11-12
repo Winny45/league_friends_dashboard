@@ -23,6 +23,8 @@ import time
 import urllib.request
 import urllib.error
 import urllib.parse
+import http.client
+import ssl
 from datetime import datetime, timedelta, timezone
 
 # Riot IDs can contain characters outside the Windows console's default
@@ -179,6 +181,23 @@ class RiotClient:
                 raise RuntimeError(
                     f"Riot API error {e.code} on {path}: {e.read().decode('utf-8', 'ignore')}"
                 )
+            except (urllib.error.URLError, http.client.HTTPException,
+                    ssl.SSLError, TimeoutError, ConnectionError) as e:
+                # A dropped connection is not an answer, it is the absence of
+                # one, and a warm run makes a few hundred calls over the public
+                # internet while a cold one makes thousands. At that volume one
+                # of them ending early is ordinary.
+                #
+                # This loop used to retry a 429 and nothing else, so a single
+                # TLS session closing mid-handshake abandoned that friend,
+                # which left nine of ten and tripped the guard against writing
+                # a dataset with someone missing. One lost packet, no publish.
+                if attempt == 2:
+                    raise RuntimeError(f"Network error on {path} after 3 tries: {e}")
+                wait = 2 ** attempt
+                print(f"  network error on {path} ({e}); retrying in {wait}s")
+                time.sleep(wait)
+                continue
         raise RuntimeError(f"Failed after retries: {path}")
 
     def get_account_by_riot_id(self, game_name, tag_line):
