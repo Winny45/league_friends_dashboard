@@ -90,6 +90,16 @@ FRIEND_PALETTE = [
     # slots up: this one stays saturated and goes light, so the pair reads as
     # two blues of different weight rather than as Rory twice.
     {"light": "#5b92d8", "dark": "#9fc9ff"},  # 9 Kirish2nd pale sky
+    # James's alt, a lighter orchid on the same rule as the other three pairs.
+    # This slot is the hardest of the four, because a pale orchid sits exactly
+    # between two colours already in use: Neel's violet is bluer, Shas2nd's
+    # pale pink is redder, and a washed-out orchid lands between them and reads
+    # as whichever of the two it happens to sit next to. So it keeps the purple
+    # firmly and only gains lightness. Measured rather than eyeballed: nothing
+    # it comes near is closer than 12.6 in dE2000, where the tightest pair
+    # already shipping is 9.9, and it sits 14.0 from James, about the same gap
+    # Brett and Brett2nd have at 13.1, so the two still read as one person.
+    {"light": "#a87ac8", "dark": "#dcb8f0"},  # 10 James2nd pale orchid
 ]
 
 

@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-11-12",
+    "title": "James has a second account now",
+    "items": [
+      {
+        "type": "added",
+        "text": "James2nd joins as James's second account, which makes eleven players and four second accounts. The switch in the header that hides second accounts now hides four, and with it off the board is back to the seven of you on your mains."
+      },
+      {
+        "type": "changed",
+        "text": "An eleventh colour. The palette had exactly ten slots for ten players, and an eleventh would have been dropped off both rank charts rather than drawn. James2nd is a lighter version of James's orchid, the same way the other three pairs work. This one was the awkward one: a pale orchid sits right between Neel's violet and Shas2nd's pale pink, and washed out it reads as whichever of the two it happens to sit beside, so it keeps the purple and only gains lightness. Checked by measuring it against every other colour rather than by eye."
+      }
+    ]
+  },
+  {
     "date": "2026-11-06",
     "title": "Kirish renamed both his accounts, and the site now copes with that",
     "items": [
