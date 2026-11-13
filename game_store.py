@@ -314,11 +314,14 @@ def backfill(client, store, match_ids, budget_seconds, wait=None, save_every=25,
 
 
 def _main(argv):
-    """python game_store.py [--budget SECONDS] [--polite]
+    """python game_store.py [--budget SECONDS] [--polite] [--oldest-first]
 
     Fills the store from the ids in scrape_log.json using the key in
     config.json. --polite idles around the top of each hour, when the
     scheduled publish makes its own calls on the same rate limit.
+    --oldest-first works from the far end of the season, so a local fill and
+    the scheduled one, which goes newest first, meet in the middle instead of
+    both fetching the same games.
     """
     import fetch_data
     budget = 10 ** 9
@@ -334,7 +337,8 @@ def _main(argv):
     for entry in log.values():
         if isinstance(entry, dict) and entry.get("label") in wanted:
             ids.update(entry.get("matchIds") or [])
-    ordered = sorted(ids, key=lambda m: int(m.split("_")[-1]), reverse=True)
+    ordered = sorted(ids, key=lambda m: int(m.split("_")[-1]),
+                     reverse="--oldest-first" not in argv)
 
     def wait():
         while polite and (datetime.now().minute >= 58 or datetime.now().minute < 5):
