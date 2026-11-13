@@ -55,4 +55,33 @@ if companion.exists():
 else:
     print("note: no deploy/main.html, so no second accounts are configured.")
 
+# The analysis pages and the game files they load. Built only once the game
+# store has something in it, so their absence is a note and not a failure.
+# What they must never do is carry the key, or reach the public site as a
+# husk: a page that parsed its data and found nothing still has a title.
+KEY = r"RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+for name in ("analysis.html", "analysis-main.html"):
+    extra = pathlib.Path("deploy", name)
+    if not extra.exists():
+        print(f"note: no deploy/{name} this build.")
+        continue
+    text = extra.read_text(encoding="utf-8")
+    if re.search(KEY, text):
+        sys.exit(f"! a live-looking Riot API key is in deploy/{name}. Refusing to publish.")
+    if 'id="analysis-data"' not in text or len(text) < 100_000:
+        sys.exit(f"! deploy/{name} is {len(text)} bytes and looks incomplete. Refusing to publish.")
+    print(f"deploy/{name} looks publishable: {len(text)} bytes, no key.")
+
+games = sorted(pathlib.Path("deploy", "g").glob("*.json")) if pathlib.Path("deploy", "g").is_dir() else []
+if games:
+    # A puuid is 78 characters of base64url. The public game files are meant
+    # to hold names and numbers only, so one turning up means the stripping
+    # in analysis.public_game was bypassed.
+    sample = games[-1].read_text(encoding="utf-8")
+    if re.search(KEY, sample):
+        sys.exit(f"! a live-looking Riot API key is in {games[-1]}. Refusing to publish.")
+    if '"pu"' in sample or re.search(r'"[A-Za-z0-9_-]{78}"', sample):
+        sys.exit(f"! {games[-1]} contains what looks like a puuid. Refusing to publish.")
+    print(f"deploy/g holds {len(games)} day files; newest checked, no key, no puuids.")
+
 print(f"deploy/index.html looks publishable: {len(html)} bytes, no key, assets present.")

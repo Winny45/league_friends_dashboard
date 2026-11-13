@@ -1082,6 +1082,190 @@ def winrate_bar(pct, color):
     return f'''<div class="wr-track"><div class="wr-fill" style="width:{pct}%;background:{fill};"></div></div>'''
 
 
+# ---------------------------------------------------------------------------
+# What this page borrows from the analysis pages.
+#
+# Everything else here is worked out from a friend's own match rows. A gold
+# difference at fifteen minutes, or how someone plays against the other
+# supports in their games, needs the other nine players and the timeline,
+# which live in the game store and are worked out by analysis.py. This page
+# shows a handful of those figures and links through for the rest.
+#
+# All of it is optional. With no game store the context is empty, each of
+# these returns nothing, and the page is what it was before.
+# ---------------------------------------------------------------------------
+_AN = {"a": None, "basic": None, "href": None}
+
+
+def set_analysis_context(analysis, href):
+    _AN["a"] = analysis
+    _AN["basic"] = analysis.for_basic() if analysis else None
+    _AN["href"] = href if analysis else None
+
+
+def gold_text(v):
+    """+1.4k, −940. A real minus sign, so the column lines up."""
+    if v is None:
+        return "–"
+    a = abs(v)
+    body = f"{a / 1000:.1f}k" if a >= 1000 else f"{a:.0f}"
+    return ("+" if v > 0 else "−" if v < 0 else "") + body
+
+
+def gold_span(v):
+    if v is None:
+        return '<span class="muted">–</span>'
+    colour = "var(--good)" if v > 0 else "var(--critical)" if v < 0 else "inherit"
+    return f'<b style="color:{colour};">{gold_text(v)}</b>'
+
+
+def gold_at_15(label, match_id):
+    basic = _AN["basic"]
+    return basic["g15"].get((label, match_id)) if basic else None
+
+
+def breakdown_href(m):
+    """Link to a game's full breakdown, or None if that game is not stored."""
+    basic = _AN["basic"]
+    if not basic or m.get("matchId") not in basic["stored"]:
+        return None
+    return f'{_AN["href"]}#tab=game&game={m["matchId"]}&team={m.get("teamId", "")}'
+
+
+def render_perf_bar(score):
+    return (f'<span class="perf"><span class="perf-track"><i style="width:{max(3, min(100, score))}%"></i></span>'
+            f'<b>{score}</b></span>')
+
+
+def render_comfort(tag):
+    return f'<span class="comfort comfort-{tag.lower()}">{esc(tag)}</span>'
+
+
+def render_verdict(v):
+    if not v:
+        return '<span class="muted">–</span>'
+    mark, colour = {"above": ("▲ above", "var(--good)"), "below": ("▼ below", "var(--critical)"),
+                    "average": ("≈ average", "var(--text-secondary)")}[v]
+    return f'<span style="color:{colour};white-space:nowrap;">{mark}</span>'
+
+
+def low_sample(games):
+    return ' <span class="low-sample">low sample</span>' if games < 10 else ""
+
+
+def render_last_day_panel(friends_sorted, generated_ms):
+    """Every game a friend finished in the day before this page was built."""
+    if not generated_ms:
+        return ""
+    since = generated_ms - 24 * 3600 * 1000
+    games = [(m, f["label"]) for f in friends_sorted for m in f.get("seasonMatches", [])
+             if not m.get("remake") and (m.get("gameStartMs") or 0) >= since]
+    games.sort(key=lambda g: -(g[0].get("gameStartMs") or 0))
+    if not games:
+        return ('<div class="panel"><h2 style="margin-bottom:6px;">Last 24 hours</h2>'
+                '<p class="panel-hint" style="margin:0;">Nobody has played ranked since this time yesterday.</p></div>')
+    shown, cards = games[:12], []
+    for m, label in shown:
+        href = breakdown_href(m)
+        win = bool(m.get("win"))
+        g15 = gold_at_15(label, m.get("matchId"))
+        inner = (
+            f'<span class="g24-top">{render_champion_icon(m["champion"], size=30)}'
+            f'<span><b>{esc(champion_display(m["champion"]))}</b><br>'
+            f'<span style="color:var({friend_colour(label)});font-weight:600;">{esc(label)}</span></span></span>'
+            f'<span class="g24-mid"><span class="tag {"win" if win else "loss"}">{"WIN" if win else "LOSS"}</span>'
+            f'<b>{esc(m["kills"])}/{esc(m["deaths"])}/{esc(m["assists"])}</b></span>'
+            f'<span class="g24-low">Gold @15 {gold_span(g15)}</span>')
+        cls = f'g24 {"g24-win" if win else "g24-loss"}'
+        cards.append(f'<a class="{cls}" href="{esc(href)}">{inner}</a>' if href
+                     else f'<div class="{cls}">{inner}</div>')
+    more = (f'<p class="muted small" style="margin:12px 0 0;">and {len(games) - len(shown)} more.</p>'
+            if len(games) > len(shown) else "")
+    hint = ("Every game since yesterday. Click one for the full breakdown."
+            if _AN["basic"] else "Every game since yesterday.")
+    return (f'<div class="panel"><h2 style="margin-bottom:6px;">Last 24 hours</h2>'
+            f'<p class="panel-hint">{hint}</p><div class="g24-grid">{"".join(cards)}</div>{more}</div>')
+
+
+def analysis_week_tiles(now):
+    """Three more lines for "this week at a glance", from the game store."""
+    a = _AN["a"]
+    if not a:
+        return []
+    notes = a.week_notes(int((now - timedelta(days=7)).timestamp() * 1000))
+    tiles = []
+    o = notes.get("objective")
+    if o:
+        tiles.append(("\U0001f9f9", "Objective hog",
+                      f'{esc(o["label"])} took part in <strong>{o["pct"]}%</strong> of their team&#39;s objectives.',
+                      _detail("Share of their own team&#39;s dragons, voidgrub camps, heralds, barons and "
+                              "Atakhans they killed or helped kill, over the last seven days. Four stored "
+                              "games needed.", o["table"], "%", 0)))
+    r = notes.get("roam")
+    if r:
+        tiles.append(("\U0001f9ed", "Roam king",
+                      f'{esc(r["label"])} got <strong>{r["pct"]}%</strong> of laning takedowns away from {esc(r["lane"])}.',
+                      _detail("Kills and assists between 3 and 14 minutes that happened somewhere other "
+                              "than the player&#39;s own lane, as a share of all of theirs in that window. "
+                              "Junglers have no lane to leave and are not ranked.", r["table"], "%", 0)))
+    n = notes.get("night")
+    if n:
+        tiles.append(("\U0001f319", "Late-night tilt",
+                      f'The group is <strong>{n["wins"]}W {n["losses"]}L</strong> after midnight this week.',
+                      None))
+    return tiles
+
+
+# Styles for the pieces added with the analysis pages. A plain string dropped
+# into the stylesheet rather than written inside build_html's f-string, where
+# every brace would have to be doubled.
+EXTRA_CSS = """
+  /* Wider than it was. The overview is two columns now, and a leaderboard
+     beside a week summary does not fit in 1060px without squeezing both. */
+  .wrap { max-width: 1280px; }
+  .brand { flex-wrap: wrap; }
+  .mode { display: inline-flex; padding: 4px; border-radius: 13px; background: var(--surface-1);
+          border: 1px solid var(--border-strong); margin-left: 6px; }
+  .mode a { padding: 8px 16px; border-radius: 9px; font-size: 13px; font-weight: 600;
+            text-decoration: none; color: var(--text-secondary); white-space: nowrap; }
+  .mode a:hover { color: var(--text-primary); }
+  .mode a.on { color: #fff; background: var(--accent); }
+  .ov-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--sp-5); align-items: start; }
+  .ov-main, .ov-side { min-width: 0; }
+  .ov-side .ov-tiles { grid-template-columns: 1fr 1fr; margin-bottom: var(--sp-5); }
+  .ov-side .awards { grid-template-columns: 1fr; }
+  @media (max-width: 1040px) { .ov-grid { grid-template-columns: 1fr; } .ov-side .awards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { .ov-side .awards { grid-template-columns: 1fr; } .mode { margin-left: 0; } .mode a { padding: 7px 12px; } }
+  .g24-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+  .g24 { display: flex; flex-direction: column; gap: 9px; padding: 12px 13px; border-radius: 12px; text-decoration: none;
+         color: var(--text-primary); background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; }
+  .g24-win { border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+  .g24-loss { border-color: color-mix(in srgb, var(--critical) 40%, transparent); }
+  a.g24:hover { background: var(--surface-3); transform: translateY(-1px); }
+  .g24-top { display: flex; align-items: center; gap: 9px; line-height: 1.25; }
+  .g24-mid { display: flex; align-items: center; justify-content: space-between; }
+  .g24-low { color: var(--muted); font-size: 12px; }
+  .perf { display: inline-flex; align-items: center; gap: 10px; min-width: 104px; width: 100%; }
+  .perf-track { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; min-width: 60px; }
+  .perf-track > i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #5b8cff, #a78bfa); }
+  .perf b { min-width: 22px; text-align: right; }
+  .comfort { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700;
+             border: 1px solid var(--border-strong); white-space: nowrap; }
+  .comfort-main { color: #c4b5fd; background: rgba(139,108,246,0.16); border-color: rgba(139,108,246,0.45); }
+  .comfort-comfortable { color: #8ec1ff; background: rgba(76,141,255,0.14); border-color: rgba(76,141,255,0.45); }
+  .comfort-learning { color: var(--text-secondary); background: var(--surface-2); }
+  .low-sample { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
+                color: var(--text-secondary); background: var(--surface-2); border: 1px solid var(--border); }
+  .bd-link { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; font-size: 12.5px; }
+  .bd-link:hover { text-decoration: underline; }
+  .bd-cell { text-align: right; }
+  .an-hint { display: flex; gap: 12px; align-items: center; margin-top: 16px; padding: 12px 14px; border-radius: 12px;
+             border: 1px dashed var(--border-strong); color: var(--text-secondary); text-decoration: none; font-size: 13px; }
+  .an-hint:hover { background: var(--surface-2); color: var(--text-primary); }
+  .an-hint b { color: #c4b5fd; }
+"""
+
+
 def render_match_dot(m):
     cls = "win" if m["win"] else "loss"
     when = format_match_when(m)
@@ -1113,6 +1297,8 @@ def render_match_row(m, friend_label=""):
     row_attrs = ""
     if party > 1 and band:
         row_attrs = f' class="party party-{min(party, 5)}" style="{band}"'
+    href = breakdown_href(m)
+    link = f'<a class="bd-link" href="{esc(href)}">Breakdown →</a>' if href else ""
     return f'''<tr{row_attrs}>
       <td class="muted small"{when_attr(m)}>{esc(format_match_when(m))}</td>
       <td><span class="tag {cls}">{label}</span></td>
@@ -1123,6 +1309,8 @@ def render_match_row(m, friend_label=""):
       <td class="num">{esc(m["csPerMin"])}</td>
       <td class="muted">{esc(m.get("queue", ""))}</td>
       <td class="num muted">{esc(m.get("durationMin", ""))}m</td>
+      <td class="num">{gold_span(gold_at_15(friend_label, m.get("matchId")))}</td>
+      <td class="bd-cell">{link}</td>
     </tr>'''
 
 
@@ -1711,7 +1899,31 @@ def render_lp_rates(rates_solo, rates_flex, rates_solo_50, rates_flex_50, tracki
     season, and it sharpens as more days are recorded.</p>'''
 
 
-def render_top_champions(rows):
+def render_top_champions(rows, label=None, season_matches=()):
+    basic = _AN["basic"]
+    if basic and label:
+        mine = [(k[1], v) for k, v in basic["champ"].items()
+                if k[0] == label and v["games"] >= TOP_CHAMPION_MIN_GAMES]
+        mine.sort(key=lambda kv: (-kv[1]["perf"], -kv[1]["games"]))
+        kdas = {}
+        for m in season_matches:
+            if not m.get("remake"):
+                kdas.setdefault(m["champion"], []).append(match_kda(m))
+        body = "".join(
+            f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(c, size=20)}'
+            f'{esc(champion_display(c))}</span></td>'
+            f'<td>{render_perf_bar(v["perf"])}</td>'
+            f'<td>{render_comfort(v["comfort"])}</td>'
+            f'<td class="num">{v["games"]}</td>'
+            f'<td class="num">{100 * v["wins"] / v["games"]:.1f}%</td>'
+            f'<td class="num muted">{(sum(kdas[c]) / len(kdas[c])) if kdas.get(c) else 0:.1f}</td></tr>'
+            for c, v in mine[:6])
+        if body:
+            return f'''<table class="matches-table">
+      <thead><tr><th>Champion</th><th>Performance</th><th>Comfort</th>
+      <th class="num">Games</th><th class="num">Winrate</th><th class="num">KDA</th></tr></thead>
+      <tbody>{body}</tbody>
+    </table>'''
     if not rows:
         return '<div class="muted small">No ranked games this season.</div>'
     body = "".join(
@@ -1916,6 +2128,38 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
         susp_title = (f' title="{esc(susp["note"] or "Temporarily banned")}: '
                       f'{days} day{"s" if days != 1 else ""} left, back on {back}"')
 
+    # Two ways of ranking a champion, and the label says which one is on show.
+    if _AN["basic"]:
+        top_note = ('<span class="label-note" title="Performance runs 0 to 100. Half is winrate, pulled toward '
+                    '50% until there are enough games to believe it. Half is how the games on that champion '
+                    'rank against everyone else who played the same role in them.&#10;&#10;Comfort is volume: '
+                    'Main from 25 games, Comfortable from 10, Learning below that.">by performance</span>')
+    else:
+        top_note = f'''<span class="label-note" title="Rating = {esc(f["label"])}&#39;s winrate across every game ({(overall_winrate(season_matches) or 0):.1f}%), plus how far this champion beats it, plus up to {TOP_CHAMPION_VOLUME:.0f} points for volume, plus or minus up to {TOP_CHAMPION_KDA:.0f} for KDA.&#10;&#10;The lift is multiplied by games / (games + {TOP_CHAMPION_PRIOR}), so a 3 game 100% counts for a fraction of what a 300 game record does, and halved again for the share of its games played in matchups it already wins more often than usual.&#10;&#10;KDA compares this champion&#39;s average against {esc(f["label"])}&#39;s own across every game; {TOP_CHAMPION_KDA_SPAN * 100:.0f}% above or below scores the full {TOP_CHAMPION_KDA:.0f} points, shrunk by the same confidence as the lift.&#10;&#10;Volume = {TOP_CHAMPION_VOLUME:.0f} x log(1 + games) / log(1 + most played).&#10;&#10;Champions with fewer than {TOP_CHAMPION_MIN_GAMES} games are not eligible.">weighted</span>'''
+    mine = (_AN["basic"] or {}).get("player", {}).get(f["label"])
+    extra_tiles = hint = ""
+    if mine:
+        role = mine["role"].lower()
+        kp = mine.get("kp")
+        lobby = mine.get("kpLobby")
+        versus = ""
+        if kp is not None and lobby is not None:
+            versus = (f' <span style="color:var({"--good" if kp >= lobby else "--critical"});">'
+                      f'{"▲" if kp >= lobby else "▼"} lobby {role}s {lobby:.0%}</span>')
+        extra_tiles = f'''
+        <div class="stat-tile">
+          <div class="stat-value">{gold_span(mine.get("g15"))}</div>
+          <div class="stat-label">Avg gold diff @15 vs lane opponent</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{f"{kp:.0%}" if kp is not None else "–"}</div>
+          <div class="stat-label">Kill participation as {role}{versus}</div>
+        </div>'''
+        hint = (f'<a class="an-hint" href="{esc(_AN["href"])}#tab=players&amp;player={esc(f["label"])}">'
+                f'<span aria-hidden="true">\U0001f4ca</span><span>Switch to <b>Data analysis</b> to see '
+                f'{esc(f["label"])}&#39;s radar charts, heatmaps, roaming stats and comparisons with other '
+                f'{role}s.</span></a>')
+
     return f'''
     <section class="card{susp_class}" id="friend-{f["label"].lower()}" tabindex="-1"
              aria-label="{esc(f["label"])}{" (suspended)" if susp else ""}"{susp_title}
@@ -1969,14 +2213,13 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
         <div class="stat-tile">
           <div class="stat-value">{busiest_count if busiest_date else "–"}</div>
           <div class="stat-label">{f"games played on {busiest_label}" if busiest_date else "Busiest day"}</div>
-        </div>
+        </div>{extra_tiles}
       </div>
 
       <div class="card-lower">
         <div class="cl-block cl-wide">
-          <div class="section-label">Top champions
-            <span class="label-note" title="Rating = {esc(f["label"])}&#39;s winrate across every game ({(overall_winrate(season_matches) or 0):.1f}%), plus how far this champion beats it, plus up to {TOP_CHAMPION_VOLUME:.0f} points for volume, plus or minus up to {TOP_CHAMPION_KDA:.0f} for KDA.&#10;&#10;The lift is multiplied by games / (games + {TOP_CHAMPION_PRIOR}), so a 3 game 100% counts for a fraction of what a 300 game record does, and halved again for the share of its games played in matchups it already wins more often than usual.&#10;&#10;KDA compares this champion&#39;s average against {esc(f["label"])}&#39;s own across every game; {TOP_CHAMPION_KDA_SPAN * 100:.0f}% above or below scores the full {TOP_CHAMPION_KDA:.0f} points, shrunk by the same confidence as the lift.&#10;&#10;Volume = {TOP_CHAMPION_VOLUME:.0f} x log(1 + games) / log(1 + most played).&#10;&#10;Champions with fewer than {TOP_CHAMPION_MIN_GAMES} games are not eligible.">weighted</span></div>
-          {render_top_champions(top_champs)}
+          <div class="section-label">Top champions {top_note}</div>
+          {render_top_champions(top_champs, f["label"], season_matches)}
         </div>
         <div class="cl-block">
           <div class="section-label">Highest mastery</div>
@@ -1991,7 +2234,7 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
       <details class="matches-details">
         <summary data-match-summary>Most Recent Games</summary>
         <table class="matches-table">
-          <thead><tr><th>When</th><th>Result</th><th>Champion</th><th>With</th><th>K/D/A</th><th>KDA</th><th>CS/min</th><th>Queue</th><th>Length</th></tr></thead>
+          <thead><tr><th>When</th><th>Result</th><th>Champion</th><th>With</th><th>K/D/A</th><th>KDA</th><th>CS/min</th><th>Queue</th><th>Length</th><th class="num">Gold @15</th><th></th></tr></thead>
           <tbody data-match-rows>{match_rows}</tbody>
         </table>
       </details>
@@ -2005,6 +2248,7 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
         <summary>Champion Matchups</summary>
         {render_matchups(matchups, matchup_covered, len(season_matches))}
       </details>
+      {hint}
     </section>'''
 
 
@@ -4343,7 +4587,8 @@ def longest_daily_run(dates):
 # end rather than disappearing, so adding a card cannot silently lose it.
 WEEK_TILE_ORDER = [
     "Total games this week", "Most active player", "Games played together",
-    "Biggest climber", "Hottest streak", "Animal of the week",
+    "Biggest climber", "Hottest streak", "Objective hog", "Roam king", "Late-night tilt",
+    "Animal of the week",
     "Most loved champion", "Adaptable", "Grasshopper",
 ]
 
@@ -5263,6 +5508,7 @@ def group_top_champions(friends, limit=10):
 
 def render_week_glance_panel(friends_sorted, awards, rank_history, now):
     tiles = week_tiles(friends_sorted, rank_history, now)
+    tiles = in_declared_order(list(tiles) + analysis_week_tiles(now), WEEK_TILE_ORDER, lambda t: t[1])
     if not tiles:
         return ""
     return f'''
@@ -5405,6 +5651,39 @@ def render_season_highlights_panel(friends_sorted, now):
 
 
 def render_group_top_champions(friends_sorted):
+    basic = _AN["basic"]
+    if basic:
+        labels = {f["label"] for f in friends_sorted}
+        best = [(k, v) for k, v in basic["champ"].items()
+                if k[0] in labels and v["games"] >= TOP_CHAMPION_MIN_GAMES]
+        best.sort(key=lambda kv: (-kv[1]["perf"], -kv[1]["games"]))
+        body = "".join(
+            f'<tr><td class="num muted small">{n}</td>'
+            f'<td class="champ-cell"><span class="cc">{render_champion_icon(k[1], size=20)}'
+            f'{esc(champion_display(k[1]))}</span></td>'
+            f'<td class="nowrap"><b style="color:var({friend_colour(k[0])});">{esc(k[0])}</b></td>'
+            f'<td class="muted">{esc(v["role"] or "–")}</td>'
+            f'<td>{render_perf_bar(v["perf"])}</td>'
+            f'<td>{render_comfort(v["comfort"])}</td>'
+            f'<td class="num">{v["games"]}{low_sample(v["games"])}</td>'
+            f'<td class="num">{100 * v["wins"] / v["games"]:.1f}%</td>'
+            f'<td class="num">{render_verdict(v["verdict"])}</td></tr>'
+            for n, (k, v) in enumerate(best[:10], start=1))
+        if body:
+            return f'''
+      <div class="panel">
+        <h2 style="margin-bottom:6px;">Top champions across everyone</h2>
+        <p class="panel-hint">Sorted by Performance: winrate, held back until there are enough games to
+          believe it, plus how they play against the lobby in that role. Comfort is how much it is played.</p>
+        <div class="table-scroll">
+          <table class="matches-table group-top">
+            <thead><tr><th class="num">#</th><th>Champion</th><th>Player</th><th>Role</th>
+            <th>Performance</th><th>Comfort</th><th class="num">Games</th>
+            <th class="num">Winrate</th><th class="num">vs lobby</th></tr></thead>
+            <tbody>{body}</tbody>
+          </table>
+        </div>
+      </div>'''
     rows = group_top_champions(friends_sorted)
     if not rows:
         return ""
@@ -5421,14 +5700,16 @@ def render_group_top_champions(friends_sorted):
         for n, r in enumerate(rows, start=1)
     )
     return f'''
-      <div class="muted small" style="margin:18px 0 8px;">Top champions across everyone</div>
-      <div class="table-scroll">
-        <table class="matches-table group-top">
-          <thead><tr><th class="num">#</th><th>Champion</th><th>Player</th>
-          <th class="num">Rating</th><th class="num">Games</th>
-          <th class="num">Winrate</th></tr></thead>
-          <tbody>{body}</tbody>
-        </table>
+      <div class="panel">
+        <h2 style="margin-bottom:14px;">Top champions across everyone</h2>
+        <div class="table-scroll">
+          <table class="matches-table group-top">
+            <thead><tr><th class="num">#</th><th>Champion</th><th>Player</th>
+            <th class="num">Rating</th><th class="num">Games</th>
+            <th class="num">Winrate</th></tr></thead>
+            <tbody>{body}</tbody>
+          </table>
+        </div>
       </div>'''
 
 
@@ -6926,8 +7207,9 @@ def without_second_accounts(data):
     return out
 
 
-def build_html(data, alt_href=None, alt_label=""):
+def build_html(data, alt_href=None, alt_label="", analysis=None, analysis_href=None):
     friends = data.get("friends", [])
+    set_analysis_context(analysis, analysis_href)
     friends_sorted = sorted(friends, key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)
     now = datetime.now()
     # The readings log is the record; the daily history is a view of it. The
@@ -7023,8 +7305,18 @@ def build_html(data, alt_href=None, alt_label=""):
     solo_l = sum((f["ranked"].get("solo") or {}).get("losses", 0) for f in friends_sorted)
     solo_total = solo_w + solo_l
     champ_pool = len({m.get("champion") for m in all_season if m.get("champion")})
+    # Of the games anybody played, how many had a second friend on the team.
+    # Counted per team in a game rather than per player, so a five-stack is
+    # one game together and not five.
+    on_side = {}
+    for f in friends_sorted:
+        for m in f.get("seasonMatches", []):
+            if not m.get("remake"):
+                on_side[(m.get("matchId"), m.get("teamId"))] = on_side.get((m.get("matchId"), m.get("teamId")), 0) + 1
+    together = (round(100 * sum(1 for n in on_side.values() if n > 1) / len(on_side)) if on_side else None)
+    last_day_panel = render_last_day_panel(friends_sorted, data.get("generatedAtMs"))
     group_stats = f'''
-      <div class="season-stats" style="margin-top:0;">
+      <div class="season-stats ov-tiles" style="margin-top:0;">
         <div class="stat-tile">
           <div class="stat-value">{len(all_season)}</div>
           <div class="stat-label">Ranked games this season ({format_minutes(sum(m.get("durationMin", 0) for m in all_season))})</div>
@@ -7036,6 +7328,10 @@ def build_html(data, alt_href=None, alt_label=""):
         <div class="stat-tile">
           <div class="stat-value">{champ_pool}</div>
           <div class="stat-label">Different champions played</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value">{f"{together}%" if together is not None else "&ndash;"}</div>
+          <div class="stat-label">Games played together</div>
         </div>
       </div>'''
 
@@ -8658,6 +8954,7 @@ def build_html(data, alt_href=None, alt_label=""):
     * {{ animation: none !important; transition: none !important; }}
     html {{ scroll-behavior: auto !important; }}
   }}
+{EXTRA_CSS}
 </style>
 </head>
 <body>
@@ -8667,6 +8964,7 @@ def build_html(data, alt_href=None, alt_label=""):
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">{BRAND_MARK_SVG}</div>
         <h1>League Friends Dashboard</h1>
+        {f'''<nav class="mode" aria-label="Dashboard mode"><a class="on" href="#" aria-current="page">Basic</a><a href="{esc(analysis_href)}">Data analysis</a></nav>''' if analysis is not None and analysis_href else ""}
       </div>
       <div class="header-actions">
         <!-- Hosted-only controls: revealed by JS once /api/status answers, so
@@ -8746,28 +9044,33 @@ def build_html(data, alt_href=None, alt_label=""):
     <main id="main" tabindex="-1">
     <div class="tabs" role="tablist" aria-label="Dashboard sections">
       <button class="tab-btn active" type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" tabindex="0" data-tab="overview">Overview</button>
+      <button class="tab-btn" type="button" role="tab" id="tab-friends" aria-controls="panel-friends" aria-selected="false" tabindex="-1" data-tab="friends">Players</button>
+      {'<button class="tab-btn" type="button" role="tab" id="tab-duo" aria-controls="panel-duo" aria-selected="false" tabindex="-1" data-tab="duo">Duos</button>' if duo_synergy_panel else ""}
       <button class="tab-btn" type="button" role="tab" id="tab-rank" aria-controls="panel-rank" aria-selected="false" tabindex="-1" data-tab="rank"><span class="tab-long">Rank progress</span><span class="tab-short">Ranks</span></button>
-      {'<button class="tab-btn" type="button" role="tab" id="tab-duo" aria-controls="panel-duo" aria-selected="false" tabindex="-1" data-tab="duo"><span class="tab-long">Duo synergy</span><span class="tab-short">Duos</span></button>' if duo_synergy_panel else ""}
       {'<button class="tab-btn" type="button" role="tab" id="tab-records" aria-controls="panel-records" aria-selected="false" tabindex="-1" data-tab="records">Records</button>' if awards_panel else ""}
-      <button class="tab-btn" type="button" role="tab" id="tab-friends" aria-controls="panel-friends" aria-selected="false" tabindex="-1" data-tab="friends">Friends</button>
     </div>
 
     <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="-1" data-tab-panel="overview">
-      <div class="panel">
-        <h2 style="margin-bottom:14px;">Ranked Solo/Duo leaderboard</h2>
-        <p class="panel-hint">Click any row to open that player&rsquo;s full season.</p>
-        <div class="table-scroll">
-          <table class="leaderboard">
-            <thead><tr><th class="num">#</th><th>Friend</th><th>Rank</th><th class="num">Winrate</th><th class="num">Record</th><th class="num">7-day trend</th></tr></thead>
-            <tbody>{leaderboard_rows}</tbody>
-          </table>
+      <div class="ov-grid">
+        <div class="ov-main">
+          <div class="panel">
+            <h2 style="margin-bottom:14px;">Ranked Solo/Duo leaderboard</h2>
+            <p class="panel-hint">Click any row to open that player&rsquo;s full season.</p>
+            <div class="table-scroll">
+              <table class="leaderboard">
+                <thead><tr><th class="num">#</th><th>Friend</th><th>Rank</th><th class="num">Winrate</th><th class="num">Record</th><th class="num">7-day trend</th></tr></thead>
+                <tbody>{leaderboard_rows}</tbody>
+              </table>
+            </div>
+          </div>
+          {last_day_panel}
+          {group_top_html}
         </div>
-        <div class="muted small" style="margin:16px 0 8px;">Across everyone</div>
-        {group_stats}
-        {group_top_html}
+        <div class="ov-side">
+          {group_stats}
+          {week_glance_panel}
+        </div>
       </div>
-
-      {week_glance_panel}
     </section>
 
     <section class="tab-panel" id="panel-rank" role="tabpanel" aria-labelledby="tab-rank" tabindex="-1" data-tab-panel="rank" hidden>
@@ -9739,7 +10042,7 @@ def build_html(data, alt_href=None, alt_label=""):
       }}
 
       function rowHtml(m, label) {{
-        // Nine cells, matching render_match_row(). It used to build eight: the
+        // Eleven cells, matching render_match_row(). It used to build eight: the
         // "With" column was missing entirely, so every column from Champion
         // rightwards landed one place left of its own heading on any row a
         // refresh added.
@@ -9773,7 +10076,11 @@ def build_html(data, alt_href=None, alt_label=""):
           '<td class="num">' + m.kda + '</td>' +
           '<td class="num">' + m.csPerMin + '</td>' +
           '<td class="muted">' + escapeHtml(m.queue) + '</td>' +
-          '<td class="num muted">' + m.durationMin + 'm</td></tr>';
+          '<td class="num muted">' + m.durationMin + 'm</td>' +
+          // Gold at 15 and the breakdown link come from the game store, which a
+          // game this recent has not reached yet. Two empty cells keep the row
+          // the same width as the ones the build wrote.
+          '<td class="num muted">&ndash;</td><td class="bd-cell"></td></tr>';
       }}
 
       function trim(container, selector, limit) {{
@@ -10802,17 +11109,58 @@ def main():
     alt_path = out_path.with_name(
         "main.html" if out_path.stem == "index" else out_path.stem + "-main" + out_path.suffix)
 
+    # The analysis pages, built first because the main page borrows a few of
+    # their numbers and links into them. Same pairing as the main page: one
+    # with everybody, one with second accounts left out, where a hidden
+    # account is simply one more stranger in the lobby.
+    stem = "analysis" if out_path.stem == "index" else out_path.stem + "-analysis"
+    an_path = out_path.with_name(stem + ".html")
+    an_alt_path = out_path.with_name(stem + "-main.html")
+    analysis = analysis_main = None
+    try:
+        import analysis_page
+        store_games = analysis_page.load_store_games(data_path.parent / "games")
+        if store_games:
+            mark_legacy_remakes(data.get("friends", []))
+
+            def colours(d):
+                return {f["label"]: FRIEND_PALETTE[min(i, len(FRIEND_PALETTE) - 1)]["dark"]
+                        for i, f in enumerate(d.get("friends", []))}
+            analysis = analysis_page.build(
+                data, store_games, colours(data), an_path, out_path.name,
+                an_alt_path.name if main_only else None, "Hide second accounts")
+            print(f"Wrote {an_path} ({len(analysis.games)} stored games)")
+            if main_only:
+                mark_legacy_remakes(main_only.get("friends", []))
+                analysis_main = analysis_page.build(
+                    main_only, store_games, colours(main_only), an_alt_path, alt_path.name,
+                    an_path.name, "Show second accounts")
+                print(f"Wrote {an_alt_path}")
+            days, count = analysis_page.write_game_files(analysis, out_path.parent / "g")
+            print(f"Wrote {count} games into {days} day files under {out_path.parent / 'g'}")
+        else:
+            print("No stored games yet, so no analysis pages this build.")
+    except Exception as e:
+        # The main page has run for months without any of this and must not
+        # stop publishing because the newer half of the site tripped.
+        import traceback
+        traceback.print_exc()
+        print(f"  ! analysis pages not built ({e}); the main page is unaffected")
+        analysis = analysis_main = None
+
     out_path.write_text(
         build_html(data,
                    alt_href=alt_path.name if main_only else None,
-                   alt_label="Hide second accounts"),
+                   alt_label="Hide second accounts",
+                   analysis=analysis, analysis_href=an_path.name),
         encoding="utf-8")
     print(f"Wrote {out_path}")
 
     if main_only:
         alt_path.write_text(
             build_html(main_only, alt_href=out_path.name,
-                       alt_label="Show second accounts"),
+                       alt_label="Show second accounts",
+                       analysis=analysis_main, analysis_href=an_alt_path.name),
             encoding="utf-8")
         hidden = ", ".join(sorted(second_account_labels(data)))
         print(f"Wrote {alt_path} (without {hidden})")

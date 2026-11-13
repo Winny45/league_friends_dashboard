@@ -16,6 +16,7 @@ details are cached on disk in matches_cache.json — re-running this script
 only fetches games that weren't already cached, so a daily refresh after the
 first big pull is fast.
 """
+import gzip
 import hashlib
 import json
 import sys
@@ -163,18 +164,35 @@ class RiotClient:
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Charset": "application/x-www-form-urlencoded; charset=UTF-8",
             "Origin": "https://developer.riotgames.com",
+            # A timeline is 750 KB of JSON and 65 KB of gzip. urllib does not
+            # ask for compression unless told to, and filling the game store
+            # without it spent four fifths of its time downloading.
+            "Accept-Encoding": "gzip",
         }
         req = urllib.request.Request(url, headers=headers)
-        for attempt in range(3):
+        attempt = 0
+        limited = 0
+        while attempt < 3:
             try:
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    body = resp.read()
+                    if resp.headers.get("Content-Encoding") == "gzip":
+                        body = gzip.decompress(body)
                     time.sleep(self.pause)
-                    return json.loads(resp.read().decode("utf-8"))
+                    return json.loads(body.decode("utf-8"))
             except urllib.error.HTTPError as e:
                 if e.code == 429:
+                    # Being told to wait is not the call failing, so it does
+                    # not spend one of the three tries. It used to, and that
+                    # was harmless while one process used the key. With a
+                    # second one filling the game store on the same limit,
+                    # three "wait"s in a row became "this friend is missing".
+                    limited += 1
+                    if limited > 12:
+                        raise RuntimeError(f"Rate limited {limited} times on {path}")
                     retry_after = int(e.headers.get("Retry-After", "5"))
                     print(f"  rate limited, waiting {retry_after}s...")
-                    time.sleep(retry_after)
+                    time.sleep(retry_after + 1)
                     continue
                 if e.code == 404:
                     return None
@@ -182,7 +200,7 @@ class RiotClient:
                     f"Riot API error {e.code} on {path}: {e.read().decode('utf-8', 'ignore')}"
                 )
             except (urllib.error.URLError, http.client.HTTPException,
-                    ssl.SSLError, TimeoutError, ConnectionError) as e:
+                    ssl.SSLError, TimeoutError, ConnectionError, EOFError, OSError) as e:
                 # A dropped connection is not an answer, it is the absence of
                 # one, and a warm run makes a few hundred calls over the public
                 # internet while a cold one makes thousands. At that volume one
@@ -197,6 +215,7 @@ class RiotClient:
                 wait = 2 ** attempt
                 print(f"  network error on {path} ({e}); retrying in {wait}s")
                 time.sleep(wait)
+                attempt += 1
                 continue
         raise RuntimeError(f"Failed after retries: {path}")
 
@@ -235,6 +254,9 @@ class RiotClient:
 
     def get_match(self, match_id):
         return self._get(self.routing, f"/lol/match/v5/matches/{match_id}")
+
+    def get_timeline(self, match_id):
+        return self._get(self.routing, f"/lol/match/v5/matches/{match_id}/timeline")
 
 
 def sync_new_match_ids_for_queue(client, puuid, start_time_epoch, queue_id, known_set, full_resync, budget_left):
@@ -362,17 +384,22 @@ def extract_match_entry(m, puuid, match_id):
     }
 
 
-def _logged_puuid(scrape_log: dict, label: str):
-    """The PUUID this label was last scraped under, or None.
+def _logged_puuids(scrape_log: dict, label: str):
+    """Every PUUID this label has been scraped under, most recent first.
 
     The scrape log is keyed by PUUID and carries the label, which makes it the
     one place that already remembers who a friend is independently of what
     they currently call themselves.
+
+    A list, not one value, because a PUUID is encrypted with the key that
+    issued it and the log outlives keys: anyone tracked since before the
+    current key has two rows, and the older one is first in the file and can
+    no longer be decrypted. Returning only the first match handed the rename
+    recovery a dead id for exactly the players most likely to need it.
     """
-    for puuid, entry in scrape_log.items():
-        if isinstance(entry, dict) and entry.get("label") == label:
-            return puuid
-    return None
+    found = [puuid for puuid, entry in scrape_log.items()
+             if isinstance(entry, dict) and entry.get("label") == label]
+    return found[::-1]
 
 
 def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: int,
@@ -396,7 +423,11 @@ def summarize_friend(client: RiotClient, label: str, riot_id: str, match_count: 
         # back" guard, so the workflow mailed a failure every fifteen minutes
         # for five days while the page sat frozen, and the only way to find his
         # new name was to read it out of someone else's match history.
-        renamed = client.get_account_by_puuid(_logged_puuid(scrape_log, label))
+        renamed = None
+        for known in _logged_puuids(scrape_log, label):
+            renamed = client.get_account_by_puuid(known)
+            if renamed and renamed.get("gameName"):
+                break
         if renamed and renamed.get("gameName"):
             riot_id = f"{renamed['gameName']}#{renamed['tagLine']}"
             game_name, tag_line = renamed["gameName"], renamed["tagLine"]
@@ -591,7 +622,9 @@ def get_champion_data():
     if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 86400:
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            if isinstance(cached, dict) and "byName" in cached:
+            # "items" arrived with the analysis pages; a cache written before
+            # then is re-fetched rather than read as having no items at all.
+            if isinstance(cached, dict) and "byName" in cached and "items" in cached:
                 _CHAMP_MAP_CACHE = cached
                 return _CHAMP_MAP_CACHE
         except Exception:
@@ -607,16 +640,35 @@ def get_champion_data():
             timeout=10,
         ) as resp:
             champ_data = json.loads(resp.read().decode("utf-8"))["data"]
+        with urllib.request.urlopen(
+            f"https://ddragon.leagueoflegends.com/cdn/{latest_version}/data/en_US/item.json",
+            timeout=15,
+        ) as resp:
+            item_data = json.loads(resp.read().decode("utf-8"))["data"]
         result = {
             "version": latest_version,
             "byKey": {str(v["key"]): v["name"] for v in champ_data.values()},
             "byName": {v["name"]: v["id"] for v in champ_data.values()},
+            # Match data names a champion by its slug ("MonkeyKing"), so the
+            # way back to a display name and to Riot's own class tags is
+            # keyed by slug.
+            "bySlug": {v["id"]: {"name": v["name"], "tags": v.get("tags", [])}
+                       for v in champ_data.values()},
+            # Enough of each item to tell a finished one from a component:
+            # "into" is empty for an item nothing builds out of.
+            "items": {str(k): {"name": v.get("name", ""),
+                               "gold": (v.get("gold") or {}).get("total", 0),
+                               "into": len(v.get("into") or []),
+                               "from": len(v.get("from") or []),
+                               "tags": v.get("tags", [])}
+                      for k, v in item_data.items()
+                      if (v.get("maps") or {}).get("11")},
         }
         cache_path.write_text(json.dumps(result), encoding="utf-8")
         _CHAMP_MAP_CACHE = result
     except Exception as e:
         print(f"  ! could not fetch champion data ({e}); mastery will show IDs and icons will be skipped")
-        _CHAMP_MAP_CACHE = {"version": None, "byKey": {}, "byName": {}}
+        _CHAMP_MAP_CACHE = {"version": None, "byKey": {}, "byName": {}, "bySlug": {}, "items": {}}
     return _CHAMP_MAP_CACHE
 
 
@@ -992,21 +1044,64 @@ def save_rank_history(history):
     RANK_HISTORY_PATH.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+# How long an ordinary run spends on the per-game store. A game costs two
+# calls, the key allows a hundred every two minutes, so this is about 230
+# games a run: a whole season arrives over fifteen or so hourly runs, and a
+# normal evening's new games take seconds.
+GAMES_BUDGET_SECONDS = 600
+
+
+def fill_game_store(client, results, budget_seconds):
+    """Top up games/ with any season game it does not hold yet.
+
+    Deliberately the last thing a run does, after data.json is written. The
+    store feeds the analysis pages, which cope with a game being absent; the
+    main page must never wait on, or fail because of, a few hundred extra
+    downloads.
+    """
+    if budget_seconds <= 0:
+        return
+    try:
+        import game_store
+        started = {}
+        for r in results:
+            for m in r.get("seasonMatches", []):
+                started[m["matchId"]] = m.get("gameStartMs") or 0
+        ordered = sorted(started, key=lambda mid: started[mid], reverse=True)
+        store = game_store.GameStore().load()
+        before = len(store)
+        stored, remaining = game_store.backfill(client, store, ordered, budget_seconds)
+        print(f"Game store: {before} held, {stored} added, {remaining} still to fetch"
+              + (f", {len(store.skip)} unavailable" if store.skip else "") + ".")
+    except Exception as e:
+        # Nothing here is allowed to turn a good run into a failed one.
+        print(f"  ! game store not updated this run ({e})")
+
+
 def parse_args(argv):
     """fetch_data.py [config.json] [--resync [Label ...]] [--allow-partial]
                      [--refetch-details] [--prune-cache]
 
-    Returns (config_path, resync, allow_partial, refetch_details, prune_cache).
+    Returns (config_path, resync, allow_partial, refetch_details, prune_cache,
+    games_budget).
     resync is None for a normal incremental run, an empty set to re-list
     everybody, or a set of labels. allow_partial permits writing data.json when
     some friends failed. refetch_details re-pulls cached matches that predate
     the lane opponent fields, which is what the matchup tables are built from.
     prune_cache deletes entries under the original match-id-only key, which no
-    lookup can reach.
+    lookup can reach. --games-budget SECONDS is how long to spend filling the
+    per-game store after the page data is safely written; 0 skips it.
     """
     config_path, resync, in_flag, allow_partial = None, None, False, False
     refetch_details = prune_cache = False
+    games_budget, want_budget = GAMES_BUDGET_SECONDS, False
     for a in argv:
+        if want_budget:
+            games_budget, want_budget = float(a), False
+            continue
+        if a == "--games-budget":
+            want_budget, in_flag = True, False
+            continue
         if a == "--resync":
             resync, in_flag = set(), True
             continue
@@ -1024,7 +1119,8 @@ def parse_args(argv):
             continue
         if config_path is None:
             config_path = a
-    return Path(config_path or "config.json"), resync, allow_partial, refetch_details, prune_cache
+    return (Path(config_path or "config.json"), resync, allow_partial, refetch_details,
+            prune_cache, games_budget)
 
 
 def track_api_key(key, permanent=False):
@@ -1066,7 +1162,8 @@ def main():
     # only the fallback for a browser with scripting off.
     run_started_ms = int(time.time() * 1000)
 
-    config_path, resync, allow_partial, refetch_details, prune_cache = parse_args(sys.argv[1:])
+    (config_path, resync, allow_partial, refetch_details, prune_cache,
+     games_budget) = parse_args(sys.argv[1:])
     if not config_path.exists():
         print(f"Config file not found: {config_path}\n"
               f"Copy config.example.json to config.json and fill in your API key + friends.")
@@ -1214,6 +1311,8 @@ def main():
         "rankTrackingSince": tracking_since,
         "ddragonVersion": champ_data.get("version"),
         "championIconMap": champ_data.get("byName", {}),
+        "championBySlug": champ_data.get("bySlug", {}),
+        "items": champ_data.get("items", {}),
     }
     # Refuse to publish a worse dataset than the one already on disk.
     #
@@ -1249,6 +1348,8 @@ def main():
     data_path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nWrote data.json with {len(results)} friend(s). "
           f"Rank tracking has {len(rank_history)} snapshot(s) since {tracking_since}.")
+
+    fill_game_store(client, results, games_budget)
 
     webhook_url = config.get("discord_webhook_url")
     if webhook_url:

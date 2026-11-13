@@ -231,7 +231,14 @@ jobs:
           for f in matches_cache.json scrape_log.json champions_cache.json key_state.json; do
             if [ -f ".cache/$f" ]; then cp ".cache/$f" "./$f"; fi
           done
+          # The per-game store behind the analysis pages: every player's line
+          # and a reduced timeline for each game, a month to a file. It is a
+          # cache in the sense that Riot will serve it all again, but a whole
+          # season is two hours of calls, so it is carried between runs like
+          # the match cache is.
+          if [ -d .cache/games ]; then cp -r .cache/games ./games; fi
           ls -l *.json
+          ls -l games 2>/dev/null || echo "No game store yet; this run starts one."
 
       - name: Assemble config.json
         env:
@@ -352,6 +359,13 @@ jobs:
           for f in matches_cache.json scrape_log.json champions_cache.json key_state.json; do
             if [ -f "$f" ]; then cp "$f" ".cache/$f"; fi
           done
+          # Copied over what is there rather than replacing the directory, so
+          # a run that died before loading the store cannot save an emptier
+          # one on top of a full one. game_store.py only ever adds.
+          if [ -d games ]; then
+            mkdir -p .cache/games
+            cp games/*.json .cache/games/ 2>/dev/null || true
+          fi
           cd .cache
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

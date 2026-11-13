@@ -1,5 +1,47 @@
 [
   {
+    "date": "2026-11-13",
+    "title": "Data analysis: a second half of the site",
+    "items": [
+      {
+        "type": "added",
+        "text": "There are two modes now, switched from beside the title. Basic is the dashboard you know. Data analysis is new, and it is built on something the site never had before: every player in every one of your games, not only you, plus what happened minute by minute. That is what lets it say whether your vision score is good for a support in your lobbies rather than just what it is."
+      },
+      {
+        "type": "added",
+        "text": "Game breakdown. Any game opens to its full scoreboard, the team gold lead through the game with every dragon, herald and baron marked on it, each lane's gold, XP and CS difference at 10 and 15, a win chance that moves with the gold, the objective log with who killed and who helped, and a map you can scrub through to see every kill or where all ten players stood at any minute."
+      },
+      {
+        "type": "added",
+        "text": "Players. Pick a role and get six stats that matter for that role with a percentile against everyone else who played it in your games, a radar, a map of where you stand, kill and die in each phase of the game, how often your early takedowns happen away from your own lane and whether your games go better when they do."
+      },
+      {
+        "type": "added",
+        "text": "Champions, Roles and classes, Time patterns, Duos and stacks, Game flow. Who plays a champion best and what they build on it. Winrate by champion class for each of you. Winrate by day and hour, by game number in a sitting, and after a loss. Winrate by how many of you were on the team, by role pairing and by champion pairing. And how often a lead at 15 is actually converted, with each person's throws and comebacks."
+      },
+      {
+        "type": "added",
+        "text": "On the Overview: every game from the last 24 hours as a card that opens its breakdown, and three new lines in This week at a glance for who took part in the most objectives, who roamed most, and how the group does after midnight."
+      },
+      {
+        "type": "changed",
+        "text": "Top champions are ranked by Performance now, here and on each player's card. It is half winrate, held toward 50% until there are enough games to believe it, and half how those games rank against the lobby in that role, so six wins from six no longer sits above sixty from a hundred. Each champion also says whether it is a Main, Comfortable or still Learning by how much it is played."
+      },
+      {
+        "type": "changed",
+        "text": "Each player's card has their average gold difference at 15 against their lane opponent and their kill participation beside the lobby's, and every recent game lists its gold at 15 with a link straight to the breakdown."
+      },
+      {
+        "type": "changed",
+        "text": "The tabs are reordered to Overview, Players, Duos, Rank progress, Records, the Friends tab is called Players, and the page is wider so the leaderboard and the week sit side by side."
+      },
+      {
+        "type": "changed",
+        "text": "Three honest limits. Full detail arrives a few hundred games at a time, newest first, so the analysis says how many of the season's games it is built from until it has them all. Ward positions are not in what Riot provides, so the map shows kills and positions only. And a stolen objective is only labelled when it cannot be anything else."
+      }
+    ]
+  },
+  {
     "date": "2026-11-12",
     "title": "James has a second account now",
     "items": [

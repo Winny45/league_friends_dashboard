@@ -62,3 +62,17 @@ run_hidden_error.log
 
 # Per-refresh rank readings: names the players, so not in a public repo.
 rank_readings.json
+
+# The per-game store: full lobbies and timelines, so real names and puuids
+# for every player in every game, friends or not.
+games/
+# The analysis pages and the per-day game files they load, built from it.
+analysis.html
+analysis-main.html
+g/
+deploy/analysis.html
+deploy/analysis-main.html
+deploy/g/
+
+# Local preview config for the desktop app; nothing the build reads.
+.claude/
