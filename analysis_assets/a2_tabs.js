@@ -218,11 +218,18 @@ const searchBox = big => `<div class="sg${big ? ' big' : ''}"><input class="sear
 
 function champGrid() {
   const L = D.champions.list, rf = ROLES.includes(S.crf) ? S.crf : 'All', sort = S.csort === 'wr' ? 'wr' : 'games';
-  const pick = L.filter(c => rf === 'All' || c.roles.some(r => r[0] === rf))
+  /* The wiki's tags as a filter, commonest first, so "everything with crowd control" is one click. */
+  const tagCount = {};
+  L.forEach(c => (C(c.champ).tg || []).forEach(t => { tagCount[t] = (tagCount[t] || 0) + 1; }));
+  const tags = Object.keys(tagCount).sort((a, b) => tagCount[b] - tagCount[a]), tg = tags.includes(S.ctag) ? S.ctag : '';
+  const pick = L.filter(c => (rf === 'All' || c.roles.some(r => r[0] === rf)) && (!tg || (C(c.champ).tg || []).includes(tg)))
     .map(c => rf === 'All' ? c : Object.assign({}, c, { games: c.roles.find(r => r[0] === rf)[1] }));
   let out = `<section class="card" style="margin-bottom:20px"><div class="champ-head">${searchBox(true)}` +
     `<div class="pills"><span class="pill-label">Role</span>${pill('All', rf === 'All', set({ crf: '' }), ' sm')}${ROLES.map(r => pill(ricon(r) + RN[r], rf === r, set({ crf: r }), ' sm')).join('')}` +
-    `<span class="pill-label" style="margin-left:10px">Sort</span>${pill('Games', sort === 'games', set({ csort: '' }), ' sm')}${pill('Winrate', sort === 'wr', set({ csort: 'wr' }), ' sm')}</div></div></section>`;
+    `<span class="pill-label" style="margin-left:10px">Sort</span>${pill('Games', sort === 'games', set({ csort: '' }), ' sm')}${pill('Winrate', sort === 'wr', set({ csort: 'wr' }), ' sm')}</div></div>` +
+    `<div class="filters" style="margin-top:14px"><span class="pill-label">Tag</span>${pill('Any', !tg, set({ ctag: '' }), ' sm')}` +
+    `${tags.map(t => pill(esc(t), tg === t, set({ ctag: t }), ' sm')).join('')}</div></section>`;
+  if (!pick.length) out += empty('No champion the group has played matches that role and tag.');
   D.meta.families.forEach(([family, members]) => {
     const mine = pick.filter(c => members.includes(C(c.champ).c)).sort((a, b) => sort === 'wr' ? (b.games >= LOW) - (a.games >= LOW) || b.wr - a.wr : b.games - a.games);
     if (!mine.length) return;

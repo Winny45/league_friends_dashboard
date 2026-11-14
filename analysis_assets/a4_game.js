@@ -166,6 +166,13 @@ function gameBody(G, entry) {
       `${dcell(gd(10), 1200)}${dcell(gd(15), 1800)}${dcell(d(a.x15, b.x15), 1500)}<td class="num">${cs == null ? '-' : (cs > 0 ? '+' : cs < 0 ? '−' : '') + Math.abs(cs)}</td></tr>`;
   }).join('');
   const took = side => { const l = G.obj.filter(o => (o[2] === team) === side); return l.length ? l.map(o => monBadge(o[1], monLetter(o[1]), side, 24)).join('') : '<span class="muted small">none</span>'; };
+  /* the two junglers' first clears, where the game has them */
+  const CAMP = { blue: 'Blue buff', gromp: 'Gromp', wolves: 'Wolves', raptors: 'Raptors', red: 'Red buff', krugs: 'Krugs', invade: 'the enemy jungle', elsewhere: 'away from any camp' };
+  const CLEAR = { full: 'full clear', gank: 'ganked before level 4', invade: 'invaded' };
+  const jgLine = p => !p || !p.jg ? '' : `<div class="kv"><span class="cell-champ">${cicon(p.c, 20)}${isFriend(p) ? fn(p.f) : esc(C(p.c).n)}</span>` +
+    `<span>started at ${CAMP[p.jg[0]] || '-'}${p.jg[1] ? ' · ' + CLEAR[p.jg[1]] : ''}${p.jg[2] != null ? ' · level 4 at <b>' + mmss(p.jg[2]) + '</b>' : ''}` +
+    `${p.jg[3] != null ? ' · first scuttles <b>' + Math.min(2, p.jg[3]) + ' of 2</b>' : ''}</span></div>`;
+  const jungle = jgLine(mine.find(p => p.r === 'JUNGLE')) + jgLine(theirs.find(p => p.r === 'JUNGLE'));
   const cpts = chance.map((c, m) => [m === frames - 1 ? G.dur / 60 : m, c == null ? null : c * 100]);
   const ext = win ? lo : hi;
   const wc = lineChart([{ pts: cpts, color: '#b08cff', width: 2 }], { x0: 0, x1: G.dur / 60, y0: 0, y1: 100, h: 190, w: 520, l: 40,
@@ -174,6 +181,7 @@ function gameBody(G, entry) {
     tableWrap(`<thead><tr><th>Lane</th><th>Matchup</th><th class="num">Gold@10</th><th class="num">Gold@15</th><th class="num">XP@15</th><th class="num">CS@15</th></tr></thead><tbody>${lanes}</tbody>`) +
     `<h3>Objectives taken</h3><div class="grid g2" style="margin:0;gap:12px"><div class="took"><b style="color:var(--blue-side)">Your team</b><div>${took(true)}</div></div>` +
     `<div class="took"><b style="color:var(--red-side)">Enemy</b><div>${took(false)}</div></div></div>` +
+    (jungle ? `<h3>First clears</h3>${jungle}` : '') +
     `<h3>Win chance through the game</h3>${wc}<p class="muted small">${win ? 'Lowest' : 'Highest'} point: ${Math.round(ext.v * 100)}% at ${ext.m}:00, ` +
     `counting gold and how the two teams' champions scale.</p>`);
   out += `<div class="grid g-3-2">${goldCard}${laneCard}</div>`;

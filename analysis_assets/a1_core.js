@@ -21,7 +21,7 @@ const MAPQ = 232;
 const LOW = 10, BLANK = 5;
 
 /* ---- state lives in the URL, so any view can be linked to ----------------- */
-const KEYS = ['tab', 'game', 'team', 'gwho', 'player', 'role', 'champ', 'crole', 'cwho', 'crf', 'csort', 'rtab', 'cls',
+const KEYS = ['tab', 'game', 'team', 'gwho', 'player', 'role', 'champ', 'crole', 'cwho', 'crf', 'csort', 'ctag', 'rtab', 'cls',
   'who', 'metric', 'queue', 'dview', 'dwho', 'dchamp', 'drole', 'dshow'];
 function parseHash() {
   const o = {};

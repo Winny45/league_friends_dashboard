@@ -833,8 +833,12 @@ class Analysis(PlayerViews, GroupViews):
                 entry["rk"] = read[:2]
             if r["role"]:
                 entry["m"] = {m: round(r[m], 4) for m in scoring.METRICS if r.get(m) is not None}
-            if r.get("jg") and r["jg"].get("l4") is not None:
-                entry["l4"] = r["jg"]["l4"]
+            if r.get("jg"):
+                # How this jungler's first clear went: where they started, how
+                # it ended, when they hit level 4, how many of the first two
+                # scuttles they took. Facts about this game alone.
+                jg = r["jg"]
+                entry["jg"] = [jg["start"], jg["clear"], jg["l4"], jg["crab"]]
             players.append(entry)
         objs = [[o["t"], o["code"], o["team"], o["killer"], o["n"], 1 if o["stolen"] else 0,
                  sorted(o["parts"] - {o["killer"]})] for o in self.objectives.get(g["id"], [])]
