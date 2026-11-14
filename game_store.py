@@ -21,13 +21,27 @@ because the store lives on a branch that is rewritten every run: a month that
 has finished never changes again, so its blob is never uploaded twice.
 
 Record shape (see reduce_game for the authority)
-    id, q, t0, dur, patch, win, remake
+    id, q, t0, dur, patch, win, remake, pv
     p[10]   one per participant, in participantId order
     kills   [t, x, y, killer, victim, assist...]
     mon     [t, code, killer, team, assist...]
     bld     [t, losingTeam, code, lane]
+    rk      [[solo, flex] x 10], each 0 (unranked) or [tier, division, lp];
+            None for a player whose lookup failed. rkt is when it was read.
 Times are whole seconds from game start. Positions are map units // 64, which
 keeps every coordinate under 256 and is finer than anything drawn from them.
+
+"pv" is the version of the record itself. A record is whatever reduce_game
+kept on the day the game was fetched, and the raw responses are gone, so a
+field added later can only reach an old game by asking Riot for it again.
+upgrade() does that, within the same kind of time budget as everything else.
+
+Ranks are the one thing here that is not a fact about the game. Riot only
+ever says what somebody's rank is now, so "rank at the time" means "rank when
+this game was collected", which for a game picked up within the hour is close
+enough. Games stored before ranks were kept get today's rank, once, and are
+never refreshed: a number that kept moving would rescore the whole season
+every time somebody was promoted.
 """
 
 import json
@@ -36,9 +50,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STORE_VERSION = 1
+RECORD_VERSION = 2
 STORE_DIR = Path("games")
 SKIP_FILE = "_skip.json"
+RANK_FILE = "_ranks.json"
 POS_SCALE = 64
+
+TIERS = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND",
+         "MASTER", "GRANDMASTER", "CHALLENGER"]
+_DIVISION = {"I": 1, "II": 2, "III": 3, "IV": 4}
+# A rank read this recently is reused for a game that has just been played.
+# Long enough that a duo partner met five times in an evening is asked about
+# once, short enough to still be "the rank they played at".
+RANK_FRESH_SECONDS = 12 * 3600
+# A game older than this gets whatever rank is on file, however old. It is a
+# stand-in either way; see the module docstring.
+RANK_LIVE_WINDOW_MS = 48 * 3600 * 1000
 
 # Bought constantly and say nothing about a build: potions, wards, trinkets,
 # elixirs. Dropped on arrival so the purchase list is the build and not noise.
@@ -91,7 +118,9 @@ def reduce_game(match, timeline):
 
     kills, mon, bld = [], [], []
     bought = [[] for _ in range(10)]
+    bought_at = [[] for _ in range(10)]
     skills = [[] for _ in range(10)]
+    level4 = [None] * 10
     for fr in frames:
         for e in fr.get("events") or []:
             typ = e.get("type")
@@ -115,6 +144,7 @@ def reduce_game(match, timeline):
                 pid, item = int(e.get("participantId", 0)), int(e.get("itemId", 0))
                 if 1 <= pid <= 10 and item not in _NOT_A_BUILD_ITEM:
                     bought[pid - 1].append(item)
+                    bought_at[pid - 1].append(t)
             elif typ == "ITEM_UNDO":
                 # An undone purchase never happened as far as a build goes.
                 pid, before = int(e.get("participantId", 0)), int(e.get("beforeId", 0))
@@ -123,11 +153,19 @@ def reduce_game(match, timeline):
                     for j in range(len(lst) - 1, -1, -1):
                         if lst[j] == before:
                             del lst[j]
+                            del bought_at[pid - 1][j]
                             break
             elif typ == "SKILL_LEVEL_UP" and e.get("levelUpType") == "NORMAL":
                 pid = int(e.get("participantId", 0))
                 if 1 <= pid <= 10 and len(skills[pid - 1]) < 18:
                     skills[pid - 1].append(_SKILL_LETTER.get(e.get("skillSlot"), "?"))
+            elif typ == "LEVEL_UP" and e.get("level") == 4:
+                # The end of a jungler's first clear, to the second. The
+                # minute samples cannot say this: 2:40 and 3:20 both read as
+                # "level 4 by the four-minute frame".
+                pid = int(e.get("participantId", 0))
+                if 1 <= pid <= 10 and level4[pid - 1] is None:
+                    level4[pid - 1] = t
 
     players = []
     for i, p in enumerate(parts):
@@ -160,7 +198,24 @@ def reduce_game(match, timeline):
             "dead": p.get("totalTimeSpentDead", 0),
             "items": [p.get(f"item{j}", 0) for j in range(6) if p.get(f"item{j}", 0)],
             "buy": bought[i],
+            "bt": bought_at[i],
             "sk": "".join(skills[i]),
+            "l4": level4[i],
+            # Buildings only. damageDealtToObjectives counts towers and epic
+            # monsters together, which is why it could not tell a split
+            # pusher from a jungler.
+            "tur": p.get("damageDealtToTurrets", 0),
+            "epic": p.get("damageDealtToEpicMonsters",
+                          max(0, p.get("damageDealtToObjectives", 0) - p.get("damageDealtToBuildings", 0))),
+            "mit": p.get("damageSelfMitigated", 0),
+            "th": p.get("totalHeal", 0),
+            "ejg": int(round(ch.get("enemyJungleMonsterKills", 0) or 0)),
+            "immob": int(ch.get("enemyChampionImmobilizations", 0) or 0),
+            "skh": int(ch.get("skillshotsHit", 0) or 0),
+            "crab0": ch.get("initialCrabCount"),
+            "crab": ch.get("scuttleCrabKills"),
+            "multi": int(ch.get("multikills", 0) or 0),
+            "penta": p.get("pentaKills", 0),
             "g": gold[i],
             "xy": xy[i],
             "x10": xp_at.get(10, {}).get(i), "x15": xp_at.get(15, {}).get(i),
@@ -175,6 +230,7 @@ def reduce_game(match, timeline):
         "patch": ".".join(str(info.get("gameVersion", "")).split(".")[:2]),
         "win": win_team,
         "remake": bool(remake),
+        "pv": RECORD_VERSION,
         "p": players,
         "kills": kills,
         "mon": mon,
@@ -194,8 +250,10 @@ class GameStore:
         self.shards = {}      # shard name -> {matchId: record}
         self.where = {}       # matchId -> shard name
         self.skip = {}        # matchId -> reason
+        self.ranks = {}       # puuid -> [solo, flex, read at (epoch seconds)]
         self.dirty = set()
         self.skip_dirty = False
+        self.ranks_dirty = False
 
     def load(self):
         if not self.root.is_dir():
@@ -210,6 +268,9 @@ class GameStore:
                 continue
             if path.name == SKIP_FILE:
                 self.skip = doc if isinstance(doc, dict) else {}
+                continue
+            if path.name == RANK_FILE:
+                self.ranks = doc if isinstance(doc, dict) else {}
                 continue
             if doc.get("v") != STORE_VERSION:
                 print(f"  ! {path.name} is store version {doc.get('v')}, wanted {STORE_VERSION}; ignoring it")
@@ -240,12 +301,16 @@ class GameStore:
         self.where[rec["id"]] = shard
         self.dirty.add(shard)
 
+    def touch(self, match_id):
+        """A record was changed in place and its shard needs writing."""
+        self.dirty.add(self.where[match_id])
+
     def mark_skipped(self, match_id, reason):
         self.skip[match_id] = reason
         self.skip_dirty = True
 
     def save(self):
-        if not (self.dirty or self.skip_dirty):
+        if not (self.dirty or self.skip_dirty or self.ranks_dirty):
             return
         self.root.mkdir(parents=True, exist_ok=True)
         for shard in sorted(self.dirty):
@@ -257,8 +322,38 @@ class GameStore:
             tmp.replace(self.root / f"{shard}.json")
         if self.skip_dirty:
             (self.root / SKIP_FILE).write_text(json.dumps(self.skip, indent=0), encoding="utf-8")
+        if self.ranks_dirty:
+            tmp = self.root / (RANK_FILE + ".tmp")
+            tmp.write_text(json.dumps(self.ranks, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(self.root / RANK_FILE)
         self.dirty.clear()
         self.skip_dirty = False
+        self.ranks_dirty = False
+
+
+class _KeyRejected(RuntimeError):
+    """Every later call would fail the same way, so the caller should stop."""
+
+
+def _fetch_record(client, mid):
+    """(record, None), or (None, why it is not worth asking for again).
+
+    One game that will not download raises RuntimeError and is skipped for
+    this run only. A rejected key raises _KeyRejected.
+    """
+    try:
+        match = client.get_match(mid)
+        timeline = client.get_timeline(mid) if match else None
+    except RuntimeError as e:
+        if " 401 " in str(e) or " 403 " in str(e):
+            raise _KeyRejected(str(e))
+        raise
+    if not match or not timeline:
+        return None, "no match" if not match else "no timeline"
+    rec = reduce_game(match, timeline)
+    if rec and rec.get("id"):
+        return rec, None
+    return None, "not a ten-player rift game"
 
 
 def backfill(client, store, match_ids, budget_seconds, wait=None, save_every=25, log=print):
@@ -283,28 +378,21 @@ def backfill(client, store, match_ids, budget_seconds, wait=None, save_every=25,
         if wait:
             wait()
         try:
-            match = client.get_match(mid)
-            timeline = client.get_timeline(mid) if match else None
+            rec, why = _fetch_record(client, mid)
+        except _KeyRejected as e:
+            log(f"  ! key rejected while fetching games; stopping ({e})")
+            break
         except RuntimeError as e:
-            # One game that will not download is not worth the rest. A rejected
-            # key is different: every later call would fail the same way.
-            if " 401 " in str(e) or " 403 " in str(e):
-                log(f"  ! key rejected while fetching games; stopping ({e})")
-                break
             log(f"  ! {mid}: {e}")
             continue
-        if not match or not timeline:
+        if rec:
+            store.put(rec)
+            stored += 1
+        else:
             # Riot stops serving timelines after about a year. Asking again
             # every hour forever would spend the budget on games that will
             # never arrive.
-            store.mark_skipped(mid, "no match" if not match else "no timeline")
-        else:
-            rec = reduce_game(match, timeline)
-            if rec and rec.get("id"):
-                store.put(rec)
-                stored += 1
-            else:
-                store.mark_skipped(mid, "not a ten-player rift game")
+            store.mark_skipped(mid, why)
         if (n + 1) % save_every == 0:
             store.save()
             log(f"    ...{stored} games stored, {len(todo) - n - 1} to go")
@@ -313,8 +401,128 @@ def backfill(client, store, match_ids, budget_seconds, wait=None, save_every=25,
     return stored, remaining
 
 
+def upgrade(client, store, budget_seconds, wait=None, save_every=25, oldest_first=False, log=print):
+    """Fetch again every game stored before the current record version.
+
+    Newest first by default, because the games people open are recent ones.
+    A game Riot no longer serves keeps its old record: fewer fields is better
+    than no game. Returns (upgraded, remaining).
+    """
+    todo = [g["id"] for g in store.games() if g.get("pv", 1) < RECORD_VERSION and not g.get("pvx")]
+    todo.sort(key=lambda m: store.get(m).get("t0") or 0, reverse=not oldest_first)
+    if not todo or budget_seconds <= 0:
+        return 0, len(todo)
+    started = time.monotonic()
+    done = 0
+    for n, mid in enumerate(todo):
+        if time.monotonic() - started > budget_seconds:
+            break
+        if wait:
+            wait()
+        old = store.get(mid)
+        try:
+            rec, why = _fetch_record(client, mid)
+        except _KeyRejected as e:
+            log(f"  ! key rejected while upgrading games; stopping ({e})")
+            break
+        except RuntimeError as e:
+            log(f"  ! {mid}: {e}")
+            continue
+        if rec:
+            for keep in ("rk", "rkt"):
+                if keep in old:
+                    rec[keep] = old[keep]
+            store.put(rec)
+            done += 1
+        else:
+            # Marked so it is not asked for every hour for the rest of time.
+            old["pvx"] = why
+            store.touch(mid)
+        if (n + 1) % save_every == 0:
+            store.save()
+            log(f"    ...{done} games upgraded, {len(todo) - n - 1} to go")
+    store.save()
+    left = sum(1 for g in store.games() if g.get("pv", 1) < RECORD_VERSION and not g.get("pvx"))
+    return done, left
+
+
+def rank_pair(entries):
+    """[solo, flex] from a league-v4 response: 0 for unranked in that queue,
+    otherwise [tier index, division 1 to 4, LP]."""
+    out = [0, 0]
+    for e in entries or []:
+        slot = {"RANKED_SOLO_5x5": 0, "RANKED_FLEX_SR": 1}.get(e.get("queueType"))
+        if slot is None or e.get("tier") not in TIERS:
+            continue
+        out[slot] = [TIERS.index(e["tier"]), _DIVISION.get(e.get("rank"), 1), int(e.get("leaguePoints", 0))]
+    return out
+
+
+def fill_ranks(client, store, budget_seconds, wait=None, save_every=20, oldest_first=False, log=print):
+    """Give every stored game a rank for each of its ten players.
+
+    Up to ten calls a game, fewer when somebody has been looked up before.
+    Returns (games filled, games remaining, lookups made).
+    """
+    todo = [g["id"] for g in store.games() if "rk" not in g]
+    todo.sort(key=lambda m: store.get(m).get("t0") or 0, reverse=not oldest_first)
+    if not todo or budget_seconds <= 0:
+        return 0, len(todo), 0
+    started = time.monotonic()
+    filled = lookups = 0
+    stop = False
+    for n, mid in enumerate(todo):
+        if stop or time.monotonic() - started > budget_seconds:
+            break
+        g = store.get(mid)
+        now = time.time()
+        live = now * 1000 - (g.get("t0") or 0) < RANK_LIVE_WINDOW_MS
+        out = []
+        for p in g["p"]:
+            pu = p.get("pu")
+            held = store.ranks.get(pu) if pu else None
+            if held and (not live or now - held[2] < RANK_FRESH_SECONDS):
+                out.append([held[0], held[1]])
+                continue
+            if not pu:
+                out.append(None)
+                continue
+            if wait:
+                wait()
+            try:
+                pair = rank_pair(client.get_league_entries_by_puuid(pu))
+            except RuntimeError as e:
+                if " 401 " in str(e) or " 403 " in str(e):
+                    log(f"  ! key rejected while reading ranks; stopping ({e})")
+                    stop = True
+                    break
+                # One player who cannot be read is filled in from the others
+                # when the game is scored. Not worth losing the game over.
+                out.append(None)
+                continue
+            lookups += 1
+            store.ranks[pu] = [pair[0], pair[1], int(now)]
+            store.ranks_dirty = True
+            out.append(pair)
+        if stop:
+            break
+        g["rk"], g["rkt"] = out, int(now * 1000)
+        store.touch(mid)
+        filled += 1
+        if (n + 1) % save_every == 0:
+            store.save()
+            log(f"    ...{filled} games ranked ({lookups} lookups), {len(todo) - n - 1} to go")
+    store.save()
+    return filled, sum(1 for g in store.games() if "rk" not in g), lookups
+
+
 def _main(argv):
     """python game_store.py [--budget SECONDS] [--polite] [--oldest-first]
+                            [--upgrade] [--ranks] [--pause SECONDS]
+
+    --upgrade re-fetches games stored before the current record version, and
+    --ranks reads a rank for every player in every game that has none. Both
+    run after the ordinary fill, in that order, inside the same budget.
 
     Fills the store from the ids in scrape_log.json using the key in
     config.json. --polite idles around the top of each hour, when the
@@ -331,6 +539,11 @@ def _main(argv):
     cfg = json.loads(Path("config.json").read_text(encoding="utf-8"))
     client = fetch_data.RiotClient(cfg["api_key"], cfg.get("platform", "euw1"),
                                    cfg.get("routing", "europe"))
+    if "--pause" in argv:
+        # Seconds between calls. The default is gentle enough to share a key
+        # with the scheduled run without ever being told to slow down; a long
+        # local fill can go nearer the limit and let Riot's own replies pace it.
+        client.pause = float(argv[argv.index("--pause") + 1])
     log = json.loads(Path("scrape_log.json").read_text(encoding="utf-8"))
     wanted = {f["label"] for f in cfg.get("friends", [])}
     ids = set()
@@ -346,9 +559,18 @@ def _main(argv):
 
     store = GameStore().load()
     print(f"{len(store)} games held, {len(store.skip)} skipped, {len(ordered)} wanted", flush=True)
-    stored, remaining = backfill(client, store, ordered, budget, wait=wait,
-                                 log=lambda s: print(s, flush=True))
+    say = lambda s: print(s, flush=True)
+    began = time.monotonic()
+    left = lambda: budget - (time.monotonic() - began)
+    stored, remaining = backfill(client, store, ordered, budget, wait=wait, log=say)
     print(f"Stored {stored}; {remaining} still to fetch.", flush=True)
+    oldest = "--oldest-first" in argv
+    if "--upgrade" in argv:
+        done, remaining = upgrade(client, store, left(), wait=wait, oldest_first=oldest, log=say)
+        print(f"Upgraded {done}; {remaining} still on an old record.", flush=True)
+    if "--ranks" in argv:
+        filled, remaining, lookups = fill_ranks(client, store, left(), wait=wait, oldest_first=oldest, log=say)
+        print(f"Ranked {filled} games with {lookups} lookups; {remaining} still without.", flush=True)
 
 
 if __name__ == "__main__":

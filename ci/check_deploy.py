@@ -60,7 +60,13 @@ else:
 # What they must never do is carry the key, or reach the public site as a
 # husk: a page that parsed its data and found nothing still has a title.
 KEY = r"RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-for name in ("analysis.html", "analysis-main.html"):
+# analysis.html has second accounts merged into their owners and
+# analysis-split.html shows every account; analysis-main.html is a few lines
+# that send an old address on, so it is checked for a key and nothing else.
+moved = pathlib.Path("deploy", "analysis-main.html")
+if moved.exists() and re.search(KEY, moved.read_text(encoding="utf-8")):
+    sys.exit("! a live-looking Riot API key is in deploy/analysis-main.html. Refusing to publish.")
+for name in ("analysis.html", "analysis-split.html"):
     extra = pathlib.Path("deploy", name)
     if not extra.exists():
         print(f"note: no deploy/{name} this build.")

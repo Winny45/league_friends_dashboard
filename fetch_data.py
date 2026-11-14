@@ -1052,17 +1052,29 @@ GAMES_BUDGET_SECONDS = 600
 
 
 def fill_game_store(client, results, budget_seconds):
-    """Top up games/ with any season game it does not hold yet.
+    """Top up games/ with any season game it does not hold yet, then read the
+    rank of everybody in the games that have none.
 
     Deliberately the last thing a run does, after data.json is written. The
     store feeds the analysis pages, which cope with a game being absent; the
     main page must never wait on, or fail because of, a few hundred extra
     downloads.
+
+    The order is what makes "rank at the time of the game" true. A new game is
+    stored first and its ten players looked up straight after, in the same
+    run, so the rank kept for it is at most an hour old. Whatever time is
+    left goes on the backlog: ranks for older games, newest first, and games
+    stored before the current record version.
     """
     if budget_seconds <= 0:
         return
     try:
         import game_store
+        began = time.monotonic()
+
+        def left():
+            return budget_seconds - (time.monotonic() - began)
+
         started = {}
         for r in results:
             for m in r.get("seasonMatches", []):
@@ -1073,6 +1085,13 @@ def fill_game_store(client, results, budget_seconds):
         stored, remaining = game_store.backfill(client, store, ordered, budget_seconds)
         print(f"Game store: {before} held, {stored} added, {remaining} still to fetch"
               + (f", {len(store.skip)} unavailable" if store.skip else "") + ".")
+        # Most of what is left, not all of it: while there is a backlog of
+        # both, neither should wait for the other to finish.
+        ranked, unranked, lookups = game_store.fill_ranks(client, store, left() * 0.7)
+        print(f"Ranks: {ranked} games read with {lookups} lookups, {unranked} still without.")
+        upgraded, old = game_store.upgrade(client, store, left())
+        if upgraded or old:
+            print(f"Records: {upgraded} brought up to date, {old} still on an older version.")
     except Exception as e:
         # Nothing here is allowed to turn a good run into a failed one.
         print(f"  ! game store not updated this run ({e})")

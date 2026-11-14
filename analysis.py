@@ -2,15 +2,23 @@
 
 generate_dashboard.py answers "how is each friend doing". This module answers
 the questions that need the other nine players in the game: is this support's
-vision good *for a support in these lobbies*, does a gold lead at fifteen
-minutes actually win, who plays worse in the sixth game of a night.
+vision good *for a support at this rank*, does a gold lead at fifteen minutes
+actually win, who plays worse in the sixth game of a night.
 
 Shape
     Analysis(data, store)   builds one row per player per stored game, the
-                            lobby baselines, and the win-chance model
+                            baselines, every game's score and the win-chance
+                            model
     .payload()              the JSON the analysis page renders from
     .game_files()           per-day public game files for the breakdown tab
     .for_basic()            the handful of numbers the main page borrows
+
+The work is split by what it is about, not by size:
+    analysis_util.py     constants, the map, the two logistic fits
+    scoring.py           the rulebook for a game score and a champion score
+    analysis.py          this file: rows, ranks, baselines, scores, the model
+    analysis_views.py    Players (and jungle) and Champions
+    analysis_views2.py   Roles, Time, Duos, Game flow, Records
 
 Three populations are compared throughout, and the names are used
 consistently so a caption can be trusted:
@@ -19,196 +27,65 @@ consistently so a caption can be trusted:
     the lobby      everyone else who was in those games, friend or not,
                    which is as close to "players at this level" as the API
                    lets this get without scraping strangers
-A lobby baseline is always role-for-role. A support is never held against a
-mid laner, which is the mistake that makes every support look blind and broke.
+A baseline is always role-for-role, and for a score rank-for-rank as well. A
+support is never held against a mid laner, which is the mistake that makes
+every support look blind and broke.
+
+Ranks
+    A row's rank is the one read for that player when the game was collected
+    (game_store keeps it). Where there is none, because the lookup has not
+    reached that game yet, the player was unranked, or the read failed, it is
+    the rank of the friend in that game, as the spec asks. Every row therefore
+    has a tier, and the pages say how many games have real readings behind
+    them.
 """
 
 import bisect
-import math
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from champion_classes import CLASSES, champion_class
+import scoring
+from analysis_util import (LANE_ZONE, LANING_END, POOLED, ROLE_NAME, ROLE_TABLE, ROLES, STATS,
+                           blue_camps, broad_zone, fit_slope, fit_two, mean, nearest_camp, pct_of,
+                           rnd, sigmoid, uk_time, zone_of)
+from analysis_views import PlayerViews
+from analysis_views2 import GroupViews
+from champion_classes import (CLASSES, FAMILIES, FAMILY_OF, champion_class, champion_classes,
+                              champion_tags)
 
-ROLES = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
-ROLE_NAME = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "ADC", "UTILITY": "Support"}
-LANE_ZONE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
-QUEUE_NAME = {420: "Ranked Solo/Duo", 440: "Ranked Flex"}
-MAP_Q = 232          # the far corner of the map in stored (// 64) units
-LANING = (180, 840)  # seconds: after the first clear, before lanes dissolve
+QUANTILE_POINTS = 41
+# A rank tier gets its own baseline once this many rows of a role have been
+# seen at it. Below that a game is ranked against the whole role, and says so.
+TIER_MIN_ROWS = 250
+THROW_GOLD = 5000
+# A comeback has to have been unlikely as well as far behind: a team of late
+# scalers that was 5k down at fifteen and expected to win anyway is not one.
+UNLIKELY = 0.40
 
-# key: (label, format, higher is better)
-STATS = {
-    "kp": ("Kill participation", "pct", True),
-    "vpm": ("Vision / min", "f2", True),
-    "hs": ("Heal + shield on allies", "k", True),
-    "heal": ("Heal on allies", "k", True),
-    "shield": ("Shield on allies", "k", True),
-    "cc": ("CC score", "sec", True),
-    "roam": ("Roam takedowns", "pct", True),
-    "deaths": ("Deaths / game", "f1", False),
-    "g15": ("Gold diff @15", "signed", True),
-    "cspm": ("CS / min", "f1", True),
-    "dshare": ("Damage share", "pct", True),
-    "dpm": ("Damage / min", "int", True),
-    "solo": ("Solo kills", "f1", True),
-    "objp": ("Objective participation", "pct", True),
-    "objd": ("Objective damage", "k", True),
-    "kda": ("KDA", "f1", True),
-}
-# Six per role: the axes of the radar and the tiles above it.
-ROLE_STATS = {
-    "UTILITY": ["vpm", "kp", "hs", "roam", "deaths", "cc"],
-    "JUNGLE": ["kp", "objp", "objd", "g15", "vpm", "cc"],
-    "TOP": ["cspm", "g15", "dshare", "kp", "deaths", "solo"],
-    "MIDDLE": ["cspm", "g15", "dshare", "kp", "deaths", "roam"],
-    "BOTTOM": ["cspm", "g15", "dshare", "kp", "deaths", "dpm"],
-}
-# Eight per role for the long comparison table.
-ROLE_COMPARE = {
-    "UTILITY": ["vpm", "kp", "heal", "shield", "cc", "dshare", "g15", "objp"],
-    "JUNGLE": ["kp", "objp", "objd", "g15", "vpm", "cc", "dshare", "deaths"],
-    "TOP": ["cspm", "g15", "dshare", "dpm", "kp", "deaths", "solo", "objp"],
-    "MIDDLE": ["cspm", "g15", "dshare", "dpm", "kp", "deaths", "roam", "objp"],
-    "BOTTOM": ["cspm", "g15", "dshare", "dpm", "kp", "deaths", "vpm", "objp"],
-}
-# The side-by-side table on the roles tab.
-ROLE_TABLE = {
-    "UTILITY": ["kp", "vpm", "hs", "cc", "roam", "deaths", "g15"],
-    "JUNGLE": ["kp", "objp", "objd", "vpm", "cc", "deaths", "g15"],
-    "TOP": ["kp", "cspm", "dshare", "solo", "deaths", "g15"],
-    "MIDDLE": ["kp", "cspm", "dshare", "roam", "deaths", "g15"],
-    "BOTTOM": ["kp", "cspm", "dshare", "dpm", "deaths", "g15"],
-}
-# Pooled across games rather than averaged game by game: a 1-for-1 lane phase
-# should not weigh the same as a 9-for-12 one.
-_POOLED = {"roam": ("roam_n", "tk_n"), "objp": ("objp_n", "objp_d"), "kp": ("kp_n", "kp_d")}
-
-MONSTER_NAME = {
-    "DRAGON:FIRE_DRAGON": "Infernal Drake", "DRAGON:WATER_DRAGON": "Ocean Drake",
-    "DRAGON:EARTH_DRAGON": "Mountain Drake", "DRAGON:AIR_DRAGON": "Cloud Drake",
-    "DRAGON:HEXTECH_DRAGON": "Hextech Drake", "DRAGON:CHEMTECH_DRAGON": "Chemtech Drake",
-    "DRAGON:ELDER_DRAGON": "Elder Dragon", "RIFTHERALD": "Rift Herald",
-    "BARON_NASHOR": "Baron Nashor", "HORDE": "Voidgrubs", "ATAKHAN": "Atakhan",
-}
+_TIER_INDEX = {name.upper(): i for i, name in enumerate(scoring.TIER_NAMES)}
+_DIVISION = {"I": 1, "II": 2, "III": 3, "IV": 4}
 
 
-def monster_letter(code):
-    if code.startswith("DRAGON"):
-        return "E" if "ELDER" in code else "D"
-    return {"RIFTHERALD": "H", "BARON_NASHOR": "B", "HORDE": "G", "ATAKHAN": "A"}.get(code, "?")
+def quantiles(sorted_vals, points=QUANTILE_POINTS):
+    last = len(sorted_vals) - 1
+    return [round(sorted_vals[round(last * i / (points - 1))], 4) for i in range(points)]
 
 
-# --- small maths --------------------------------------------------------------
-
-def sigmoid(x):
-    if x < -40:
-        return 0.0
-    if x > 40:
-        return 1.0
-    return 1.0 / (1.0 + math.exp(-x))
-
-
-def mean(values):
-    vals = [v for v in values if v is not None]
-    return sum(vals) / len(vals) if vals else None
-
-
-def rnd(v, places=1):
-    return None if v is None else round(v, places)
-
-
-def pct_of(wins, games):
-    return round(100.0 * wins / games, 1) if games else None
-
-
-def uk_time(ms):
-    """A game's start in UK wall-clock time, worked out by hand.
-
-    British Summer Time runs from 01:00 UTC on the last Sunday of March to
-    01:00 UTC on the last Sunday of October. Done here rather than with
-    zoneinfo because that needs a timezone database Windows does not ship,
-    and a local rehearsal build has to give the same answer as the runner.
-    """
-    dt = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
-
-    def last_sunday(month):
-        d = datetime(dt.year, month, 31, 1, tzinfo=timezone.utc)
-        return d - timedelta(days=(d.weekday() + 1) % 7)
-
-    summer = last_sunday(3) <= dt < last_sunday(10)
-    return dt + timedelta(hours=1 if summer else 0)
-
-
-def zone_of(xq, yq):
-    """Which part of the map a stored position is in. Symmetric, so it reads
-    the same for both teams."""
-    x, y = xq * 64, yq * 64
-    if math.hypot(x, y) < 4300 or math.hypot(14800 - x, 14800 - y) < 4300:
-        return "base"
-    if x < 2600 or y > 12300:
-        return "top"
-    if y < 2600 or x > 12300:
-        return "bot"
-    if abs(x - y) < 1500:
-        return "mid"
-    if abs(x + y - 14800) < 1300:
-        return "river"
-    return "jungle"
-
-
-def blue_side(xq, yq, team):
-    """A position as it would be if the player were on blue, so every game can
-    be drawn on one map.
-
-    A reflection across the river, not a turn about the centre. Turning the
-    map half way round does put red's base where blue's is, but it also sends
-    the top lane to the bottom, so a red-side top laner's whole game was being
-    drawn in the bot lane. Reflecting across the line from the baron pit to
-    the dragon pit swaps the bases and leaves every lane where it is.
-    """
-    return (xq, yq) if team == 100 else (MAP_Q - yq, MAP_Q - xq)
-
-
-def fit_slope(points):
-    """b in P(win) = sigmoid(b * lead_in_thousands), by Newton's method.
-
-    `points` are (lead, won) for one team per game. Each is used twice, once
-    as it is and once from the other team's chair, which is what pins the
-    curve to 50% at an even game without having to fit an intercept.
-    Returns (b, standard error).
-    """
-    if len(points) < 20:
-        return None, None
-    xs = [p[0] / 1000.0 for p in points]
-    ys = [1.0 if p[1] else 0.0 for p in points]
-    b = 0.3
-    info = 0.0
-    for _ in range(40):
-        grad = info = 0.0
-        for x, y in zip(xs, ys):
-            s = sigmoid(b * x)
-            # Both chairs give the same contribution, hence the factor of two
-            # in neither: it cancels in the Newton step.
-            grad += x * (y - s)
-            info += x * x * s * (1 - s)
-        if info <= 1e-12:
-            return None, None
-        step = grad / info
-        b += max(-1.0, min(1.0, step))
-        if abs(step) < 1e-7:
-            break
-    return b, 1.0 / math.sqrt(info) if info > 0 else None
-
-
-# --- the analysis -------------------------------------------------------------
-
-class Analysis:
-    def __init__(self, data, store_games):
+class Analysis(PlayerViews, GroupViews):
+    def __init__(self, data, store_games, highlights=None):
         self.data = data
+        self.highlights = highlights or []
         self.friends = data.get("friends", [])
         self.labels = [f["label"] for f in self.friends]
-        self.friend_of = {f.get("puuid"): f["label"] for f in self.friends if f.get("puuid")}
+        self.merged = bool(data.get("mergedAccounts"))
+        # A merged friend carries every account's puuid, so the second
+        # account's games are simply more of that person's games.
+        self.friend_of = {}
+        for f in self.friends:
+            for pu in f.get("puuids") or [f.get("puuid")]:
+                if pu:
+                    self.friend_of[pu] = f["label"]
+        self.current_rank = {f["label"]: self._ranked_now(f) for f in self.friends}
         self.slug_info = {k.lower(): v for k, v in (data.get("championBySlug") or {}).items()}
         self.items = data.get("items") or {}
         self.games = {g["id"]: g for g in store_games if not g.get("remake")}
@@ -221,21 +98,24 @@ class Analysis:
         self.by_game = {}
         self.sides = {}
         self.objectives = {}
+        self.lobby_rank = {}
+        self._plans = {}
         for g in self.games.values():
             self._ingest(g)
         self.friend_rows = defaultdict(list)
         self.lobby_rows = defaultdict(list)
+        self.role_rows = defaultdict(list)
         for r in self.rows:
+            if r["role"]:
+                self.role_rows[r["role"]].append(r)
             if r["friend"]:
                 self.friend_rows[r["friend"]].append(r)
             elif r["role"]:
                 self.lobby_rows[r["role"]].append(r)
+        self.group_rows = [r for label in self.labels for r in self.friend_rows[label] if r["role"]]
         self._build_baselines()
+        self._score_rows()
         self._fit_model()
-        for r in self.rows:
-            if r["friend"]:
-                r["pc"] = self._row_percentiles(r)
-        self._perf_cache = {}
         self.row_of = {(r["friend"], r["game"]): r for r in self.rows if r["friend"]}
 
     # -- names ---------------------------------------------------------------
@@ -244,13 +124,22 @@ class Analysis:
         info = self.slug_info.get(str(slug).lower())
         return info["name"] if info else slug
 
-    def champ_class(self, slug):
-        info = self.slug_info.get(str(slug).lower()) or {}
-        return champion_class(slug, info.get("tags"))
+    def _ddragon_tags(self, slug):
+        return (self.slug_info.get(str(slug).lower()) or {}).get("tags")
 
-    def champ_tag(self, slug):
-        info = self.slug_info.get(str(slug).lower()) or {}
-        return (info.get("tags") or [""])[0]
+    def champ_class(self, slug):
+        return champion_class(slug, self._ddragon_tags(slug))
+
+    @staticmethod
+    def _ranked_now(friend):
+        """{0: solo, 1: flex} as [tier, division, lp], from the friend's own
+        current rank. The stand-in when a game has no reading of its own."""
+        out = {}
+        for slot, key in ((0, "solo"), (1, "flex")):
+            e = (friend.get("ranked") or {}).get(key) or {}
+            if e.get("tier") in _TIER_INDEX:
+                out[slot] = [_TIER_INDEX[e["tier"]], _DIVISION.get(e.get("rank"), 1), int(e.get("leaguePoints") or 0)]
+        return out
 
     # -- season games from data.json (every friend game, stored or not) ------
 
@@ -275,21 +164,61 @@ class Analysis:
 
     # -- one stored game into rows ------------------------------------------
 
+    def _ranks_for(self, g):
+        """(rank per player, lobby rank, whether any of it was really read).
+
+        Solo queue rank for a solo queue game and flex for anything else, each
+        falling back to the other, because a rank in the wrong queue is still
+        a far better guess at someone's level than nothing.
+        """
+        P = g["p"]
+        rk = g.get("rk")
+        slot = 0 if g.get("q") == 420 else 1
+
+        def read(i):
+            pair = rk[i] if rk and i < len(rk) else None
+            if not pair:
+                return None
+            return pair[slot] or pair[1 - slot] or None
+
+        own = [read(i) for i in range(10)]
+        mates = []
+        for i, p in enumerate(P):
+            label = self.friend_of.get(p.get("pu"))
+            if label:
+                now = self.current_rank.get(label, {})
+                r = own[i] or now.get(slot) or now.get(1 - slot)
+                if r:
+                    own[i] = own[i] or r
+                    mates.append(scoring.rank_points(r))
+        fallback = scoring.rank_from_points(mean(mates)) if mates else None
+        known = [scoring.rank_points(r) for r in own if r]
+        lobby = scoring.rank_from_points(mean(known)) if len(known) >= 5 else fallback
+        return [r or fallback or lobby for r in own], lobby, own, bool(rk)
+
     def _ingest(self, g):
         P = g["p"]
         dur_min = max(g["dur"] / 60.0, 1.0)
         frames = len(P[0]["g"])
         last_whole = frames - 2          # the final frame is "game over", not a minute
+        v2 = g.get("pv", 1) >= 2
 
         def at(arr, minute):
             return arr[minute] if minute <= last_whole and minute < len(arr) else None
 
+        ranks, lobby_rank, own_ranks, has_ranks = self._ranks_for(g)
+        self.lobby_rank[g["id"]] = lobby_rank
+
         team_of = [p["t"] for p in P]
-        kills_by_team = {100: 0, 200: 0}
-        dmg_by_team = {100: 0, 200: 0}
+        totals = {t: defaultdict(float) for t in (100, 200)}
         for p in P:
-            kills_by_team[p["t"]] = kills_by_team.get(p["t"], 0) + p["k"]
-            dmg_by_team[p["t"]] = dmg_by_team.get(p["t"], 0) + p["dmg"]
+            tt = totals[p["t"]]
+            tt["k"] += p["k"]
+            tt["dmg"] += p["dmg"]
+            tt["taken"] += p.get("taken", 0)
+            if v2:
+                tt["tank"] += p.get("taken", 0) + p.get("mit", 0)
+                tt["epic"] += p.get("epic", 0)
 
         # Team gold lead, blue minus red, one value per frame.
         lead = [sum(P[i]["g"][m] for i in range(10) if team_of[i] == 100)
@@ -326,14 +255,18 @@ class Analysis:
         objs_by_team = {100: [o for o in objs if o["team"] == 100],
                         200: [o for o in objs if o["team"] == 200]}
 
-        # Takedowns in the laning window, by where they happened.
+        # Takedowns in the laning phase, by where they happened, and when each
+        # player first took part in one or died.
         takedowns = defaultdict(list)
+        first_td, first_death = {}, {}
         for ev in g.get("kills", []):
-            t, x, y, killer = ev[0], ev[1], ev[2], ev[3]
-            if LANING[0] <= t < LANING[1]:
-                for pid in [killer] + ev[5:]:
-                    if 1 <= pid <= 10:
-                        takedowns[pid].append(zone_of(x, y))
+            t, x, y, killer, victim = ev[0], ev[1], ev[2], ev[3], ev[4]
+            first_death.setdefault(victim, t)
+            for pid in [killer] + ev[5:]:
+                if 1 <= pid <= 10:
+                    first_td.setdefault(pid, t)
+                    if t < LANING_END:
+                        takedowns[pid].append((zone_of(x, y, team_of[pid - 1]), t))
 
         by_role = {}
         for i, p in enumerate(P):
@@ -343,7 +276,9 @@ class Analysis:
         game_rows = []
         for i, p in enumerate(P):
             role = p["r"] if p["r"] in ROLES else ""
-            opp = by_role.get((300 - p["t"], role)) if role else None
+            team = p["t"]
+            tt = totals[team]
+            opp = by_role.get((300 - team, role)) if role else None
             g15 = g10 = x15 = c15 = None
             if opp is not None:
                 o = P[opp]
@@ -357,53 +292,84 @@ class Analysis:
                     c15 = p["c15"] - o["c15"]
 
             own_lane = LANE_ZONE.get(role)
-            tk = takedowns.get(i + 1, [])
+            tk = [z for z, _t in takedowns.get(i + 1, []) if z != "base"]
             roam_n = sum(1 for z in tk if z != own_lane) if own_lane else 0
-            zones = Counter(tk)
 
             # Minutes 3 to 14 spent away from lane. Time in base is neither:
             # walking back from a recall is not a roam.
             out_n = lane_n = 0
             if own_lane:
-                partner = by_role.get((p["t"], "BOTTOM")) if role == "UTILITY" else None
+                partner = by_role.get((team, "BOTTOM")) if role == "UTILITY" else None
                 for m in range(3, min(15, last_whole + 1)):
-                    z = zone_of(p["xy"][2 * m], p["xy"][2 * m + 1])
+                    z = zone_of(p["xy"][2 * m], p["xy"][2 * m + 1], team)
                     if z == "base":
                         continue
                     if partner is not None:
-                        pz = zone_of(P[partner]["xy"][2 * m], P[partner]["xy"][2 * m + 1])
+                        pz = zone_of(P[partner]["xy"][2 * m], P[partner]["xy"][2 * m + 1], team)
                         if pz != "bot":
                             continue    # the lane had already moved; nothing was left behind
                     lane_n += 1
                     if z != own_lane:
                         out_n += 1
 
-            team_objs = objs_by_team.get(p["t"], [])
+            team_objs = objs_by_team.get(team, [])
+            rank = ranks[i]
+            taken = p.get("taken", 0)
             row = {
                 "game": g["id"], "pid": i + 1, "t0": g["t0"], "dur": dur_min, "q": g.get("q"),
-                "team": p["t"], "win": p["t"] == g.get("win"), "role": role, "champ": p["c"],
+                "team": team, "win": team == g.get("win"), "role": role, "champ": p["c"],
                 "cls": self.champ_class(p["c"]), "friend": self.friend_of.get(p.get("pu")),
                 "name": p.get("n", ""),
+                "rank": rank, "tier": rank[0] if rank else None, "ranked": bool(own_ranks[i]) and has_ranks,
                 "k": p["k"], "d": p["d"], "a": p["a"],
                 "kda": (p["k"] + p["a"]) / max(p["d"], 1),
-                "kp_n": p["k"] + p["a"], "kp_d": kills_by_team.get(p["t"], 0),
-                "kp": (p["k"] + p["a"]) / kills_by_team[p["t"]] if kills_by_team.get(p["t"]) else None,
+                "kp_n": p["k"] + p["a"], "kp_d": tt["k"],
+                "kp": (p["k"] + p["a"]) / tt["k"] if tt["k"] else None,
+                "kshare": p["k"] / tt["k"] if tt["k"] else None,
                 "cspm": p["cs"] / dur_min, "dpm": p["dmg"] / dur_min,
-                "dshare": p["dmg"] / dmg_by_team[p["t"]] if dmg_by_team.get(p["t"]) else None,
+                "dshare": p["dmg"] / tt["dmg"] if tt["dmg"] else None,
+                "dpg": p["dmg"] / p["gold"] if p.get("gold") else None,
+                "tshare": taken / tt["taken"] if tt["taken"] else None,
                 "vpm": p["vis"] / dur_min, "heal": p.get("heal", 0), "shield": p.get("shield", 0),
                 "hs": p.get("heal", 0) + p.get("shield", 0), "cc": p.get("cc", 0),
+                "wkc": p.get("wk", 0) + p.get("ctrl", 0),
                 "objd": p.get("objDmg", 0), "solo": p.get("solo", 0), "deaths": p["d"],
+                # Kept from the newer records only; an older one has no way
+                # of telling a tower from a dragon, or a hook from a miss.
+                "tur": p.get("tur") if v2 else None,
+                "ejg": p.get("ejg") if v2 else None,
+                "immob": p.get("immob") if v2 else None,
+                "skh": p.get("skh") if v2 else None,
+                "epics": p.get("epic", 0) / tt["epic"] if v2 and tt["epic"] else None,
+                "tank": (taken + p.get("mit", 0)) / tt["tank"] if v2 and tt["tank"] else None,
+                "shpm": max(0, p.get("th", 0) - p.get("heal", 0)) / dur_min if v2 else None,
+                "botg15": None,
                 "g15": g15, "g10": g10, "x15": x15, "c15": c15,
                 "tk_n": len(tk) if own_lane else 0, "roam_n": roam_n,
                 "roam": roam_n / len(tk) if own_lane and tk else None,
-                "zones": zones, "out_n": out_n, "lane_n": lane_n,
+                "zones": Counter(tk), "out_n": out_n, "lane_n": lane_n,
                 "objp_n": sum(1 for o in team_objs if (i + 1) in o["parts"]),
                 "objp_d": len(team_objs),
                 "objp": (sum(1 for o in team_objs if (i + 1) in o["parts"]) / len(team_objs)
                          if team_objs else None),
                 "opp": P[opp]["c"] if opp is not None else None,
+                "stolen": p.get("stolen", 0), "penta": p.get("penta", 0) if v2 else 0,
             }
+            if role == "JUNGLE":
+                row["jg"] = self._first_clear_of(p, i + 1, team, last_whole, takedowns, first_td, first_death, v2)
             game_rows.append(row)
+
+        for team in (100, 200):
+            adc, sup = by_role.get((team, "BOTTOM")), by_role.get((team, "UTILITY"))
+            if adc is not None and sup is not None:
+                a, b = game_rows[adc]["g15"], game_rows[sup]["g15"]
+                if a is not None and b is not None:
+                    game_rows[adc]["botg15"] = game_rows[sup]["botg15"] = a + b
+        # The average rank of the other nine, for "winrate by lobby rank".
+        points = [scoring.rank_points(r) for r in own_ranks]
+        for i, row in enumerate(game_rows):
+            others = [v for j, v in enumerate(points) if j != i and v is not None]
+            row["lobby"] = scoring.rank_from_points(mean(others)) if len(others) >= 4 else lobby_rank
         self.rows.extend(game_rows)
         self.by_game[g["id"]] = game_rows
 
@@ -412,78 +378,245 @@ class Analysis:
             series = [sign * v for v in lead]
             self.sides[(g["id"], team)] = {
                 "id": g["id"], "team": team, "win": g.get("win") == team, "t0": g["t0"],
-                "dur": g["dur"], "lead": series,
+                "dur": g["dur"], "lead": series, "q": g.get("q"),
                 "lead15": series[15] if 15 <= last_whole else None,
                 "lead20": series[20] if 20 <= last_whole else None,
                 "max": max(series), "min": min(series),
+                "champs": [r["champ"] for r in game_rows if r["team"] == team],
                 "friends": [r["friend"] for r in game_rows if r["team"] == team and r["friend"]],
             }
+
+    def _first_clear_of(self, p, pid, team, last_whole, takedowns, first_td, first_death, v2):
+        """What a jungler did before level 4.
+
+        Camps appear at 0:55, so the 1:00 sample finds them at the camp they
+        start on. Level 4 is the end of a first clear. Anything that pulled
+        them into a lane or a fight before it is a gank before the clear; a
+        first two minutes in the enemy's jungle is an invade.
+        """
+        if last_whole < 4:
+            return None
+        xy = p["xy"]
+        raw = [(xy[2 * m], xy[2 * m + 1]) for m in range(1, 5)]
+        zones = [zone_of(x, y, team) for x, y in raw]
+        path = [blue_camps(x, y, team) for x, y in raw]
+        camp, dist = nearest_camp(*path[0])
+        if zones[0] == "jungle_enemy":
+            start = "invade"
+        elif dist <= 24:                 # about 1,500 units: at the camp, or walking round it
+            start = camp
+        else:
+            start = "elsewhere"
+        out = {"start": start, "path": path, "crab": p.get("crab0") if v2 else None,
+               "clear": None, "l4": None, "gankOk": None, "gankLane": None}
+        l4 = p.get("l4") if v2 else None
+        if l4 is None:
+            return out
+        out["l4"] = l4
+        td = first_td.get(pid)
+        fought = td is not None and td < l4
+        lane = next((zones[m - 1] for m in (2, 3) if m * 60 < l4 and zones[m - 1] in ("top", "mid", "bot")), None)
+        if fought and not lane:
+            lane = next((broad_zone(z) for z, t in takedowns.get(pid, []) if t < l4), None)
+        if zones[0] == "jungle_enemy" or zones[1] == "jungle_enemy":
+            out["clear"] = "invade"
+        elif fought or lane:
+            out["clear"] = "gank"
+            died = first_death.get(pid)
+            out["gankOk"] = bool(fought and not (died is not None and died < l4))
+            out["gankLane"] = lane
+        else:
+            out["clear"] = "full"
+        return out
 
     # -- baselines -----------------------------------------------------------
 
     def _build_baselines(self):
-        """Sorted lobby values per role and stat, for percentiles."""
-        self.sorted_lobby = {}
-        for role in ROLES:
+        """Quantiles of every stat for each role, at every rank tier seen
+        often enough, and for the role as a whole."""
+        pools = defaultdict(lambda: defaultdict(list))
+        self.tier_rows = Counter()
+        for r in self.rows:
+            role = r["role"]
+            if not role:
+                continue
+            self.tier_rows[(role, None)] += 1
+            if r["tier"] is not None:
+                self.tier_rows[(role, r["tier"])] += 1
             for stat in STATS:
-                vals = sorted(r[stat] for r in self.lobby_rows[role] if r.get(stat) is not None)
-                self.sorted_lobby[(role, stat)] = vals
+                v = r.get(stat)
+                if v is None:
+                    continue
+                pools[(role, None)][stat].append(v)
+                if r["tier"] is not None:
+                    pools[(role, r["tier"])][stat].append(v)
+        self.quant, self.avg, self.sorted_role = {}, {}, {}
+        for key, per in pools.items():
+            if key[1] is not None and self.tier_rows[key] < TIER_MIN_ROWS:
+                continue
+            q, a = {}, {}
+            for stat, vals in per.items():
+                if len(vals) < 40:
+                    continue
+                vals.sort()
+                q[stat] = quantiles(vals)
+                a[stat] = sum(vals) / len(vals)
+                if key[1] is None:
+                    self.sorted_role[(key[0], stat)] = vals
+            self.quant[key], self.avg[key] = q, a
+        self.tiers_with_baseline = {role: sorted(t for (r, t) in self.quant if r == role and t is not None)
+                                    for role in ROLES}
 
-    def percentile(self, role, stat, value):
-        """Where a value sits among lobby players in that role, 0 to 100.
-        Already flipped for stats where lower is better, so high is always good."""
-        vals = self.sorted_lobby.get((role, stat)) or []
-        if value is None or len(vals) < 20:
+    def baseline(self, role, tier):
+        return self.quant.get((role, tier)) or self.quant.get((role, None)) or {}
+
+    def tier_average(self, role, tier, stat):
+        return (self.avg.get((role, tier)) or {}).get(stat)
+
+    def percentile(self, role, stat, value, tier=None):
+        """Where a value sits among everyone in that role (at that tier when
+        one is given and has a baseline), 0 to 100, high always meaning good."""
+        return scoring.percentile(self.baseline(role, tier).get(stat), value, STATS[stat][2])
+
+    @staticmethod
+    def pct_in(sorted_vals, value, higher=True):
+        """The same, against any sorted list of values."""
+        if value is None or not sorted_vals or len(sorted_vals) < 20:
             return None
-        lo, hi = bisect.bisect_left(vals, value), bisect.bisect_right(vals, value)
-        pct = 100.0 * (lo + hi) / 2.0 / len(vals)
-        return pct if STATS[stat][2] else 100.0 - pct
-
-    def _row_percentiles(self, r):
-        if not r["role"]:
-            return {}
-        wanted = set(ROLE_STATS[r["role"]]) | set(ROLE_COMPARE[r["role"]]) | set(ROLE_TABLE[r["role"]])
-        out = {}
-        for stat in wanted:
-            p = self.percentile(r["role"], stat, r.get(stat))
-            if p is not None:
-                out[stat] = p
-        return out
+        lo, hi = bisect.bisect_left(sorted_vals, value), bisect.bisect_right(sorted_vals, value)
+        pct = 100.0 * (lo + hi) / 2.0 / len(sorted_vals)
+        return pct if higher else 100.0 - pct
 
     @staticmethod
     def agg(rows, stat):
         """A stat over a set of rows: pooled where that is the honest average."""
-        if stat in _POOLED:
-            n_key, d_key = _POOLED[stat]
+        if stat in POOLED:
+            n_key, d_key = POOLED[stat]
             d = sum(r[d_key] for r in rows)
             return sum(r[n_key] for r in rows) / d if d else None
         return mean(r.get(stat) for r in rows)
 
     @staticmethod
-    def agg_pc(rows, stat):
+    def agg_pc(rows, stat, key="pc"):
         """Mean of the per-game percentiles: how a typical game of theirs ranks."""
-        return mean((r.get("pc") or {}).get(stat) for r in rows)
+        return mean((r.get(key) or {}).get(stat) for r in rows)
 
-    def play_score(self, rows):
-        """How someone plays against the lobby in their role, 0 to 100, as the
-        average percentile over that role's six stats."""
-        vals = []
-        for r in rows:
-            if not r["role"]:
+    # -- scores --------------------------------------------------------------
+
+    def plan(self, champ, role):
+        key = (champ, role)
+        if key not in self._plans:
+            self._plans[key] = scoring.plan(champ, role, self._ddragon_tags(champ))
+        return self._plans[key]
+
+    def _score_rows(self):
+        """A game score for every player with a role, and for friends the
+        percentile of every stat, at their tier ("pc") and against the whole
+        role ("pa"), which the radars and tiles are drawn from."""
+        self.champ_wr = defaultdict(lambda: [0, 0])
+        for r in self.rows:
+            role = r["role"]
+            r["score"] = r["wscore"] = r["w"] = None
+            if not role:
                 continue
-            got = [r["pc"][s] for s in ROLE_STATS[r["role"]] if s in r.get("pc", {})]
-            if got:
-                vals.append(sum(got) / len(got))
-        return mean(vals)
+            base = self.baseline(role, r["tier"])
+            score, _lines = scoring.game_score(self.plan(r["champ"], role), r, base)
+            r["score"] = score
+            if r["friend"]:
+                everyone = self.baseline(role, None)
+                r["pc"], r["pa"] = {}, {}
+                for stat, meta in STATS.items():
+                    v = r.get(stat)
+                    if v is None:
+                        continue
+                    p = scoring.percentile(base.get(stat), v, meta[2])
+                    if p is not None:
+                        r["pc"][stat] = p
+                    p = scoring.percentile(everyone.get(stat), v, meta[2])
+                    if p is not None:
+                        r["pa"][stat] = p
+                w = scoring.rank_weight(r["rank"][0], r["rank"][1]) if r["rank"] else None
+                r["w"] = w
+                if score is not None and w is not None:
+                    r["wscore"] = min(100.0, score * w)
+            else:
+                # What a champion usually wins, from the people who are not
+                # in the group: their own games are the thing being measured.
+                for key in ((r["champ"], r["tier"]), (r["champ"], None), ("class:" + r["cls"], None)):
+                    c = self.champ_wr[key]
+                    c[0] += 1 if r["win"] else 0
+                    c[1] += 1
+
+    def champion_average(self, champ, tier):
+        """(winrate in points, what it is the winrate of, games behind it).
+
+        The champion at that rank; with too few games, the champion at every
+        rank; with too few of those, its class.
+        """
+        name = self.champ_name(champ)
+        cls = self.champ_class(champ)
+        tries = [((champ, None), f"{name}, all ranks"), (("class:" + cls, None), f"all {cls}s")]
+        if tier is not None:
+            tries.insert(0, ((champ, tier), f"{name} in {scoring.TIER_NAMES[tier]}"))
+        for key, label in tries:
+            w, n = self.champ_wr.get(key, (0, 0))
+            if n >= scoring.CHAMPION_AVERAGE_MIN_GAMES:
+                return 100.0 * w / n, label, n
+        return None, None, 0
+
+    def top_score(self, rows, wins=None, games=None):
+        """The top-champions score for a set of one friend's games on one
+        champion, with everything needed to show how it was reached."""
+        scored = [r for r in rows if r.get("wscore") is not None]
+        games = len(rows) if games is None else games
+        wins = sum(1 for r in rows if r["win"]) if wins is None else wins
+        if not scored or not games:
+            return None
+        tier = Counter(r["tier"] for r in scored).most_common(1)[0][0]
+        rank = Counter((r["rank"][0], r["rank"][1]) for r in scored).most_common(1)[0][0]
+        champ = Counter(r["champ"] for r in scored).most_common(1)[0][0]
+        avg, source, n = self.champion_average(champ, tier)
+        out = scoring.champion_score([r["wscore"] for r in scored], wins, games, avg)
+        raw = mean(r["score"] for r in scored)
+        out.update({
+            "raw": raw, "rankW": out["weighted"] / raw if raw else None,
+            "rank": list(rank), "wrSource": source, "wrGames": n,
+            "scored": len(scored), "games": games, "wins": wins,
+            "verdict": "above" if raw >= 55 else "below" if raw <= 45 else "average",
+        })
+        return out
+
+    @staticmethod
+    def pack_score(s):
+        """A top-champions score as the page reads it."""
+        if not s:
+            return None
+        return {"score": round(s["score"], 1), "raw": round(s["raw"], 1), "weighted": round(s["weighted"], 1),
+                "rankW": rnd(s["rankW"], 3), "rank": s["rank"], "gamesMult": round(s["gamesMult"], 2),
+                "wrMult": round(s["wrMult"], 3), "adjWr": round(s["adjWr"], 1),
+                "champWr": rnd(s["champWr"], 1), "wrSource": s["wrSource"], "wrGames": s["wrGames"],
+                "scored": s["scored"], "games": s["games"], "wins": s["wins"], "verdict": s["verdict"]}
+
+    @staticmethod
+    def comfort(games):
+        return "Main" if games >= 25 else "Comfortable" if games >= 10 else "Learning"
 
     # -- the win-chance model --------------------------------------------------
 
     def _fit_model(self):
-        """One slope per minute: what a gold lead at that minute is worth."""
+        """What a gold lead is worth at each minute, twice over.
+
+        First gold alone: one slope a minute. Then gold and how well each
+        team's champions hold up from behind. A champion's scaling score is
+        how much more often its team wins than its gold at fifteen said it
+        would, pulled toward its class until it has thirty games of its own,
+        so Twitch does not need a hundred games to be told it is a late
+        champion. A team's score is the five added up, and the gap between
+        the two teams goes into the fit beside the gold.
+        """
         by_minute = defaultdict(list)
-        for (gid, team), s in self.sides.items():
-            if team != 100:
-                continue
+        blue = [s for (gid, team), s in self.sides.items() if team == 100]
+        for s in blue:
             for m in range(3, len(s["lead"]) - 1):
                 by_minute[m].append((s["lead"][m], s["win"]))
         self.slopes, self.slope_se = {}, {}
@@ -491,69 +624,115 @@ class Analysis:
             b, se = fit_slope(by_minute[m])
             if b is not None and len(by_minute[m]) >= 40:
                 self.slopes[m], self.slope_se[m] = b, se
-        self.model_games = len({gid for gid, team in self.sides if team == 100})
+        self.model_games = len(blue)
         self.model_points = by_minute
 
-    def slope_at(self, minute):
-        if not self.slopes:
+        b15 = self.slopes.get(15)
+        by_champ, by_class = defaultdict(lambda: [0.0, 0]), defaultdict(lambda: [0.0, 0])
+        miss_of = {}
+        if b15 is not None:
+            for key, s in self.sides.items():
+                if s["lead15"] is None:
+                    continue
+                miss = (1.0 if s["win"] else 0.0) - sigmoid(b15 * s["lead15"] / 1000.0)
+                miss_of[key] = miss
+                for c in s["champs"]:
+                    for acc in (by_champ[c], by_class[self.champ_class(c)]):
+                        acc[0] += miss
+                        acc[1] += 1
+        class_score = {cls: v[0] / (v[1] + 100.0) for cls, v in by_class.items()}
+
+        def score(c, without=None):
+            """A champion's scaling score, optionally with one game's own
+            contribution taken back out."""
+            total, n = by_champ.get(c, (0.0, 0))
+            if without is not None:
+                total, n = total - without, n - 1
+            return (total + 30.0 * class_score.get(self.champ_class(c), 0.0)) / (n + 30.0)
+
+        self.scaling = {c: score(c) for c in by_champ}
+        self.scaling_games = {c: v[1] for c, v in by_champ.items()}
+        # A game's own result is left out of the scores used on that game.
+        # Otherwise the model is told the answer: a champion's score is made
+        # of who won, and the fit would then "discover" that it predicts who
+        # won. Leaving it out is what makes the second coefficient honest.
+        for key, s in self.sides.items():
+            s["scale"] = sum(score(c, miss_of.get(key)) for c in s["champs"])
+        for (gid, team), s in self.sides.items():
+            s["gap"] = s["scale"] - self.sides[(gid, 300 - team)]["scale"]
+        self.slopes2 = {}
+        for m in sorted(self.slopes):
+            pts = [(s["lead"][m], s["gap"], s["win"]) for s in blue if m < len(s["lead"]) - 1]
+            b, d = fit_two(pts, self.slopes[m])
+            if b is not None:
+                self.slopes2[m] = (b, d)
+        gaps = sorted(abs(s["gap"]) for s in blue)
+        self.gap_typical = gaps[int(len(gaps) * 0.84)] if gaps else 0.0     # about one standard deviation
+        for s in self.sides.values():
+            self._extremes(s)
+
+    def _nearest(self, table, minute):
+        if not table:
             return None
-        if minute in self.slopes:
-            return self.slopes[minute]
-        nearest = min(self.slopes, key=lambda m: abs(m - minute))
-        return self.slopes[nearest]
+        if minute in table:
+            return table[minute]
+        return table[min(table, key=lambda m: abs(m - minute))]
 
-    def win_chance(self, lead, minute):
-        b = self.slope_at(minute)
-        return None if b is None or lead is None else sigmoid(b * lead / 1000.0)
+    def win_chance(self, lead, minute, gap=None):
+        """Gold alone when no scaling gap is given, both when one is."""
+        if lead is None:
+            return None
+        if gap is not None and self.slopes2:
+            b, d = self._nearest(self.slopes2, minute)
+            return sigmoid(b * lead / 1000.0 + d * gap)
+        b = self._nearest(self.slopes, minute)
+        return None if b is None else sigmoid(b * lead / 1000.0)
 
-    # -- performance and comfort ----------------------------------------------
-
-    @staticmethod
-    def comfort(games):
-        return "Main" if games >= 25 else "Comfortable" if games >= 10 else "Learning"
-
-    def performance(self, wins, games, rows):
-        """0 to 100. Half is winrate, pulled toward 50% until there are enough
-        games to believe it; half is how they played against the lobby in that
-        role. Six wins from six on a champion does not outrank sixty from a
-        hundred, which a bare winrate would have it do.
-        """
-        # Forty imaginary games at 50% before the real ones count. Anything
-        # weaker and the docstring above is false: with ten, six from six
-        # scored 97 against 73 for sixty from a hundred.
-        adj = (wins + 20.0) / (games + 40.0)
-        from_wins = max(0.0, min(100.0, 50.0 + (adj - 0.5) * 400.0))
-        play = self.play_score(rows)
-        score = from_wins if play is None else 0.5 * from_wins + 0.5 * play
-        verdict = None if play is None else "above" if play >= 55 else "below" if play <= 45 else "average"
-        return round(score), verdict, play
+    def _extremes(self, side):
+        """The lowest and highest the scaling-aware win chance went, and
+        whether the game counts as a comeback or a throw."""
+        lo = hi = None
+        for m in range(3, len(side["lead"]) - 1):
+            p = self.win_chance(side["lead"][m], m, side["gap"])
+            if p is None:
+                continue
+            if lo is None or p < lo[0]:
+                lo = (p, m)
+            if hi is None or p > hi[0]:
+                hi = (p, m)
+        side["lo"], side["hi"] = lo, hi
+        side["comeback"] = bool(side["win"] and side["min"] <= -THROW_GOLD and lo and lo[0] < UNLIKELY)
+        side["throw"] = bool(not side["win"] and side["max"] >= THROW_GOLD and hi and hi[0] > 1 - UNLIKELY)
 
     # ======================================================================
-    # Payload sections
+    # Payload
     # ======================================================================
 
     def _stat_meta(self):
         return {k: {"label": v[0], "fmt": v[1], "up": v[2]} for k, v in STATS.items()}
 
     def _champ_meta(self):
-        """Display name, icon id and class for every champion that appears."""
+        """Display name, icon id, classes, tags and scaling score for every
+        champion that appears."""
         keys = {k.lower(): k for k in (self.data.get("championBySlug") or {})}
         out = {}
+
+        def add(c):
+            if c and c not in out:
+                classes = champion_classes(c, self._ddragon_tags(c))
+                out[c] = {"n": self.champ_name(c), "i": keys.get(c.lower(), c), "c": classes[0],
+                          "cs": classes, "tg": champion_tags(c), "f": FAMILY_OF.get(classes[0], "Specialist"),
+                          "s": round(self.scaling.get(c, 0.0), 4)}
         for r in self.rows:
-            c = r["champ"]
-            if c not in out:
-                out[c] = {"n": self.champ_name(c), "i": keys.get(c.lower(), c),
-                          "c": r["cls"], "t": self.champ_tag(c)}
+            add(r["champ"])
         for side in self.season_games.values():
             for f in side["friends"]:
-                c = f["champ"]
-                if c and c not in out:
-                    out[c] = {"n": self.champ_name(c), "i": keys.get(c.lower(), c),
-                              "c": self.champ_class(c), "t": self.champ_tag(c)}
+                add(f["champ"])
         return out
 
     def _meta(self):
         season_ids = {k[0] for k in self.season_games}
+        stored = season_ids & set(self.games)
         return {
             "generatedAt": self.data.get("generatedAt"),
             "generatedAtMs": self.data.get("generatedAtMs"),
@@ -561,804 +740,49 @@ class Analysis:
             "seasonStart": self.data.get("seasonStart"),
             "ddragon": self.data.get("ddragonVersion"),
             "seasonGames": len(season_ids),
-            "storedGames": len(season_ids & set(self.games)),
-            "friends": [{"label": f["label"], "second": bool(f.get("second"))} for f in self.friends],
+            "storedGames": len(stored),
+            "rankedGames": sum(1 for gid in stored if self.games[gid].get("rk")),
+            "detailGames": sum(1 for gid in stored if self.games[gid].get("pv", 1) >= 2),
+            "merged": self.merged,
+            "friends": [{"label": f["label"], "second": bool(f.get("second")),
+                         "accounts": f.get("accounts") or [f["label"]]} for f in self.friends],
             "roles": ROLES, "roleName": ROLE_NAME, "classes": CLASSES,
-            "roleStats": ROLE_STATS, "stats": self._stat_meta(),
+            "families": [[name, members] for name, members in FAMILIES],
+            "roleStats": scoring.ROLE_METRICS, "roleTable": ROLE_TABLE, "stats": self._stat_meta(),
+            "tiers": scoring.TIER_NAMES, "tierShort": scoring.TIER_SHORT,
         }
 
-    # -- players ---------------------------------------------------------------
+    def _scoring_payload(self):
+        """The baselines and the rulebook, so the page can score one game the
+        way this module scores a row."""
+        quant, avg = {}, {}
+        for (role, tier), per in self.quant.items():
+            key = "all" if tier is None else str(tier)
+            quant.setdefault(role, {})[key] = {m: per[m] for m in scoring.METRICS if m in per}
+            avg.setdefault(role, {})[key] = {m: round(v, 4) for m, v in self.avg[(role, tier)].items()
+                                              if m in scoring.METRICS}
+        return {
+            "quant": quant, "avg": avg,
+            "rows": {role: {("all" if t is None else str(t)): n for (r, t), n in self.tier_rows.items() if r == role}
+                     for role in ROLES},
+            "layer": scoring.LAYER_WEIGHT, "role": scoring.ROLE_METRICS, "cls": scoring.CLASS_METRICS,
+            "specialist": scoring.SPECIALIST_METRICS, "tag": scoring.TAG_METRICS,
+            "overrides": scoring.OVERRIDES, "hypercarry": scoring.HYPERCARRY_WEIGHT,
+            "weights": scoring.rank_weight_table(),
+            "full": scoring.GAMES_FOR_FULL_WEIGHT, "prior": list(scoring.WINRATE_PRIOR),
+            "limits": list(scoring.WINRATE_LIMITS), "tierMin": TIER_MIN_ROWS,
+            # A few plans and scores worked out here, for the page to check
+            # its own copy of the arithmetic against. See Check in a4_more.js.
+            "check": self._check_sample(),
+        }
 
-    def _tile(self, rows, role, stat):
-        return {"k": stat, "v": rnd(self.agg(rows, stat), 4), "pc": rnd(self.agg_pc(rows, stat), 0),
-                "lobby": rnd(self.agg(self.lobby_rows[role], stat), 4)}
-
-    def _heat(self, rows):
-        """Where a player stands, kills and dies, by phase, drawn as blue side."""
-        size = 28
-        grids = [[0] * (size * size) for _ in range(3)]
-        dots = {"k": [[], [], []], "a": [[], [], []], "d": [[], [], []]}
-        for r in sorted(rows, key=lambda r: -r["t0"]):
-            g = self.games[r["game"]]
-            p = g["p"][r["pid"] - 1]
-            for m in range(2, len(p["g"]) - 1):
-                phase = 0 if m < 14 else 1 if m < 25 else 2
-                x, y = blue_side(p["xy"][2 * m], p["xy"][2 * m + 1], r["team"])
-                cx, cy = min(size - 1, x * size // (MAP_Q + 1)), min(size - 1, y * size // (MAP_Q + 1))
-                grids[phase][cy * size + cx] += 1
-            for ev in g.get("kills", []):
-                kind = "k" if ev[3] == r["pid"] else "d" if ev[4] == r["pid"] else \
-                    "a" if r["pid"] in ev[5:] else None
-                if not kind:
-                    continue
-                phase = 0 if ev[0] < 840 else 1 if ev[0] < 1500 else 2
-                if len(dots[kind][phase]) < 300:     # 150 points, two numbers each
-                    dots[kind][phase].extend(blue_side(ev[1], ev[2], r["team"]))
-        digits = "0123456789abcdefghijklmnopqrstuvwxyz"
-        packed, tops = [], []
-        for grid in grids:
-            top = max(grid) or 1
-            tops.append(top)
-            packed.append("".join(digits[min(35, v * 35 // top)] for v in grid))
-        # "gm" is each phase's own maximum: the digits are scaled per phase to
-        # keep their resolution, and the page needs the scale back to add
-        # phases together for the all-game view.
-        return {"size": size, "g": packed, "gm": tops, "k": dots["k"], "a": dots["a"], "d": dots["d"]}
-
-    def _teammate(self, row, role):
-        return next((r for r in self.by_game[row["game"]]
-                     if r["team"] == row["team"] and r["role"] == role), None)
-
-    def _roaming(self, rows, role):
-        zones = Counter()
-        for r in rows:
-            zones.update(r["zones"])
-        zones.pop("base", None)
-        total = sum(zones.values())
-        if total < 5:
-            return None
-        own = LANE_ZONE.get(role)
-        order = ([own] if own else []) + [z for z in ("top", "mid", "bot", "river", "jungle") if z != own]
-        bar = [[z, round(100.0 * zones.get(z, 0) / total, 1)] for z in order if zones.get(z)]
-
-        def own_share(pop):
-            z = Counter()
-            for r in pop:
-                z.update(r["zones"])
-            z.pop("base", None)
-            t = sum(z.values())
-            return round(100.0 * z.get(own, 0) / t, 1) if t and own else None
-
-        def out_share(pop):
-            n = sum(r["lane_n"] for r in pop)
-            return round(100.0 * sum(r["out_n"] for r in pop) / n, 1) if n else None
-
-        group = [r for lab in self.labels for r in self.friend_rows[lab] if r["role"] == role]
-        lobby = self.lobby_rows[role]
-        out = {"bar": bar, "takedowns": total, "jungle": role == "JUNGLE",
-               "lobbyOwn": own_share(lobby), "groupOwn": own_share(group)}
-        if role == "JUNGLE":
-            # A jungler has no lane to leave. What is worth knowing instead is
-            # how many early takedowns they find and which lanes get them.
-            out["perGame"] = round(total / len(rows), 2)
-            lz = Counter()
-            for r in lobby:
-                lz.update(r["zones"])
-            lz.pop("base", None)
-            lt = sum(lz.values())
-            out["lobbyPerGame"] = round(lt / len(lobby), 2) if lobby else None
-            out["lobbyBar"] = [[z, round(100.0 * lz.get(z, 0) / lt, 1)] for z in order if lt and lz.get(z)]
-            return out
-
-        mine = self.agg(rows, "roam")
-        out["roamShare"] = rnd(100.0 * mine, 1) if mine is not None else None
-        lob = self.agg(lobby, "roam")
-        out["lobbyRoam"] = rnd(100.0 * lob, 1) if lob is not None else None
-        out["outLane"], out["lobbyOut"] = out_share(rows), out_share(lobby)
-
-        # Does it pay? Their own games, split at their own median, so "high"
-        # means high for them rather than high for a support in general.
-        rated = [r for r in rows if r["roam"] is not None]
-        if len(rated) >= 10:
-            cut = sorted(r["roam"] for r in rated)[len(rated) // 2]
-            high = [r for r in rated if r["roam"] >= cut and r["roam"] > 0]
-            high_ids = {id(r) for r in high}
-            low = [r for r in rated if id(r) not in high_ids]
-            if role == "UTILITY":
-                first, second = ("BOTTOM", "ADC"), ("MIDDLE", "Mid")
-            elif role == "MIDDLE":
-                first, second = (role, "Own lane"), ("BOTTOM", "ADC")
-            else:
-                first, second = (role, "Own lane"), ("MIDDLE", "Mid")
-
-            def col(pop):
-                def lane(which):
-                    mates = [self._teammate(r, which) for r in pop]
-                    return rnd(mean(m["g15"] for m in mates if m), 0)
-                return {"games": len(pop), "wr": pct_of(sum(r["win"] for r in pop), len(pop)),
-                        "a": lane(first[0]), "b": lane(second[0])}
-            if len(high) >= 4 and len(low) >= 4:
-                out["split"] = {"high": col(high), "low": col(low),
-                                "aLabel": first[1] + " gold @15", "bLabel": second[1] + " gold @15"}
-        return out
-
-    def _players(self):
-        out = {}
-        for label in self.labels:
-            per_role = {}
-            mine = self.friend_rows[label]
-            counts = Counter(r["role"] for r in mine if r["role"])
-            for role, n in counts.most_common():
-                if n < 3:
-                    continue
-                rows = [r for r in mine if r["role"] == role]
-                champs = Counter(r["champ"] for r in rows)
-                top_champ = champs.most_common(1)[0][0]
-                cls = Counter(r["cls"] for r in rows).most_common(1)[0][0]
-                lobby = self.lobby_rows[role]
-                cls_lobby = [r for r in lobby if r["cls"] == cls]
-                group = [r for lab in self.labels for r in self.friend_rows[lab] if r["role"] == role]
-                champ_rows = [r for r in rows if r["champ"] == top_champ]
-                axes = ROLE_STATS[role]
-                compare = []
-                for stat in ROLE_COMPARE[role]:
-                    compare.append({
-                        "k": stat, "me": rnd(self.agg(rows, stat), 4),
-                        "champ": rnd(self.agg(champ_rows, stat), 4),
-                        "group": rnd(self.agg(group, stat), 4),
-                        "cls": rnd(self.agg(cls_lobby, stat), 4) if len(cls_lobby) >= 20 else None,
-                        "lobby": rnd(self.agg(lobby, stat), 4),
-                        "pc": rnd(self.agg_pc(rows, stat), 0)})
-                per_role[role] = {
-                    "games": n, "wins": sum(r["win"] for r in rows),
-                    "tiles": [self._tile(rows, role, s) for s in axes],
-                    "radar": {
-                        "axes": axes,
-                        "me": [rnd(self.agg_pc(rows, s), 0) for s in axes],
-                        "ref": ([rnd(self.percentile(role, s, self.agg(cls_lobby, s)), 0) for s in axes]
-                                if len(cls_lobby) >= 20 else None),
-                        "refLabel": f"{cls} {ROLE_NAME[role].lower()}s in lobbies",
-                    },
-                    "heat": self._heat(rows),
-                    "roam": self._roaming(rows, role),
-                    "compare": {"champ": top_champ, "champGames": len(champ_rows), "cls": cls,
-                                "clsGames": len(cls_lobby), "rows": compare},
-                }
-            if per_role:
-                out[label] = per_role
-        return out
-
-    # -- champions -------------------------------------------------------------
-
-    @staticmethod
-    def _pct_in(sorted_vals, value, higher=True):
-        if value is None or not sorted_vals:
-            return None
-        lo, hi = bisect.bisect_left(sorted_vals, value), bisect.bisect_right(sorted_vals, value)
-        pct = 100.0 * (lo + hi) / 2.0 / len(sorted_vals)
-        return pct if higher else 100.0 - pct
-
-    def _completed(self, item_id):
-        it = self.items.get(str(item_id))
-        return bool(it) and it.get("into", 1) == 0 and it.get("gold", 0) >= 1600 and it.get("from", 0) > 0
-
-    def _is_boots(self, item_id):
-        it = self.items.get(str(item_id))
-        return bool(it) and "Boots" in (it.get("tags") or []) and it.get("gold", 0) >= 900
-
-    def _builds(self, rows):
-        seen = defaultdict(lambda: {"games": 0, "wins": 0, "boots": Counter()})
-        orders = Counter()
-        for r in rows:
-            p = self.games[r["game"]]["p"][r["pid"] - 1]
-            core, boots = [], None
-            for item in p.get("buy", []):
-                if self._is_boots(item):
-                    boots = boots or item
-                elif self._completed(item) and item not in core:
-                    core.append(item)
-            if len(core) >= 3:
-                b = seen[tuple(core[:3])]
-                b["games"] += 1
-                b["wins"] += 1 if r["win"] else 0
-                if boots:
-                    b["boots"][boots] += 1
-            # Which basic ability is finished first, second, third.
-            sk, done, counts = p.get("sk", ""), [], Counter()
-            for ch in sk:
-                if ch in "QWE":
-                    counts[ch] += 1
-                    if counts[ch] == 5:
-                        done.append(ch)
-            if len(done) < 3 and len(sk) >= 9:
-                done += [c for c, _ in counts.most_common() if c not in done]
-            if len(done) >= 3:
-                orders[" → ".join(done[:3])] += 1
-        builds = sorted(seen.items(), key=lambda kv: -kv[1]["games"])[:3]
-        skill = None
-        if orders:
-            order, n = orders.most_common(1)[0]
-            skill = {"order": order, "share": round(100.0 * n / sum(orders.values()))}
-        return ([{"items": list(k), "boots": (v["boots"].most_common(1)[0][0] if v["boots"] else None),
-                  "games": v["games"], "wr": pct_of(v["wins"], v["games"])} for k, v in builds], skill)
-
-    def _first_clear(self, rows):
-        """Where a jungler is at 2, 3 and 4 minutes, split by which side of the
-        map they started on."""
-        paths = {"top": [], "bot": []}
-        for r in rows:
-            p = self.games[r["game"]]["p"][r["pid"] - 1]
-            if len(p["g"]) < 7:
-                continue
-            pts = [blue_side(p["xy"][2 * m], p["xy"][2 * m + 1], r["team"]) for m in (2, 3, 4)]
-            paths["top" if pts[0][1] > pts[0][0] else "bot"].append(pts)
-        total = len(paths["top"]) + len(paths["bot"])
-        if total < 5:
-            return None
+    def _check_sample(self):
         out = []
-        for side, lst in paths.items():
-            if not lst:
-                continue
-            avg = [[round(mean(p[i][0] for p in lst)), round(mean(p[i][1] for p in lst))] for i in range(3)]
-            ends = "top" if avg[2][1] > avg[2][0] else "bot"
-            out.append({"start": side, "end": ends, "share": round(100.0 * len(lst) / total), "pts": avg})
-        return sorted(out, key=lambda p: -p["share"])
-
-    def _champions(self):
-        group = [r for lab in self.labels for r in self.friend_rows[lab] if r["role"]]
-        by_key = defaultdict(list)
-        for r in group:
-            by_key[(r["champ"], r["role"])].append(r)
-        lobby_by_key = defaultdict(list)
-        for role in ROLES:
-            for r in self.lobby_rows[role]:
-                lobby_by_key[(r["champ"], role)].append(r)
-
-        out, index = {}, defaultdict(list)
-        for (champ, role), rows in by_key.items():
-            index[champ].append([role, len(rows)])
-            if len(rows) < 3:
-                continue
-            axes = ROLE_STATS[role]
-            own_lobby = lobby_by_key.get((champ, role), [])
-            # A champion-specific baseline when there is enough of one,
-            # otherwise the whole role, and the page says which.
-            scoped = len(own_lobby) >= 30
-            base = own_lobby if scoped else self.lobby_rows[role]
-            sorted_base = {s: sorted(r[s] for r in base if r.get(s) is not None) for s in axes}
-
-            who = []
-            per_friend = defaultdict(list)
-            for r in rows:
-                per_friend[r["friend"]].append(r)
-            for label, mine in sorted(per_friend.items(), key=lambda kv: -len(kv[1])):
-                wins = sum(r["win"] for r in mine)
-                perf, verdict, _ = self.performance(wins, len(mine), mine)
-                who.append({"label": label, "games": len(mine), "perf": perf, "wr": pct_of(wins, len(mine)),
-                            "kda": rnd(self.agg(mine, "kda"), 1), "g15": rnd(self.agg(mine, "g15"), 0),
-                            "objp": rnd(self.agg(mine, "objp"), 3), "verdict": verdict})
-
-            radar_players = []
-            for w in who[:2]:
-                mine = per_friend[w["label"]]
-                if len(mine) < 3:
-                    continue
-                radar_players.append({"label": w["label"], "games": len(mine), "vals": [
-                    rnd(mean(self._pct_in(sorted_base[s], r.get(s), STATS[s][2]) for r in mine), 0)
-                    for s in axes]})
-
-            def gold_curve(pop, minimum):
-                ys = []
-                for m in range(0, 26):
-                    vals = []
-                    for r in pop:
-                        g = self.games[r["game"]]["p"][r["pid"] - 1]["g"]
-                        if m <= len(g) - 2:
-                            vals.append(g[m])
-                    ys.append(vals if len(vals) >= minimum else None)
-                return ys
-
-            gold_players = []
-            for w in who[:3]:
-                mine = per_friend[w["label"]]
-                if len(mine) < 3:
-                    continue
-                gold_players.append({"label": w["label"], "y": [
-                    (round(sum(v) / len(v)) if v else None) for v in gold_curve(mine, 2)]})
-            band = {"p25": [], "p50": [], "p75": []}
-            for vals in gold_curve(base, 10):
-                if not vals:
-                    for k in band:
-                        band[k].append(None)
-                    continue
-                vals.sort()
-                band["p25"].append(vals[len(vals) // 4])
-                band["p50"].append(vals[len(vals) // 2])
-                band["p75"].append(vals[(3 * len(vals)) // 4])
-
-            by_opp = defaultdict(list)
-            for r in rows:
-                if r["opp"]:
-                    by_opp[r["opp"]].append(r)
-            matchups = [{"opp": opp, "games": len(lst), "wr": pct_of(sum(r["win"] for r in lst), len(lst)),
-                         "g15": rnd(self.agg(lst, "g15"), 0)}
-                        for opp, lst in sorted(by_opp.items(), key=lambda kv: -len(kv[1]))[:8]]
-
-            builds, skill = self._builds(rows)
-            wins = sum(r["win"] for r in rows)
-            out[f"{champ}|{role}"] = {
-                "champ": champ, "role": role, "games": len(rows), "wr": pct_of(wins, len(rows)),
-                "lobby": {"n": len(own_lobby),
-                          "wr": pct_of(sum(r["win"] for r in own_lobby), len(own_lobby)) if own_lobby else None},
-                "scoped": scoped, "g15": rnd(self.agg(rows, "g15"), 0),
-                "who": who,
-                "radar": {"axes": axes, "players": radar_players},
-                "gold": {"players": gold_players, "band": band},
-                "matchups": matchups, "builds": builds, "skill": skill,
-                "clear": (self._first_clear(per_friend[who[0]["label"]]) if role == "JUNGLE" else None),
-                "clearWho": who[0]["label"],
-            }
-        listing = [{"champ": c, "roles": sorted(roles, key=lambda x: -x[1]),
-                    "games": sum(n for _, n in roles)} for c, roles in index.items()]
-        listing.sort(key=lambda x: -x["games"])
-        return {"list": listing, "detail": out}
-
-    # -- roles and classes -----------------------------------------------------
-
-    def _role_view(self, role, cls=None):
-        def keep(r):
-            return r["role"] == role and (cls is None or r["cls"] == cls)
-        cols = ROLE_TABLE[role]
-
-        def line(pop, with_pc):
-            games = len(pop)
-            wins = sum(r["win"] for r in pop)
-            vals = {}
-            for s in cols + ["kda"]:
-                vals[s] = [rnd(self.agg(pop, s), 4), rnd(self.agg_pc(pop, s), 0) if with_pc else None]
-            return {"games": games, "wr": pct_of(wins, games), "vals": vals}
-
-        rows = []
-        for label in self.labels:
-            mine = [r for r in self.friend_rows[label] if keep(r)]
-            if mine:
-                rows.append(dict(line(mine, True), label=label))
-        rows.sort(key=lambda r: -r["games"])
-        group = [r for lab in self.labels for r in self.friend_rows[lab] if keep(r)]
-        lobby = [r for r in self.lobby_rows[role] if cls is None or r["cls"] == cls]
-        return {"rows": rows, "group": line(group, False) if group else None,
-                "lobby": line(lobby, False) if lobby else None}
-
-    def _class_matrix(self):
-        """Winrate by class for each friend, from every season game rather
-        than only the stored ones: it needs nothing but champion and result."""
-        cells = defaultdict(lambda: [0, 0])
-        for f in self.friends:
-            for m in self.season[f["label"]]:
-                c = cells[(self.champ_class(m.get("champion")), f["label"])]
-                c[0] += 1
-                c[1] += 1 if m.get("win") else 0
-        return {cls: {lab: cells[(cls, lab)] for lab in self.labels if cells[(cls, lab)][0]}
-                for cls in CLASSES if any(cells[(cls, lab)][0] for lab in self.labels)}
-
-    def _insights(self):
-        notes = []
-        group = [r for lab in self.labels for r in self.friend_rows[lab] if r["role"]]
-
-        def wr(pop):
-            return pct_of(sum(r["win"] for r in pop), len(pop))
-
-        ench = [r for r in group if r["role"] == "UTILITY" and r["cls"] == "Enchanter"]
-        ench_l = [r for r in self.lobby_rows["UTILITY"] if r["cls"] == "Enchanter"]
-        if len(ench) >= 30 and len(ench_l) >= 30:
-            a, b = self.agg(ench, "hs"), self.agg(ench_l, "hs")
-            if a and b:
-                d = round(100.0 * (a - b) / b)
-                notes.append(["✨", f"Enchanter supports average {abs(d)}% {'more' if d >= 0 else 'less'} "
-                                    f"heal + shield than lobby enchanters ({len(ench)} games)"])
-        ass = [r for r in group if r["role"] == "MIDDLE" and r["cls"] == "Assassin"]
-        if len(ass) >= 30:
-            ahead = [r for r in ass if (self.sides[(r["game"], r["team"])]["lead15"] or 0) >= 2000]
-            g15 = self.agg(ass, "g15")
-            msg = f"Assassins in mid: {wr(ass)}% winrate over {len(ass)} games"
-            if g15 is not None:
-                msg += f", gold diff @15 {g15:+.0f}"
-            if len(ahead) >= 10:
-                lost = sum(1 for r in ahead if not r["win"])
-                msg += f", and {round(100.0 * lost / len(ahead))}% of 2k+ team leads at 15 still lost"
-            notes.append(["🗡️", msg])
-        adc = [r for r in group if r["role"] == "BOTTOM" and r["cls"] == "Marksman"]
-        with_w, without = [], []
-        for r in adc:
-            sup = self._teammate(r, "UTILITY")
-            if sup:
-                (with_w if sup["cls"] == "Warden" else without).append(r)
-        if len(with_w) >= 15 and len(without) >= 30:
-            d = self.agg(without, "deaths") - self.agg(with_w, "deaths")
-            notes.append(["🎯", f"Marksmen die {abs(d):.1f} {'fewer' if d >= 0 else 'more'} times a game "
-                                f"with a Warden support ({len(with_w)} games)"])
-        van = [r for r in group if r["cls"] == "Vanguard"]
-        if len(van) >= 30:
-            first = [r for r in van if self.objectives.get(r["game"])
-                     and self.objectives[r["game"]][0]["team"] == r["team"]]
-            if len(first) >= 15:
-                notes.append(["🛡️", f"Group Vanguards win {wr(first)}% when their team takes the first "
-                                    f"objective ({len(first)} games), {wr(van)}% overall"])
-        best = None
-        for cls in CLASSES:
-            mine = [r for r in group if r["cls"] == cls]
-            if len(mine) >= 40:
-                a = self.play_score(mine)
-                if a is not None and (best is None or a > best[0]):
-                    best = (a, cls, len(mine))
-        if best:
-            notes.append(["📈", f"{best[1]}s are what this group plays best against the lobby: "
-                                f"{best[0]:.0f}th percentile on average over {best[2]} games"])
-        return notes
-
-    def _roles(self):
-        views = {}
-        for role in ROLES:
-            classes = Counter(r["cls"] for lab in self.labels for r in self.friend_rows[lab]
-                              if r["role"] == role)
-            per = {"All": self._role_view(role)}
-            for cls, n in classes.most_common():
-                if n >= 5:
-                    per[cls] = self._role_view(role, cls)
-            views[role] = {"cols": ROLE_TABLE[role], "views": per,
-                           "classes": [[c, n] for c, n in classes.most_common() if n >= 5]}
-        group = [r for lab in self.labels for r in self.friend_rows[lab] if r["role"]]
-        obj = [{"role": role,
-                "group": rnd(self.agg([r for r in group if r["role"] == role], "objp"), 3),
-                "lobby": rnd(self.agg(self.lobby_rows[role], "objp"), 3)} for role in ROLES]
-        obj.sort(key=lambda o: -(o["group"] or 0))
-        return {"roles": views, "matrix": self._class_matrix(), "objectives": obj,
-                "insights": self._insights()}
-
-    # -- time patterns ---------------------------------------------------------
-
-    @staticmethod
-    def _night_of(ms):
-        """(weekday, hour) in UK time, with the small hours filed under the
-        evening they belong to: a 1am game on Saturday's calendar date is the
-        tail of Friday night, and reads that way across one row."""
-        uk = uk_time(ms)
-        day, hour = uk.weekday(), uk.hour
-        if hour < 6:
-            day = (day - 1) % 7
-        return day, hour
-
-    @staticmethod
-    def _hour_label(h):
-        return f"{(h % 12) or 12}{'am' if h < 12 else 'pm'}"
-
-    def _time_view(self, entries):
-        """entries: (start ms, won, team lead at 15 or None)."""
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        cells = [[[0, 0, 0, 0] for _ in range(24)] for _ in range(7)]
-        for t0, win, lead in entries:
-            d, h = self._night_of(t0)
-            c = cells[d][h]
-            c[0] += 1
-            c[1] += 1 if win else 0
-            if lead is not None:
-                c[2] += lead
-                c[3] += 1
-        total = sum(c[0] for row in cells for c in row)
-        order = list(range(6, 24)) + list(range(0, 6))      # an evening, in the order it happens
-
-        def window(day_set, start_idx):
-            g = w = 0
-            for d in day_set:
-                for h in order[start_idx:start_idx + 3]:
-                    g += cells[d][h][0]
-                    w += cells[d][h][1]
-            return g, w
-
-        candidates = []
-        for i in range(len(order) - 2):
-            span = f"{self._hour_label(order[i])}–{self._hour_label((order[i + 2] + 1) % 24)}"
-            g, w = window(range(7), i)
-            if g >= max(25, total * 0.03):
-                candidates.append((w / g, g, "Any day " + span))
-            for d in range(7):
-                g, w = window([d], i)
-                if g >= max(12, total * 0.015):
-                    candidates.append((w / g, g, f"{days[d]} {span}"))
-        tiles = {}
-        if candidates:
-            best, worst = max(candidates), min(candidates)
-            tiles["best"] = {"label": best[2], "wr": round(100 * best[0], 1), "games": best[1]}
-            tiles["worst"] = {"label": worst[2], "wr": round(100 * worst[0], 1), "games": worst[1]}
-        busiest = max(((cells[d][h][0], d, h) for d in range(7) for h in range(24)), default=None)
-        if busiest and busiest[0]:
-            tiles["busiest"] = {"label": f"{days[busiest[1]]} {self._hour_label(busiest[2])}",
-                                "games": busiest[0]}
-
-        def wr_days(ds):
-            g = sum(cells[d][h][0] for d in ds for h in range(24))
-            w = sum(cells[d][h][1] for d in ds for h in range(24))
-            return pct_of(w, g)
-        tiles["weekday"], tiles["weekend"] = wr_days(range(5)), wr_days((5, 6))
-        packed = [[[c[0], c[1], (round(c[2] / c[3]) if c[3] else None)] for c in row] for row in cells]
-        return {"cells": packed, "tiles": tiles, "games": total}
-
-    def _sessions(self, labels):
-        """Game number within a sitting, and what the previous result does to
-        the next one. A sitting ends when an hour passes with no game."""
-        by_number = [[0, 0, 0.0, 0] for _ in range(7)]
-        after = {"win": [0, 0], "l1": [0, 0], "l2": [0, 0], "l3": [0, 0]}
-        per_label = {}
-        for f in self.friends:
-            if f["label"] not in labels:
-                continue
-            mine = [[0, 0] for _ in range(7)]
-            games = sorted(self.season[f["label"]], key=lambda m: m.get("gameStartMs") or 0)
-            prev_end, number, streak = None, 0, 0
-            for m in games:
-                t0 = m.get("gameStartMs") or 0
-                if prev_end is None or t0 - prev_end > 3600_000:
-                    number, streak = 0, None
-                number += 1
-                idx = min(number, 7) - 1
-                win = bool(m.get("win"))
-                row = self.row_of.get((f["label"], m["matchId"]))
-                for bucket in (by_number[idx], ):
-                    bucket[0] += 1
-                    bucket[1] += 1 if win else 0
-                    if row and row["g15"] is not None:
-                        bucket[2] += row["g15"]
-                        bucket[3] += 1
-                mine[idx][0] += 1
-                mine[idx][1] += 1 if win else 0
-                if streak is not None:
-                    key = "win" if streak == 0 else "l1" if streak == 1 else "l2" if streak == 2 else "l3"
-                    after[key][0] += 1
-                    after[key][1] += 1 if win else 0
-                streak = 0 if win else (streak or 0) + 1
-                prev_end = t0 + int((m.get("durationMin") or 0) * 60_000)
-            per_label[f["label"]] = mine
-        return by_number, after, per_label
-
-    def _time(self):
-        def entries(pred):
-            return [(s["t0"], s["win"], (self.sides.get((s["id"], s["team"])) or {}).get("lead15"))
-                    for s in self.season_games.values() if pred(s)]
-        views = {"All": self._time_view(entries(lambda s: True))}
-        for label in self.labels:
-            views[label] = self._time_view(
-                entries(lambda s, label=label: any(f["label"] == label for f in s["friends"])))
-
-        def pack(by_number, after):
-            return {"byNumber": [[b[0], b[1], (round(b[2] / b[3]) if b[3] >= 8 else None)] for b in by_number],
-                    "after": after}
-        by_number, after, per_label = self._sessions(set(self.labels))
-        sessions = {"All": pack(by_number, after)}
-        for label in self.labels:
-            bn, af, _ = self._sessions({label})
-            sessions[label] = pack(bn, af)
-
-        fade = []
-        for label in self.labels:
-            # Ten games a bucket and four buckets, or there is no trend to
-            # speak of: with less, one good evening reads as "+40 by game 7".
-            pts = [(i, 100.0 * b[1] / b[0], b[0]) for i, b in enumerate(per_label.get(label, [])) if b[0] >= 10]
-            if len(pts) < 4:
-                continue
-            # Weighted least squares through winrate against game number, so
-            # one unlucky seventh game cannot draw the line by itself.
-            sw = sum(p[2] for p in pts)
-            mx = sum(p[0] * p[2] for p in pts) / sw
-            my = sum(p[1] * p[2] for p in pts) / sw
-            var = sum(p[2] * (p[0] - mx) ** 2 for p in pts)
-            slope = sum(p[2] * (p[0] - mx) * (p[1] - my) for p in pts) / var if var else 0.0
-            fade.append({"label": label, "delta": round(slope * 6),
-                         "pts": [(round(100.0 * b[1] / b[0], 1) if b[0] >= 10 else None)
-                                 for b in per_label[label]]})
-        steadiest = min(fade, key=lambda f: abs(f["delta"]))["label"] if fade else None
-        return {"views": views, "sessions": sessions, "fade": fade, "steadiest": steadiest}
-
-    # -- duos and stacks -------------------------------------------------------
-
-    def _duos(self):
-        sides = list(self.season_games.values())
-        queues = sorted({s["queue"] for s in sides if s["queue"]})
-        solo_q = "Ranked Solo/Duo"
-
-        own = defaultdict(lambda: [0, 0])
-        alone = defaultdict(lambda: [0, 0])
-        pair = defaultdict(lambda: [0, 0])
-        for s in sides:
-            if s["queue"] != solo_q:
-                continue
-            labs = [f["label"] for f in s["friends"]]
-            for a in labs:
-                own[a][0] += 1
-                own[a][1] += 1 if s["win"] else 0
-            if len(labs) == 1:
-                alone[labs[0]][0] += 1
-                alone[labs[0]][1] += 1 if s["win"] else 0
-            for i in range(len(labs)):
-                for j in range(i + 1, len(labs)):
-                    for key in ((labs[i], labs[j]), (labs[j], labs[i])):
-                        pair[key][0] += 1
-                        pair[key][1] += 1 if s["win"] else 0
-
-        def rate(c):
-            return 100.0 * c[1] / c[0] if c[0] else None
-        matrix = {}
-        for a in self.labels:
-            row = {}
-            for b in self.labels:
-                if a == b:
-                    if alone[a][0]:
-                        row[b] = [rnd(rate(alone[a]), 1), alone[a][0], None]
-                elif pair[(a, b)][0]:
-                    apart = mean([rate(own[a]), rate(own[b])])
-                    wr = rate(pair[(a, b)])
-                    row[b] = [rnd(wr, 1), pair[(a, b)][0], rnd(wr - apart, 1) if apart is not None else None]
-            matrix[a] = row
-
-        stacks = {}
-        for q in ["All"] + queues:
-            sizes = [[0, 0] for _ in range(5)]
-            for s in sides:
-                if q != "All" and s["queue"] != q:
-                    continue
-                n = min(len(s["friends"]), 5)
-                sizes[n - 1][0] += 1
-                sizes[n - 1][1] += 1 if s["win"] else 0
-            stacks[q] = sizes
-
-        role_pairs = defaultdict(lambda: [0, 0])
-        champ_pairs = defaultdict(lambda: [0, 0])
-        bot = defaultdict(lambda: {"g": 0, "w": 0, "lane": []})
-        on_champ = defaultdict(lambda: [0, 0])
-        for s in sides:
-            fr = s["friends"]
-            for f in fr:
-                c = on_champ[(f["label"], f["champ"])]
-                c[0] += 1
-                c[1] += 1 if s["win"] else 0
-            for i in range(len(fr)):
-                for j in range(i + 1, len(fr)):
-                    a, b = fr[i], fr[j]
-                    if a["role"] in ROLES and b["role"] in ROLES and a["role"] != b["role"]:
-                        ra, rb = sorted((a["role"], b["role"]), key=ROLES.index)
-                        role_pairs[(ra, rb)][0] += 1
-                        role_pairs[(ra, rb)][1] += 1 if s["win"] else 0
-                    x, y = sorted((a, b), key=lambda f: f["label"])
-                    key = (x["label"], x["champ"], y["label"], y["champ"])
-                    champ_pairs[key][0] += 1
-                    champ_pairs[key][1] += 1 if s["win"] else 0
-            adc = next((f for f in fr if f["role"] == "BOTTOM"), None)
-            sup = next((f for f in fr if f["role"] == "UTILITY"), None)
-            if adc and sup:
-                b = bot[(adc["label"], adc["champ"], sup["label"], sup["champ"])]
-                b["g"] += 1
-                b["w"] += 1 if s["win"] else 0
-                ra, rs = self.row_of.get((adc["label"], s["id"])), self.row_of.get((sup["label"], s["id"]))
-                if ra and rs and ra["g15"] is not None and rs["g15"] is not None:
-                    b["lane"].append(ra["g15"] + rs["g15"])
-
-        cp = []
-        for (la, ca, lb, cb), (g, w) in champ_pairs.items():
-            if g < 5:
-                continue
-            usual = mean([rate(on_champ[(la, ca)]), rate(on_champ[(lb, cb)])])
-            wr = 100.0 * w / g
-            cp.append({"a": [la, ca], "b": [lb, cb], "games": g, "wr": round(wr, 1),
-                       "vs": rnd(wr - usual, 1) if usual is not None else None})
-        cp.sort(key=lambda p: -p["games"])
-        bl = [{"adc": [k[0], k[1]], "sup": [k[2], k[3]], "games": v["g"], "wr": pct_of(v["w"], v["g"]),
-               "lane": rnd(mean(v["lane"]), 0), "laneGames": len(v["lane"])}
-              for k, v in bot.items() if v["g"] >= 3]
-        bl.sort(key=lambda p: -p["games"])
-        return {
-            "matrix": matrix, "queues": ["All"] + queues, "stacks": stacks,
-            "rolePairs": {f"{a}|{b}": [pct_of(v[1], v[0]), v[0]] for (a, b), v in role_pairs.items()},
-            "champPairs": cp[:14], "botPairs": bl[:10],
-        }
-
-    # -- game flow -------------------------------------------------------------
-
-    def _lowest_chance(self, side, highest=False):
-        best = None
-        for m in range(3, len(side["lead"]) - 1):
-            p = self.win_chance(side["lead"][m], m)
-            if p is None:
-                continue
-            if best is None or (p > best[0] if highest else p < best[0]):
-                best = (p, m)
-        return best
-
-    def _turning_point(self, side, after_minute, team):
-        """The first baron the given team took after a minute, if any."""
-        for o in self.objectives.get(side["id"], []):
-            if o["code"] == "BARON_NASHOR" and o["team"] == team and o["t"] > after_minute * 60:
-                return {"t": o["t"], "stolen": o["stolen"]}
-        return None
-
-    def _flow_story(self, side, comeback):
-        rows = [r for r in self.by_game[side["id"]] if r["team"] == side["team"] and r["friend"]]
-        extreme = self._lowest_chance(side, highest=not comeback)
-        team = side["team"] if comeback else 300 - side["team"]
-        return {
-            "id": side["id"], "t0": side["t0"], "dur": side["dur"], "lead": side["lead"],
-            "friends": [[r["friend"], r["champ"]] for r in rows],
-            "from": side["min"] if comeback else side["max"],
-            "chance": {"p": round(100 * extreme[0]), "minute": extreme[1]} if extreme else None,
-            "baron": self._turning_point(side, extreme[1], team) if extreme else None,
-            "objs": [[o["t"], monster_letter(o["code"]), 1 if o["team"] == side["team"] else 0,
-                      1 if o["stolen"] else 0] for o in self.objectives.get(side["id"], [])],
-        }
-
-    def _flow(self):
-        mine = [s for s in self.sides.values() if s["friends"]]
-        with15 = [s for s in mine if s["lead15"] is not None]
-        everyone15 = [s for s in self.sides.values() if s["lead15"] is not None]
-        comebacks = [s for s in mine if s["win"] and s["min"] <= -3000]
-        throws = [s for s in mine if not s["win"] and s["max"] >= 3000]
-        ahead = [s for s in with15 if s["lead15"] >= 2000]
-        ahead_all = [s for s in everyone15 if s["lead15"] >= 2000]
-
-        def wr(pop):
-            return pct_of(sum(1 for s in pop if s["win"]), len(pop))
-
-        def buckets(minute):
-            got = defaultdict(lambda: [0, 0])
-            for lead, win in self.model_points.get(minute, []):
-                for l, w in ((lead, win), (-lead, not win)):
-                    k = max(-6, min(6, round(l / 1000.0)))
-                    got[k][0] += 1
-                    got[k][1] += 1 if w else 0
-            return [[k, round(100.0 * v[1] / v[0], 1), v[0] // 1] for k, v in sorted(got.items()) if v[0] >= 8]
-
-        players = []
-        for label in self.labels:
-            ps = [s for s in mine if label in s["friends"]]
-            p15 = [s for s in ps if s["lead15"] is not None]
-            if len(p15) < 5:
-                continue
-            up = [s for s in p15 if s["lead15"] >= 2000]
-            expected = sum(self.win_chance(s["lead15"], 15) or 0.5 for s in p15)
-            players.append({
-                "label": label, "games": len(p15), "ahead": len(up), "conv": wr(up) if len(up) >= 3 else None,
-                "throws": sum(1 for s in ps if not s["win"] and s["max"] >= 3000),
-                "comebacks": sum(1 for s in ps if s["win"] and s["min"] <= -3000),
-                "flow": round(10.0 * (sum(1 for s in p15 if s["win"]) - expected) / len(p15), 1)})
-        players.sort(key=lambda p: -p["flow"])
-
-        def others(row):
-            mates = [r["g15"] for r in self.by_game[row["game"]]
-                     if r["team"] == row["team"] and r is not row and r["g15"] is not None]
-            return mean(mates)
-        spill = []
-        for label in self.labels:
-            led = [r for r in self.friend_rows[label] if r["g15"] is not None and r["g15"] >= 1000 and r["role"]]
-            vals = [v for v in (others(r) for r in led) if v is not None]
-            if len(vals) >= 8:
-                role = Counter(r["role"] for r in led).most_common(1)[0][0]
-                spill.append({"label": label, "role": role, "v": round(mean(vals)), "games": len(vals)})
-        spill.sort(key=lambda s: -s["v"])
-        base_vals = [v for v in (others(r) for r in self.rows
-                                 if r["g15"] is not None and r["g15"] >= 1000) if v is not None]
-
-        big_c = min(comebacks, key=lambda s: s["min"]) if comebacks else None
-        big_t = max(throws, key=lambda s: s["max"]) if throws else None
-        return {
-            "tiles": {"comebacks": len(comebacks), "throws": len(throws),
-                      "conv": wr(ahead), "convN": len(ahead), "convLobby": wr(ahead_all),
-                      "ahead15": pct_of(sum(1 for s in with15 if s["lead15"] > 0), len(with15)),
-                      "games": len(with15), "modelGames": self.model_games},
-            "curve": {"b15": rnd(self.slopes.get(15), 4), "b20": rnd(self.slopes.get(20), 4),
-                      "se15": rnd(self.slope_se.get(15), 4), "dots": buckets(15)},
-            "slopes": {str(m): round(b, 4) for m, b in self.slopes.items()},
-            "players": players, "spill": spill,
-            "spillBase": round(mean(base_vals)) if base_vals else None,
-            "comeback": self._flow_story(big_c, True) if big_c else None,
-            "throw": self._flow_story(big_t, False) if big_t else None,
-        }
+        for r in sorted((r for r in self.group_rows if r["score"] is not None), key=lambda r: -r["t0"])[:12]:
+            out.append({"game": r["game"], "pid": r["pid"], "champ": r["champ"], "role": r["role"],
+                        "tier": r["tier"], "score": round(r["score"], 3),
+                        "plan": [[layer, m, w, tag] for layer, m, w, tag in self.plan(r["champ"], r["role"])]})
+        return out
 
     # -- the game list and the per-day game files -----------------------------
 
@@ -1370,8 +794,10 @@ class Analysis:
                 continue
             rows = [r for r in self.by_game[gid] if r["team"] == team and r["friend"]]
             out.append([gid, s["t0"], s["dur"], self.games[gid].get("q"), team, 1 if s["win"] else 0,
-                        [[r["friend"], r["champ"], r["role"], r["k"], r["d"], r["a"],
-                          r["g15"] if r["g15"] is not None else None] for r in rows]])
+                        [[r["friend"], r["champ"], r["role"], r["k"], r["d"], r["a"], r["g15"],
+                          rnd(r["score"], 1), r["rank"][:2] if r["rank"] else None] for r in rows],
+                        (self.lobby_rank.get(gid) or [None, None])[:2],
+                        1 if s["comeback"] else 2 if s["throw"] else 0, round(s["gap"], 4)])
         out.sort(key=lambda g: -g[1])
         return out
 
@@ -1379,57 +805,42 @@ class Analysis:
     def day_key(t0):
         return datetime.fromtimestamp(t0 / 1000.0, tz=timezone.utc).strftime("%Y-%m-%d")
 
-    def _usual(self):
-        """{label: {"Champ|ROLE": [games, [percentile per radar axis]]}}: what a
-        normal game on that champion looks like, for "this game vs usual"."""
-        groups = defaultdict(list)
-        for label in self.labels:
-            for r in self.friend_rows[label]:
-                if r["role"]:
-                    groups[(label, r["champ"], r["role"])].append(r)
-        out = defaultdict(dict)
-        for (label, champ, role), rows in groups.items():
-            out[label][f"{champ}|{role}"] = [len(rows), [rnd(self.agg_pc(rows, s), 0) for s in ROLE_STATS[role]]]
-        return out
-
-    def _quantiles(self):
-        """The lobby baseline as 101 points per role and stat, so the page can
-        rank one game's raw value the same way this module ranks a row."""
-        out = {}
-        for role in ROLES:
-            per = {}
-            for stat in ROLE_STATS[role]:
-                vals = self.sorted_lobby.get((role, stat)) or []
-                if len(vals) >= 20:
-                    per[stat] = [round(vals[(len(vals) - 1) * q // 100], 4) for q in range(101)]
-            out[role] = per
-        return out
-
     def public_game(self, g):
-        """One game as the breakdown tab reads it: no puuids, friends labelled,
-        and the comparisons that need the whole dataset already worked out."""
+        """One game as the breakdown tab reads it: no puuids, friends labelled.
+
+        Raw values only, never a percentile or a score. Those move every time
+        a baseline grows, which would change every game file on every build
+        and upload a season of them each hour. The values never change; the
+        page holds the baselines and does the ranking.
+        """
         rows = self.by_game[g["id"]]
+        rk = g.get("rk")
+        slot = 0 if g.get("q") == 420 else 1
         players = []
         for i, p in enumerate(g["p"]):
             r = rows[i]
-            entry = {"n": p.get("n", ""), "c": p["c"], "t": p["t"], "r": p["r"],
+            # A tracked friend is only ever named by their label, so their
+            # Riot ID is left out; everyone else is who the scoreboard said.
+            entry = {"n": "" if r["friend"] else p.get("n", ""), "c": p["c"], "t": p["t"], "r": p["r"],
                      "k": p["k"], "d": p["d"], "a": p["a"], "cs": p["cs"], "gold": p["gold"],
                      "dmg": p["dmg"], "vis": p["vis"], "g": p["g"], "xy": p["xy"],
                      "x15": p.get("x15"), "c10": p.get("c10"), "c15": p.get("c15")}
             if r["friend"]:
                 entry["f"] = r["friend"]
+            pair = rk[i] if rk and i < len(rk) else None
+            read = (pair[slot] or pair[1 - slot]) if pair else None
+            if read:
+                entry["rk"] = read[:2]
             if r["role"]:
-                # Raw values, not percentiles. A percentile moves every time
-                # the lobby baseline grows, which would change every game file
-                # on every build and re-upload a season of them each hour. The
-                # values never change; the page holds the baseline and does
-                # the ranking.
-                entry["fx"] = [rnd(r.get(s), 4) for s in ROLE_STATS[r["role"]]]
+                entry["m"] = {m: round(r[m], 4) for m in scoring.METRICS if r.get(m) is not None}
+            if r.get("jg") and r["jg"].get("l4") is not None:
+                entry["l4"] = r["jg"]["l4"]
             players.append(entry)
         objs = [[o["t"], o["code"], o["team"], o["killer"], o["n"], 1 if o["stolen"] else 0,
                  sorted(o["parts"] - {o["killer"]})] for o in self.objectives.get(g["id"], [])]
         return {"id": g["id"], "q": g.get("q"), "t0": g["t0"], "dur": g["dur"], "patch": g.get("patch"),
-                "win": g.get("win"), "p": players, "kills": g.get("kills", []), "obj": objs}
+                "win": g.get("win"), "p": players, "kills": g.get("kills", []), "obj": objs,
+                "bld": g.get("bld", [])}
 
     def game_files(self):
         """{'2026-11-12': {matchId: public game}} for every game with a friend in it."""
@@ -1449,13 +860,15 @@ class Analysis:
             "items": {k: v["name"] for k, v in self.items.items()},
             "games": self._games_index(),
             "players": self._players(),
+            "jungle": self._jungle_table(),
             "champions": self._champions(),
             "roles": self._roles(),
             "time": self._time(),
             "duos": self._duos(),
             "flow": self._flow(),
-            "quant": self._quantiles(),
+            "records": self._records(),
             "usual": self._usual(),
+            "scoring": self._scoring_payload(),
         }
 
     # -- what the main page borrows ---------------------------------------------
@@ -1468,12 +881,11 @@ class Analysis:
         has no way of working out from a friend's own match rows.
         """
         g15 = {(r["friend"], r["game"]): r["g15"] for r in self.rows if r["friend"]}
+        score = {(r["friend"], r["game"]): r["score"] for r in self.rows if r["friend"] and r["score"] is not None}
 
         seasons = defaultdict(lambda: {"games": 0, "wins": 0, "roles": Counter()})
         for f in self.friends:
             for m in self.season[f["label"]]:
-                if m.get("remake"):
-                    continue
                 s = seasons[(f["label"], m.get("champion"))]
                 s["games"] += 1
                 s["wins"] += 1 if m.get("win") else 0
@@ -1485,9 +897,12 @@ class Analysis:
                 stored[(label, r["champ"])].append(r)
         champ = {}
         for key, s in seasons.items():
-            perf, verdict, _ = self.performance(s["wins"], s["games"], stored.get(key, []))
+            top = self.top_score(stored.get(key, []), s["wins"], s["games"])
             role = s["roles"].most_common(1)[0][0] if s["roles"] else ""
-            champ[key] = {"perf": perf, "verdict": verdict, "comfort": self.comfort(s["games"]),
+            champ[key] = {"perf": round(top["score"]) if top else 0,
+                          "raw": round(top["raw"]) if top else None,
+                          "verdict": top["verdict"] if top else None,
+                          "comfort": self.comfort(s["games"]), "scored": bool(top),
                           "role": ROLE_NAME.get(role, ""), "games": s["games"], "wins": s["wins"]}
 
         player = {}
@@ -1502,8 +917,9 @@ class Analysis:
                 "g15": rnd(self.agg(rows, "g15"), 0),
                 "kp": rnd(self.agg(in_role, "kp"), 3),
                 "kpLobby": rnd(self.agg(self.lobby_rows[role], "kp"), 3),
+                "score": rnd(mean(r["score"] for r in rows), 0),
             }
-        return {"g15": g15, "stored": set(self.games), "champ": champ, "player": player}
+        return {"g15": g15, "score": score, "stored": set(self.games), "champ": champ, "player": player}
 
     def week_notes(self, since_ms):
         """Three lines for "this week at a glance" that need the game store."""
@@ -1531,7 +947,7 @@ class Analysis:
                              "table": [(l, round(100 * v), n) for v, l, n, _ in roamers]}
 
         late = [s for s in self.season_games.values()
-                if s["t0"] >= since_ms and uk_time(s["t0"]).hour < 6]
+                if s["t0"] >= since_ms and uk_time(s["t0"]).hour < 5]
         if len(late) >= 3:
             wins = sum(1 for s in late if s["win"])
             notes["night"] = {"wins": wins, "losses": len(late) - wins}

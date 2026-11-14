@@ -69,9 +69,11 @@ games/
 # The analysis pages and the per-day game files they load, built from it.
 analysis.html
 analysis-main.html
+analysis-split.html
 g/
 deploy/analysis.html
 deploy/analysis-main.html
+deploy/analysis-split.html
 deploy/g/
 
 # Local preview config for the desktop app; nothing the build reads.

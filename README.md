@@ -60,6 +60,33 @@ what those sites are built on), so this app talks to Riot directly.
   webhook. Runs automatically at the end of `fetch_data.py` if you set
   `discord_webhook_url` in `config.json`; can also be run by hand.
 
+### The Data analysis half
+
+The site has two modes, switched in the header. Basic is `generate_dashboard.py`
+above. Data analysis is built from a second store that keeps all ten players
+and the minute-by-minute timeline of every game:
+
+- `game_store.py` keeps one compact record per game under `games/` (git-ignored:
+  it holds every player's name). It also reads each player's rank when a game is
+  collected, and can go back over old games: `python game_store.py --upgrade
+  --ranks` re-fetches games stored before the current record version and fills
+  in ranks, within Riot's rate limit, saving as it goes.
+- `analysis.py`, `analysis_views.py`, `analysis_views2.py` and
+  `analysis_util.py` turn the store into the numbers on the pages.
+- `scoring.py` is the rulebook for the game score and the top champions score:
+  which numbers count for each role, class and tag, the weight of each rank, and
+  the arithmetic. Change a rule there and every stored game is rescored on the
+  next build.
+- `champion_classes.py` is each champion's class and tags, from the League of
+  Legends Wiki. Add a line when a champion is released or reworked.
+- `analysis_page.py` and `analysis_assets/` write `analysis.html` (second
+  accounts merged into their owners), `analysis-split.html` (every account on
+  its own) and one small file per day of games under `g/`.
+- `analysis_assets/map/` is the map: a flat vector copy of the minimap with
+  each area as its own shape. `rift_zones.py` is generated from it by
+  `tools/build_rift_zones.py`, so a takedown counted as "top river" is one that
+  is drawn on the top river. Run the tool again only if the drawing changes.
+
 ## 1. Get a free Riot API key
 
 1. Go to https://developer.riotgames.com and log in with (or create) a Riot

@@ -11,6 +11,7 @@ import hashlib
 import html
 import json
 import math
+import re
 import sys
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -1186,6 +1187,20 @@ def render_perf_bar(score):
             f'<b>{score}</b></span>')
 
 
+def score_href(label, champion):
+    """Where a top-champions score is taken apart: the champion's own page in
+    Data analysis, opened on that player's working."""
+    if not _AN["href"]:
+        return None
+    return f'{_AN["href"]}#tab=champions&champ={champion}&cwho={label}'
+
+
+def champion_link(label, champion, inner):
+    href = score_href(label, champion)
+    return (f'<a class="score-link" href="{esc(href)}" title="How this score was worked out">{inner}</a>'
+            if href else inner)
+
+
 def render_comfort(tag):
     return f'<span class="comfort comfort-{tag.lower()}">{esc(tag)}</span>'
 
@@ -1312,6 +1327,8 @@ EXTRA_CSS = """
              border: 1px dashed var(--border-strong); color: var(--text-secondary); text-decoration: none; font-size: 13px; }
   .an-hint:hover { background: var(--surface-2); color: var(--text-primary); }
   .an-hint b { color: #c4b5fd; }
+  .score-link { color: inherit; text-decoration: none; }
+  .score-link:hover .cc { text-decoration: underline; text-decoration-color: var(--violet, #8b6cf6); }
   .av-pen { position: absolute; left: -5px; bottom: -5px; width: 20px; height: 20px; border-radius: 50%; font-size: 11px;
             display: flex; align-items: center; justify-content: center; background: var(--surface-3);
             border: 1px solid var(--border-strong); color: var(--text-primary); opacity: 0; transition: opacity .15s ease; }
@@ -1967,9 +1984,10 @@ def render_top_champions(rows, label=None, season_matches=()):
             if not m.get("remake"):
                 kdas.setdefault(m["champion"], []).append(match_kda(m))
         body = "".join(
-            f'<tr><td class="champ-cell"><span class="cc">{render_champion_icon(c, size=20)}'
-            f'{esc(champion_display(c))}</span></td>'
-            f'<td>{render_perf_bar(v["perf"])}</td>'
+            f'<tr><td class="champ-cell">'
+            + champion_link(label, c, f'<span class="cc">{render_champion_icon(c, size=20)}'
+                                      f'{esc(champion_display(c))}</span>')
+            + f'</td><td>{render_perf_bar(v["perf"])}</td>'
             f'<td>{render_comfort(v["comfort"])}</td>'
             f'<td class="num">{v["games"]}</td>'
             f'<td class="num">{100 * v["wins"] / v["games"]:.1f}%</td>'
@@ -1977,7 +1995,7 @@ def render_top_champions(rows, label=None, season_matches=()):
             for c, v in mine[:6])
         if body:
             return f'''<table class="matches-table">
-      <thead><tr><th>Champion</th><th>Performance</th><th>Comfort</th>
+      <thead><tr><th>Champion</th><th>Score</th><th>Comfort</th>
       <th class="num">Games</th><th class="num">Winrate</th><th class="num">KDA</th></tr></thead>
       <tbody>{body}</tbody>
     </table>'''
@@ -5697,6 +5715,25 @@ def render_award_tiles(tiles, friends_sorted):
     return "".join(one(t) for t in tiles)
 
 
+def highlight_cards(data, colours):
+    """The season highlights as plain cards for the analysis page's Records tab.
+
+    Built by the same functions as the panel on this page, so an award cannot
+    say one thing here and another there. The only change is the colour of a
+    name: this page colours names through CSS variables it defines per friend,
+    and the analysis page has no such variables, so each is written out as the
+    colour itself.
+    """
+    friends = sorted(data.get("friends", []), key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)
+    out = []
+    for c in season_highlights(friends, datetime.now()):
+        why = re.sub(r'<b style="color:var\([^)]*\);">([^<]+)</b>',
+                     lambda m: f'<b style="color:{colours.get(html.unescape(m.group(1)), "#f2f4f8")}">{m.group(1)}</b>',
+                     render_award_why(c))
+        out.append({"icon": c["icon"], "title": c["title"], "text": c["text"], "who": c.get("who"), "why": why})
+    return out
+
+
 def render_season_highlights_panel(friends_sorted, now):
     cards = season_highlights(friends_sorted, now)
     if not cards:
@@ -5718,9 +5755,10 @@ def render_group_top_champions(friends_sorted):
         best.sort(key=lambda kv: (-kv[1]["perf"], -kv[1]["games"]))
         body = "".join(
             f'<tr><td class="num muted small">{n}</td>'
-            f'<td class="champ-cell"><span class="cc">{render_champion_icon(k[1], size=20)}'
-            f'{esc(champion_display(k[1]))}</span></td>'
-            f'<td class="nowrap"><b style="color:var({friend_colour(k[0])});">{esc(k[0])}</b></td>'
+            f'<td class="champ-cell">'
+            + champion_link(k[0], k[1], f'<span class="cc">{render_champion_icon(k[1], size=20)}'
+                                        f'{esc(champion_display(k[1]))}</span>')
+            + f'</td><td class="nowrap"><b style="color:var({friend_colour(k[0])});">{esc(k[0])}</b></td>'
             f'<td class="muted">{esc(v["role"] or "–")}</td>'
             f'<td>{render_perf_bar(v["perf"])}</td>'
             f'<td>{render_comfort(v["comfort"])}</td>'
@@ -5732,13 +5770,15 @@ def render_group_top_champions(friends_sorted):
             return f'''
       <div class="panel">
         <h2 style="margin-bottom:6px;">Top champions across everyone</h2>
-        <p class="panel-hint">Sorted by Performance: winrate, held back until there are enough games to
-          believe it, plus how they play against the lobby in that role. Comfort is how much it is played.</p>
+        <p class="panel-hint">Sorted by the top champions score: the average game score on that champion,
+          weighted by the rank it was played at, by how many games there are (full weight at fifty) and by
+          whether they win more than that champion usually does at their rank. Click a champion for the working.
+          Comfort is how much it is played.</p>
         <div class="table-scroll">
           <table class="matches-table group-top">
             <thead><tr><th class="num">#</th><th>Champion</th><th>Player</th><th>Role</th>
-            <th>Performance</th><th>Comfort</th><th class="num">Games</th>
-            <th class="num">Winrate</th><th class="num">vs lobby</th></tr></thead>
+            <th>Score</th><th>Comfort</th><th class="num">Games</th>
+            <th class="num">Winrate</th><th class="num">For their rank</th></tr></thead>
             <tbody>{body}</tbody>
           </table>
         </div>
@@ -11173,34 +11213,53 @@ def main():
         "main.html" if out_path.stem == "index" else out_path.stem + "-main" + out_path.suffix)
 
     # The analysis pages, built first because the main page borrows a few of
-    # their numbers and links into them. Same pairing as the main page: one
-    # with everybody, one with second accounts left out, where a hidden
-    # account is simply one more stranger in the lobby.
+    # their numbers and links into them.
+    #
+    #   analysis.html         the default: each person's second account folded
+    #                         into their first, so nobody is two half-players
+    #   analysis-split.html   every account on its own
+    #   analysis-main.html    where "second accounts hidden" used to live; it
+    #                         now only sends old links on to analysis.html
+    #
+    # The split build is also what both copies of this page borrow from. A
+    # leaderboard has to stay one row an account, because an account is what
+    # has a rank, so its numbers are per account too.
     stem = "analysis" if out_path.stem == "index" else out_path.stem + "-analysis"
     an_path = out_path.with_name(stem + ".html")
-    an_alt_path = out_path.with_name(stem + "-main.html")
+    an_split_path = out_path.with_name(stem + "-split.html")
+    an_old_path = out_path.with_name(stem + "-main.html")
     analysis = analysis_main = None
     try:
         import analysis_page
+        from analysis import Analysis
         store_games = analysis_page.load_store_games(data_path.parent / "games")
         if store_games:
             mark_legacy_remakes(data.get("friends", []))
-
-            def colours(d):
-                return {f["label"]: FRIEND_PALETTE[min(i, len(FRIEND_PALETTE) - 1)]["dark"]
-                        for i, f in enumerate(d.get("friends", []))}
+            # One colour a person, taken from the full list, so a name is the
+            # same colour on every page whichever accounts that page shows.
+            colours = {f["label"]: FRIEND_PALETTE[min(i, len(FRIEND_PALETTE) - 1)]["dark"]
+                       for i, f in enumerate(data.get("friends", []))}
             set_icon_context(data.get("ddragonVersion"), data.get("championIconMap", {}))
+            merged = analysis_page.merge_second_accounts(data)
             analysis = analysis_page.build(
-                data, store_games, colours(data), an_path, out_path.name,
-                an_alt_path.name if main_only else None, "Hide second accounts",
-                avatars=avatar_config(data))
-            print(f"Wrote {an_path} ({len(analysis.games)} stored games)")
+                data, store_games, colours, an_split_path if merged else an_path, out_path.name,
+                an_path.name if merged else None, "Merge second accounts",
+                avatars=avatar_config(data), highlights=highlight_cards(data, colours))
+            print(f"Wrote {an_split_path if merged else an_path} ({len(analysis.games)} stored games)")
+            if merged:
+                analysis_page.build(
+                    merged, store_games, colours, an_path, out_path.name,
+                    an_split_path.name, "Show second accounts",
+                    avatars=avatar_config(merged), highlights=highlight_cards(merged, colours))
+                print(f"Wrote {an_path} (second accounts merged)")
+            an_old_path.write_text(analysis_page.redirect_page(an_path.name), encoding="utf-8")
             if main_only:
+                # Numbers only, no page: the copy of this page that hides
+                # second accounts must not name them in a "this week" table.
                 mark_legacy_remakes(main_only.get("friends", []))
-                analysis_main = analysis_page.build(
-                    main_only, store_games, colours(main_only), an_alt_path, alt_path.name,
-                    an_path.name, "Show second accounts", avatars=avatar_config(main_only))
-                print(f"Wrote {an_alt_path}")
+                analysis_main = Analysis(main_only, store_games)
+            # Game files name a friend by account. The merged page maps each
+            # account to its owner as it reads them, so one set serves both.
             days, count = analysis_page.write_game_files(analysis, out_path.parent / "g")
             print(f"Wrote {count} games into {days} day files under {out_path.parent / 'g'}")
         else:
@@ -11225,7 +11284,7 @@ def main():
         alt_path.write_text(
             build_html(main_only, alt_href=out_path.name,
                        alt_label="Show second accounts",
-                       analysis=analysis_main, analysis_href=an_alt_path.name),
+                       analysis=analysis_main, analysis_href=an_path.name),
             encoding="utf-8")
         hidden = ", ".join(sorted(second_account_labels(data)))
         print(f"Wrote {alt_path} (without {hidden})")

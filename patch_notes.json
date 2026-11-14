@@ -1,5 +1,91 @@
 [
   {
+    "date": "2026-11-15",
+    "title": "The checklist: game scores, ranks, jungle pathing, records, and a drawn map",
+    "items": [
+      {
+        "type": "added",
+        "text": "Every game now has a score from 0 to 100. It is built from up to ten numbers: six for the role, two for the champion's class and up to two for its tags, weighted 60 / 25 / 15. Each is a percentile against players in the same role at the same rank, so 50 is an ordinary game for that role at that level. Open any game in Game breakdown to see the score for all ten players and, for one of you, every number behind it."
+      },
+      {
+        "type": "changed",
+        "text": "Top champions are ranked by a new score in place of Performance: the average game score on that champion, weighted by the rank it was played at, by how many games there are (full weight at fifty) and by whether you win more than that champion usually does at your rank. Click a champion in either top champions table to see the working, step by step."
+      },
+      {
+        "type": "added",
+        "text": "Ranks. The site now reads the rank of all ten players when a game is collected, and is working back through the season's games as well. Riot only ever says what a rank is today, so older games get today's rank; from here on each game keeps the rank it was played at. This is what lets a Gold support be compared with Gold supports. Until a game has been reached, everyone in it is placed at the rank of whichever of you played it, and the top of the page says how far the catch-up has got."
+      },
+      {
+        "type": "added",
+        "text": "Players: radars by rank (your line against the average for your role at each rank), winrate by lobby rank, and the games-by-mode and roles-played donuts and winrate by queue from the original site."
+      },
+      {
+        "type": "added",
+        "text": "Jungle pathing on the Players tab for anyone who jungles: the camp you start on (read at 1:00, five seconds after camps appear), your usual route to 4:00, how often you full clear and how long it takes, how often you gank before finishing and whether it works, how the first two scuttles go, and every jungler in the group side by side."
+      },
+      {
+        "type": "added",
+        "text": "A Records tab: the season highlights from the Basic page, plus new ones from the minute-by-minute data such as biggest comeback and throw, thief, robbed, fastest first item, furthest roam and who holds up best after two losses."
+      },
+      {
+        "type": "added",
+        "text": "Champions opens on a grid of every champion the group has played, grouped by class, with a proper search that suggests as you type. A champion's page now shows each matchup three ways: how the champion does against it across every stored game, then each of you beside that, coloured by who beats it and who falls short."
+      },
+      {
+        "type": "added",
+        "text": "Duos has a second view, Champion pairs with randoms: pick one of your champions and see every teammate's champion in a given role, friend or stranger, with the winrate against your usual and by class. For example, which supports your ADC does best with in solo queue."
+      },
+      {
+        "type": "changed",
+        "text": "The map is drawn by the site again, from the group's own flat copy of the minimap, in place of the image. Positions, kill participation, kills, assists and deaths are separate switches on both maps, so positions can be seen on their own. Jungle and roaming views use a second colouring that picks out only the river and the jungle."
+      },
+      {
+        "type": "changed",
+        "text": "Roaming counts the river in two halves and the jungle as yours and theirs. The bar shows one block each for river and jungle, biggest first; point at a block (or tap it) for the split and the average at your rank. Does roaming pay off now shows the gold difference at 15 for every lane, not just two."
+      },
+      {
+        "type": "changed",
+        "text": "Data analysis merges each person's second account into their first by default, so nobody is split in two. Show second accounts in the header brings them back. The Basic page is unchanged, because a rank belongs to an account."
+      },
+      {
+        "type": "changed",
+        "text": "Champion classes and tags are now the League of Legends Wiki's, kept in one file and credited in the footer. A champion shows its class once, and its tags beside it."
+      },
+      {
+        "type": "changed",
+        "text": "Throws and comebacks count from 5k gold, up from 3k, and are judged on a win chance that knows how each team's champions scale: a team of late champions that was behind at 15 and expected to win anyway is not a comeback. Game flow has a switch between gold only and gold plus team scaling, and a table of which champions do better later."
+      },
+      {
+        "type": "changed",
+        "text": "One set of game phases everywhere: laning to 15 minutes, mid game to 25, late after."
+      },
+      {
+        "type": "changed",
+        "text": "Time patterns shows all 24 hours from 5am. Click a bar in the session chart, or 7+, for every game number up to 15 and beyond with its winrate, gold and deaths."
+      },
+      {
+        "type": "fixed",
+        "text": "Small samples. A cell with under five games no longer gets a red or green background, an average over under ten is greyed, and nothing is called best or worst on fewer than thirty: the best and worst time to queue for one player could come from thirteen games before."
+      },
+      {
+        "type": "fixed",
+        "text": "Who fades in long sessions uses one rule for everybody: ten sessions that reached a fifth game. Anyone short of that is listed underneath with their count, where before one person was left out without a word and another got a line through four points."
+      },
+      {
+        "type": "fixed",
+        "text": "The duo synergy grid fits its card. With eleven accounts the last two columns sat off the edge and looked missing."
+      },
+      {
+        "type": "fixed",
+        "text": "On Roles and classes, picking a class changes the two comparison rows and what the cells are coloured against. Junglers are compared on their share of objective damage, since every jungler is part of nearly every objective. Radars have no dashed lines. Charts fill their cards. Wide tables scroll sideways on a phone with the first column held in place."
+      },
+      {
+        "type": "changed",
+        "text": "Two things on the list turned out not to be bugs. There are no trios because no game this season has exactly three tracked accounts on a team: it is always solo, duo or a five, and the fours are fives with one account the site does not follow. And the minus signs on bot lane gold at 15 are real: the group's ADCs are behind at 15 more often than not and win later. Both cards now say so."
+      }
+    ]
+  },
+  {
     "date": "2026-11-14",
     "title": "Real icons, the real map, and a face you can choose",
     "items": [
