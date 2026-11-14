@@ -73,7 +73,8 @@ function fillGame() {
     if (!document.body.contains(host) || host.dataset.id !== entry[0]) return;
     if (!G) { host.innerHTML = empty('This game is listed but its detail file has not been published yet.'); return; }
     NOW = { G, entry };
-    if (UI.mapGame !== G.id) { UI.mapGame = G.id; UI.mapT = G.p[0].g.length - 1; UI.focus = null; }
+    if (UI.mapGame !== G.id) { UI.mapGame = G.id; UI.mapT = G.dur; UI.focus = null; stopPlay(); }
+    NOW.kf = keyframes(G);
     host.innerHTML = gameBody(G, entry);
   };
   if (dayDocs[day]) draw(dayDocs[day]);
@@ -111,15 +112,15 @@ function gameBody(G, entry) {
   const k = v => v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v;
   const board = (rows, blue, mineSide) => `<div><div class="side-title ${blue ? 'blue' : 'red'}"><span>${blue ? 'Blue side' : 'Red side'}${mineSide ? ' · your team' : ''}</span></div>` +
     `<div class="scroll"><table class="tbl"><thead><tr><th>Role</th><th>Champion</th><th>Player</th><th class="num">K/D/A</th><th class="num">CS</th><th class="num">Gold</th><th class="num">Dmg</th><th class="num">Vis</th></tr></thead><tbody>` +
-    rows.map(p => `<tr class="${isFriend(p) ? 'me' : ''}"><td class="muted">${RN[p.r] || '-'}</td><td>${champ(p.c)}</td>` +
-      `<td>${isFriend(p) ? fn(p.f) : '<span class="muted">' + esc(p.n) + '</span>'}</td><td class="num strong">${p.k}/${p.d}/${p.a}</td>` +
+    rows.map(p => `<tr class="${isFriend(p) ? 'me' : ''}"><td class="muted"><span class="cell-champ">${ricon(p.r)}${RN[p.r] || '-'}</span></td><td>${champ(p.c)}</td>` +
+      `<td>${isFriend(p) ? who(p.f) : '<span class="muted">' + esc(p.n) + '</span>'}</td><td class="num strong">${p.k}/${p.d}/${p.a}</td>` +
       `<td class="num">${p.cs}</td><td class="num">${k(p.gold)}</td><td class="num">${k(p.dmg)}</td><td class="num">${p.vis}</td></tr>`).join('') + '</tbody></table></div></div>';
   out += `<section class="card" style="margin-bottom:20px"><div class="grid g2" style="margin:0">${board(mine, team === 100, true)}${board(theirs, team !== 100, false)}</div></section>`;
 
   /* gold lead, lane differences, win chance */
-  const objs = G.obj.map(o => [o[0], monLetter(o[1]), o[2] === team ? 1 : 0, o[5]]);
+  const objs = G.obj.map(o => [o[0], monLetter(o[1]), o[2] === team ? 1 : 0, o[5], o[1]]);
   const stolen = G.obj.filter(o => o[5]).map(o => `${esc(MON[o[1]] || o[1])} stolen by ${label(o[3])} at ${mmss(o[0])}`);
-  const goldCard = card('Team gold lead', 'Above the line is your team ahead. Circles mark objectives: D dragon, G grubs, H herald, A Atakhan, B baron, E elder. A dashed ring is a steal.',
+  const goldCard = card('Team gold lead', "Above the line is your team ahead. Each objective is marked when it was taken, ringed blue for yours and red for theirs. A dashed gold ring is a steal.",
     leadChart(lead, G.dur, { objs, h: 400, mark: lastWhole >= 15 ? 15 : null }) +
     `<div class="legend"><span><i class="sw" style="background:#4c8dff"></i>Your team's objective</span><span><i class="sw" style="background:#ef5350"></i>Enemy objective</span>` +
     (stolen.length ? `<span style="color:var(--warn)">◌ ${stolen.join(' · ')}</span>` : '') + '</div>');
@@ -130,7 +131,7 @@ function gameBody(G, entry) {
     const gd = m => m <= lastWhole ? a.g[m] - b.g[m] : null;
     const d = (x, y) => x == null || y == null ? null : x - y;
     const cs = d(a.c15, b.c15);
-    return `<tr><td>${r === 'BOTTOM' ? 'Bot (ADC)' : RN[r]}</td><td class="nowrap">${cicon(a.c, 20)} <span class="muted">vs</span> ${cicon(b.c, 20)}</td>` +
+    return `<tr><td><span class="cell-champ">${ricon(r)}${r === 'BOTTOM' ? 'Bot (ADC)' : RN[r]}</span></td><td class="nowrap">${cicon(a.c, 20)} <span class="muted">vs</span> ${cicon(b.c, 20)}</td>` +
       `${dcell(gd(10), 1200)}${dcell(gd(15), 1800)}${dcell(d(a.x15, b.x15), 1500)}<td class="num">${cs == null ? '-' : (cs > 0 ? '+' : cs < 0 ? '−' : '') + Math.abs(cs)}</td></tr>`;
   }).join('');
   const cpts = chance.map((c, m) => [m === frames - 1 ? G.dur / 60 : m, c == null ? null : c * 100]);
@@ -143,17 +144,21 @@ function gameBody(G, entry) {
   out += `<div class="grid g-3-2">${goldCard}${laneCard}</div>`;
 
   /* objective log, map, this game against the usual */
-  const log = G.obj.length ? `<div class="oblog">${G.obj.map(o => `<div class="row"><span class="muted">${mmss(o[0])}</span><span class="dot ${o[2] === team ? 'b' : 'r'}">${monLetter(o[1])}</span>` +
+  const log = G.obj.length ? `<div class="oblog">${G.obj.map(o => `<div class="row"><span class="muted">${mmss(o[0])}</span>${monBadge(o[1], monLetter(o[1]), o[2] === team)}` +
     `<div><b>${esc(MON[o[1]] || o[1])}${o[4] > 1 ? ' ×' + o[4] : ''}</b>${o[5] ? ' <span class="tag stolen">STOLEN</span>' : ''}` +
     `<div class="muted small">killer ${label(o[3])} · assists ${o[6].length ? o[6].map(label).join(', ') : 'none'}</div></div></div>`).join('')}</div>`
     : '<div class="empty">No epic monsters were taken.</div>';
   const logCard = card('Objective log', 'Who killed it and who helped.', log);
   const modes = [['kills', 'Kills'], ['pos', 'Positions']].map(m => pill(m[1], UI.mapMode === m[0], ui({ mapMode: m[0] }), ' sm')).join('');
   const mapCard = `<section class="card"><h2>Map<span class="pills" style="margin-left:auto">${modes}</span></h2><div style="height:12px"></div>` +
-    `<div class="mapwrap" id="gmap">${gameMap()}</div><div class="scrub"><button type="button" data-step="-1" aria-label="Back a minute">◀</button>` +
-    `<input type="range" id="map-t" min="1" max="${frames - 1}" value="${UI.mapT}" aria-label="Minute"><button type="button" data-step="1" aria-label="Forward a minute">▶</button>` +
+    `<div class="mapwrap" id="gmap">${gameMap()}</div><div class="scrub">` +
+    `<button type="button" id="map-play" data-play aria-label="Play the game back">${PLAY.timer ? '\u275A\u275A' : '\u25B6'}</button>` +
+    `<button type="button" data-step="-15" aria-label="Back 15 seconds">\u25C0</button>` +
+    `<input type="range" id="map-t" min="0" max="${G.dur}" step="5" value="${UI.mapT}" aria-label="Time in the game">` +
+    `<button type="button" data-step="15" aria-label="Forward 15 seconds">\u25B6</button>` +
     `<b id="map-t-label" class="num" style="min-width:52px">${mapLabel()}</b></div>` +
-    `<div class="legend" id="gmap-legend">${mapLegend()}</div><p class="muted small">Ward positions are not in Riot's match data, so they cannot be drawn.</p></section>`;
+    `<div class="legend" id="gmap-legend">${mapLegend()}</div><p class="muted small">Riot records where everyone stands once a minute and exactly where each death happens. ` +
+    `Between those points movement is drawn as a straight line, so a recall looks like a walk home. Ward positions are not in the data at all.</p></section>`;
   const fx = friends.filter(p => p.fx && D.meta.roleStats[p.r]);
   let radCard = card('This game vs usual', '', '<div class="empty">No tracked player with a role in this game.</div>');
   if (fx.length) {
@@ -169,28 +174,58 @@ function gameBody(G, entry) {
   out += `<div class="grid g3">${logCard}${mapCard}${radCard}</div>`;
   return out;
 }
-const mapLabel = () => { const G = NOW.G, last = G.p[0].g.length - 1; return UI.mapT >= last ? mmss(G.dur) : UI.mapT + ':00'; };
+const mapLabel = () => mmss(Math.min(UI.mapT, NOW.G.dur));
 function mapLegend() {
   return UI.mapMode === 'kills'
-    ? `<span><i class="sw round" style="background:#34d399"></i>Your team's kills</span><span><span style="color:#ff6b6b;font-weight:800">✕</span> deaths</span><span class="muted">up to ${mapLabel()}</span>`
-    : `<span><i class="sw round" style="background:#4c8dff"></i>your team</span><span><i class="sw round" style="background:#ef5350"></i>enemy</span><span class="muted">players at ${mapLabel()}</span>`;
+    ? `<span><i class="sw round" style="background:#34d399"></i>Your team's kills</span><span><span style="color:#ff6b6b;font-weight:800">\u2715</span> deaths</span><span class="muted">up to ${mapLabel()}, the last 30 seconds ringed</span>`
+    : `<span><i class="sw round" style="background:#4c8dff"></i>your team</span><span><i class="sw round" style="background:#ef5350"></i>enemy</span><span class="muted">at ${mapLabel()} · faded = dead</span>`;
+}
+/* Everything known about where each player was, in time order: the one
+   position a minute Riot samples, plus the exact spot and second of every
+   death. That is all there is, and it is enough to play a game back. */
+function keyframes(G) {
+  const frames = G.p[0].g.length;
+  const kf = G.p.map(p => {
+    const out = [];
+    for (let i = 0; i < frames; i++) out.push({ t: i < frames - 1 ? i * 60 : G.dur, x: p.xy[2 * i], y: p.xy[2 * i + 1] });
+    return out;
+  });
+  G.kills.forEach(e => { if (e[4] >= 1 && e[4] <= 10) kf[e[4] - 1].push({ t: e[0], x: e[1], y: e[2], dead: true }); });
+  kf.forEach(list => list.sort((a, b) => a.t - b.t));
+  return kf;
+}
+function posAt(list, t) {
+  let a = list[0];
+  for (let i = 1; i < list.length && list[i].t <= t; i++) a = list[i];
+  const b = list[list.indexOf(a) + 1];
+  /* Someone who has just died stays where they fell, faded, until the next sample finds them again. */
+  if (!b || a.dead) return { x: a.x, y: a.y, dead: !!a.dead && !!b };
+  const f = (t - a.t) / (b.t - a.t || 1);
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, dead: false };
 }
 function gameMap() {
-  const G = NOW.G, team = NOW.entry[4], last = G.p[0].g.length - 1, m = Math.min(UI.mapT, last);
+  const G = NOW.G, team = NOW.entry[4], t = Math.min(UI.mapT, G.dur);
   let s = '';
   if (UI.mapMode === 'kills') {
-    const until = m >= last ? Infinity : m * 60;
     G.kills.forEach(e => {
-      if (e[0] > until) return;
+      if (e[0] > t) return;
       const killerTeam = e[3] >= 1 && e[3] <= 10 ? G.p[e[3] - 1].t : (G.p[e[4] - 1].t === 100 ? 200 : 100);
-      s += killerTeam === team ? `<circle cx="${e[1]}" cy="${my(e[2])}" r="3" fill="#34d399" stroke="#0b0e14" stroke-width=".7"/>` : cross(e[1], my(e[2]), '#ff6b6b');
+      const fresh = t - e[0] <= 30 && t < G.dur, ours = killerTeam === team;
+      if (fresh) s += `<circle cx="${e[1]}" cy="${my(e[2])}" r="7" fill="none" stroke="${ours ? '#34d399' : '#ff6b6b'}" stroke-width="1.2" opacity=".9"/>`;
+      s += ours ? `<circle cx="${e[1]}" cy="${my(e[2])}" r="${fresh ? 3.6 : 2.8}" fill="#34d399" stroke="#0b0e14" stroke-width=".7"/>` : cross(e[1], my(e[2]), '#ff6b6b');
     });
   } else {
-    G.p.forEach(p => {
-      const x = p.xy[2 * m], y = p.xy[2 * m + 1], mineSide = p.t === team, fr = isFriend(p);
-      s += `<circle cx="${x}" cy="${my(y)}" r="${fr ? 5.5 : 4.2}" fill="${fr ? col(p.f) : mineSide ? '#4c8dff' : '#ef5350'}" stroke="${fr ? '#fff' : '#0b0e14'}" stroke-width="${fr ? 1.4 : .8}">` +
-        `<title>${esc(fr ? p.f + ' · ' : '')}${esc(C(p.c).n)}</title></circle>`;
+    let defs = '';
+    G.p.forEach((p, i) => {
+      const q = posAt(NOW.kf[i], t), fr = isFriend(p), r = fr ? 8.5 : 6.5, cx = q.x.toFixed(1), cy = my(q.y).toFixed(1);
+      const ring = fr ? col(p.f) : p.t === team ? '#4c8dff' : '#ef5350';
+      defs += `<clipPath id="pc${i}"><circle cx="${cx}" cy="${cy}" r="${r}"/></clipPath>`;
+      s += `<g${q.dead ? ' opacity=".4" style="filter:grayscale(1)"' : ''}><circle cx="${cx}" cy="${cy}" r="${r}" fill="${ring}"/>` +
+        `<image href="${champUrl(p.c)}" x="${(q.x - r * 1.14).toFixed(1)}" y="${(my(q.y) - r * 1.14).toFixed(1)}" width="${(r * 2.28).toFixed(1)}" height="${(r * 2.28).toFixed(1)}" clip-path="url(#pc${i})"/>` +
+        `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${ring}" stroke-width="${fr ? 2 : 1.5}"/>` +
+        `<title>${esc(fr ? p.f + ' · ' : '')}${esc(C(p.c).n)}${q.dead ? ' (dead)' : ''}</title></g>`;
     });
+    s = `<defs>${defs}</defs>` + s;
   }
   return mapSvg(s);
 }
@@ -200,6 +235,27 @@ function redrawMap() {
   host.innerHTML = gameMap();
   document.getElementById('map-t-label').textContent = mapLabel();
   document.getElementById('gmap-legend').innerHTML = mapLegend();
+}
+/* Playback: about forty game-seconds a real second, so a half-hour game runs in under a minute. */
+const PLAY = { timer: null };
+function stopPlay() {
+  if (PLAY.timer) { clearInterval(PLAY.timer); PLAY.timer = null; }
+  const b = document.getElementById('map-play');
+  if (b) b.textContent = '\u25B6';
+}
+function togglePlay() {
+  if (PLAY.timer) return stopPlay();
+  if (!NOW) return;
+  if (UI.mapT >= NOW.G.dur) UI.mapT = 0;
+  document.getElementById('map-play').textContent = '\u275A\u275A';
+  PLAY.timer = setInterval(() => {
+    const slider = document.getElementById('map-t');
+    if (!NOW || !slider) return stopPlay();
+    UI.mapT = Math.min(NOW.G.dur, UI.mapT + 4);
+    slider.value = UI.mapT;
+    redrawMap();
+    if (UI.mapT >= NOW.G.dur) stopPlay();
+  }, 100);
 }
 
 /* ---- wiring ---------------------------------------------------------------------- */
@@ -218,24 +274,33 @@ function render() {
   if (tab === 'game') fillGame();
 }
 document.addEventListener('click', e => {
+  if (e.target.closest('[data-play]')) return togglePlay();
   const step = e.target.closest('[data-step]');
   if (step && NOW) {
-    const last = NOW.G.p[0].g.length - 1;
-    UI.mapT = Math.max(1, Math.min(last, UI.mapT + Number(step.dataset.step)));
+    stopPlay();
+    UI.mapT = Math.max(0, Math.min(NOW.G.dur, UI.mapT + Number(step.dataset.step)));
     document.getElementById('map-t').value = UI.mapT;
     redrawMap();
     return;
   }
   const a = e.target.closest('[data-set]');
-  if (a) { setState(JSON.parse(a.dataset.set)); if (a.dataset.set.includes('"tab"')) window.scrollTo({ top: 0 }); return; }
+  if (a) { stopPlay(); setState(JSON.parse(a.dataset.set)); if (a.dataset.set.includes('"tab"')) window.scrollTo({ top: 0 }); return; }
   const u = e.target.closest('[data-ui]');
   if (u) {
+    const playing = !!PLAY.timer;
     Object.assign(UI, JSON.parse(u.dataset.ui));
+    if (playing && S.tab === 'game' && document.getElementById('gmap')) {
+      /* Switching between kills and positions mid-playback should not stop it. */
+      document.querySelectorAll('[data-ui]').forEach(b => { const v = JSON.parse(b.dataset.ui); if ('mapMode' in v) b.classList.toggle('on', v.mapMode === UI.mapMode); });
+      return redrawMap();
+    }
     if (S.tab === 'game' && NOW && document.getElementById('game-body')) document.getElementById('game-body').innerHTML = gameBody(NOW.G, NOW.entry);
     else render();
   }
 });
-document.addEventListener('input', e => { if (e.target.id === 'map-t') { UI.mapT = Number(e.target.value); redrawMap(); } });
+document.addEventListener('input', e => { if (e.target.id === 'map-t') { stopPlay(); UI.mapT = Number(e.target.value); redrawMap(); } });
+/* A new face was chosen: everything that shows it is redrawn. */
+document.addEventListener('avatars:changed', () => render());
 document.addEventListener('change', e => {
   if (!e.target.matches('[data-champ-search]')) return;
   const want = e.target.value.trim().toLowerCase();

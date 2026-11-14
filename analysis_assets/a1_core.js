@@ -80,7 +80,33 @@ function iicon(id, s = 22) {
 const champ = (slug, s = 22) => `<span class="cell-champ">${cicon(slug, s)}<b>${esc(C(slug).n)}</b></span>`;
 const col = label => CFG.colors[label] || '#aeb6c6';
 const fn = label => `<b style="color:${col(label)}">${esc(label)}</b>`;
-const av = label => `<span class="av" style="background:${col(label)}">${esc(label.slice(0, 2))}</span>`;
+/* A player's face: the champion portrait they (or their mastery) chose, ringed
+   in their own colour, or their initials when there is no portrait to show. */
+function av(label, size = 22) {
+  const u = window.Avatars && Avatars.url(label);
+  if (!u) return `<span class="av" style="background:${col(label)};width:${size}px;height:${size}px">${esc(label.slice(0, 2))}</span>`;
+  return `<span class="av img" style="width:${size}px;height:${size}px;box-shadow:0 0 0 2px ${col(label)}">` +
+    `<img alt="" loading="lazy" src="${u}" onerror="this.remove()"></span>`;
+}
+const champUrl = slug => `https://ddragon.leagueoflegends.com/cdn/${VER}/img/champion/${encodeURIComponent(C(slug).i)}.png`;
+
+/* Real game art for objectives and roles, from Community Dragon's mirror of
+   the client's own files. It is a volunteer-run host, so nothing here depends
+   on it answering: every icon sits on top of the letter or word it stands for
+   and simply is not there if the image does not load. */
+const CDRAGON = 'https://raw.communitydragon.org/latest/';
+const MON_ICON = { 'DRAGON:FIRE_DRAGON': 'dragon_infernal', 'DRAGON:WATER_DRAGON': 'dragon_ocean', 'DRAGON:EARTH_DRAGON': 'dragon_mountain',
+  'DRAGON:AIR_DRAGON': 'dragon_cloud', 'DRAGON:HEXTECH_DRAGON': 'dragon_hextech', 'DRAGON:CHEMTECH_DRAGON': 'dragon_chemtech',
+  'DRAGON:ELDER_DRAGON': 'dragon_elder', RIFTHERALD: 'riftherald', BARON_NASHOR: 'baron', HORDE: 'grub', ATAKHAN: 'atakhan_r' };
+const monUrl = code => CDRAGON + 'game/assets/ux/minimap/icons/' + (MON_ICON[code] || 'dragon') + '.png';
+const ROLE_ICON = { TOP: 'top', JUNGLE: 'jungle', MIDDLE: 'middle', BOTTOM: 'bottom', UTILITY: 'utility' };
+const ricon = (role, s = 16) => !ROLE_ICON[role] ? '' :
+  `<img class="ri" width="${s}" height="${s}" alt="" loading="lazy" onerror="this.remove()" ` +
+  `src="${CDRAGON}plugins/rcp-fe-lol-clash/global/default/assets/images/position-selector/positions/icon-position-${ROLE_ICON[role]}.png">`;
+/* An objective badge: team-coloured ring, the monster's icon, its letter underneath as the fallback. */
+const monBadge = (code, letter, mine, s = 26) =>
+  `<span class="mon ${mine ? 'b' : 'r'}" style="width:${s}px;height:${s}px"><span>${letter}</span>` +
+  `<img alt="" loading="lazy" src="${monUrl(code)}" onload="this.previousElementSibling.remove()" onerror="this.remove()"></span>`;
 const who = label => `<span class="cell-champ">${av(label)}${fn(label)}</span>`;
 const low = n => n < 10 ? ' <span class="tag low">low sample</span>' : '';
 
@@ -153,7 +179,7 @@ function radar(labels, series, o = {}) {
 /* A team gold lead through a game: blue above the line, red below it. */
 let _clip = 0;
 function leadChart(series, dur, o = {}) {
-  const W = o.w || 760, H = o.h || 300, L = 46, Rm = 14, T = o.objs ? 34 : 14, B = 26;
+  const W = o.w || 760, H = o.h || 300, L = 46, Rm = 14, T = o.objs ? 42 : 14, B = 26;
   const n = series.length, tmax = dur / 60;
   const tx = i => i === n - 1 ? tmax : i;
   const peak = Math.max(2000, ...series.map(Math.abs));
@@ -180,11 +206,13 @@ function leadChart(series, dur, o = {}) {
       `<text x="${(x(o.mark) + 5).toFixed(1)}" y="${H - B - 5}">${o.mark}:00</text>`;
   }
   (o.objs || []).forEach(ob => {
-    /* [seconds, letter, mine(1/0), stolen(1/0)] */
-    const px = x(Math.min(tmax, ob[0] / 60)).toFixed(1);
-    s += (ob[3] ? `<circle cx="${px}" cy="16" r="12" fill="none" stroke="#e6b450" stroke-dasharray="3 3"/>` : '') +
-      `<circle cx="${px}" cy="16" r="9" fill="${ob[2] ? '#4c8dff' : '#ef5350'}"/>` +
-      `<text x="${px}" y="19.5" text-anchor="middle" style="fill:#fff;font-size:10px;font-weight:800">${ob[1]}</text>`;
+    /* [seconds, letter, mine(1/0), stolen(1/0), monster code] */
+    const px = x(Math.min(tmax, ob[0] / 60)), ring = ob[2] ? '#4c8dff' : '#ef5350';
+    s += (ob[3] ? `<circle cx="${px.toFixed(1)}" cy="19" r="16" fill="none" stroke="#e6b450" stroke-dasharray="3 3"/>` : '') +
+      `<circle cx="${px.toFixed(1)}" cy="19" r="12" fill="#10131a" stroke="${ring}" stroke-width="2.5"/>` +
+      `<text x="${px.toFixed(1)}" y="23" text-anchor="middle" style="fill:#fff;font-size:11px;font-weight:800">${ob[1]}</text>` +
+      (ob[4] ? `<image href="${monUrl(ob[4])}" x="${(px - 9.5).toFixed(1)}" y="9.5" width="19" height="19" ` +
+        `onload="this.previousElementSibling.remove()" onerror="this.remove()"/>` : '');
   });
   return s + '</svg>';
 }
@@ -231,20 +259,29 @@ function spark(vals, color) {
 
 /* The map is drawn rather than loaded: lanes, river, bases and jungle as plain
    shapes, in stored map units with y flipped so blue base is bottom left. */
-const my = y => MAPQ - y;
+/* Where the minimap image sits in game coordinates, in stored (// 64) units.
+   Riot's map runs a little outside 0..14800 on every side. */
+const MAP = { x0: -120 / 64, x1: 14870 / 64, y0: -120 / 64, y1: 14980 / 64 };
+const MW = MAP.x1 - MAP.x0, MH = MAP.y1 - MAP.y0;
+const my = y => MAP.y1 - y;
 function mapBase() {
-  return `<rect x="0" y="0" width="${MAPQ}" height="${MAPQ}" rx="8" fill="#0e1a15"/>` +
-    [[62, 150], [92, 104], [150, 82], [176, 128], [70, 200 - 30], [128, 58], [140, 150], [96, 176 - 96 + 40]].map(p =>
-      `<circle cx="${p[0]}" cy="${my(p[1])}" r="17" fill="#15261d"/>`).join('') +
-    `<path d="M34 ${my(198)} L198 ${my(34)}" stroke="#172c47" stroke-width="15" stroke-linecap="round" fill="none"/>` +
-    `<path d="M16 ${my(34)} L16 ${my(216)} L198 ${my(216)}" stroke="#203427" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" fill="none"/>` +
-    `<path d="M34 ${my(16)} L216 ${my(16)} L216 ${my(198)}" stroke="#203427" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" fill="none"/>` +
-    `<path d="M36 ${my(36)} L196 ${my(196)}" stroke="#203427" stroke-width="10" stroke-linecap="round" fill="none"/>` +
-    `<circle cx="64" cy="${my(168)}" r="7" fill="#1d2d44"/><circle cx="168" cy="${my(64)}" r="7" fill="#1d2d44"/>` +
+  const sy = y => MAPQ - y;
+  /* The drawn map first, the real one over it. If Data Dragon does not
+     answer, the drawing is what is left, and every overlay still lines up. */
+  return `<rect x="${MAP.x0}" y="0" width="${MW}" height="${MH}" fill="#0e1a15"/>` +
+    [[62, 150], [92, 104], [150, 82], [176, 128], [70, 170], [128, 58], [140, 150], [96, 120]].map(p =>
+      `<circle cx="${p[0]}" cy="${sy(p[1])}" r="17" fill="#15261d"/>`).join('') +
+    `<path d="M34 ${sy(198)} L198 ${sy(34)}" stroke="#172c47" stroke-width="15" stroke-linecap="round" fill="none"/>` +
+    `<path d="M16 ${sy(34)} L16 ${sy(216)} L198 ${sy(216)}" stroke="#203427" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" fill="none"/>` +
+    `<path d="M34 ${sy(16)} L216 ${sy(16)} L216 ${sy(198)}" stroke="#203427" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" fill="none"/>` +
+    `<path d="M36 ${sy(36)} L196 ${sy(196)}" stroke="#203427" stroke-width="10" stroke-linecap="round" fill="none"/>` +
     `<path d="M0 ${MAPQ} L0 ${MAPQ - 42} A42 42 0 0 1 42 ${MAPQ} Z" fill="#17305a"/>` +
-    `<path d="M${MAPQ} 0 L${MAPQ - 42} 0 A42 42 0 0 0 ${MAPQ} 42 Z" fill="#4a1c22"/>`;
+    `<path d="M${MAPQ} 0 L${MAPQ - 42} 0 A42 42 0 0 0 ${MAPQ} 42 Z" fill="#4a1c22"/>` +
+    `<image href="https://ddragon.leagueoflegends.com/cdn/${VER}/img/map/map11.png" x="${MAP.x0}" y="0" width="${MW}" height="${MH}" preserveAspectRatio="none"/>` +
+    /* Dimmed a little: the minimap is bright, and what matters here is what is drawn on it. */
+    `<rect x="${MAP.x0}" y="0" width="${MW}" height="${MH}" fill="#0a0c12" opacity=".24"/>`;
 }
-const mapSvg = inner => `<svg viewBox="0 0 ${MAPQ} ${MAPQ}" role="img" aria-label="Map">${mapBase()}${inner}</svg>`;
+const mapSvg = inner => `<svg viewBox="${MAP.x0} 0 ${MW} ${MH}" role="img" aria-label="Map">${mapBase()}${inner}</svg>`;
 const cross = (x, y, c) => `<path d="M${x - 3} ${y - 3} L${x + 3} ${y + 3} M${x + 3} ${y - 3} L${x - 3} ${y + 3}" stroke="${c}" stroke-width="1.6" stroke-linecap="round"/>`;
 function dots(flat, color, r = 2.6) {
   let s = '';

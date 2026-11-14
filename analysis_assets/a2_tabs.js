@@ -15,7 +15,7 @@ function heatLayer(h, phase) {
     const v = top ? grid[i] / top : 0;
     if (v < 0.04) continue;
     const cx = i % size, cy = Math.floor(i / size);
-    s += `<rect x="${(cx * cell).toFixed(1)}" y="${(MAPQ - (cy + 1) * cell).toFixed(1)}" width="${cell.toFixed(1)}" height="${cell.toFixed(1)}" fill="#ff8a3d" fill-opacity="${Math.min(0.85, Math.sqrt(v) * 0.85).toFixed(2)}"/>`;
+    s += `<rect x="${(cx * cell).toFixed(1)}" y="${my((cy + 1) * cell).toFixed(1)}" width="${cell.toFixed(1)}" height="${cell.toFixed(1)}" fill="#ff8a3d" fill-opacity="${Math.min(0.9, Math.sqrt(v) * 0.9).toFixed(2)}"/>`;
   }
   return '<defs><filter id="hblur" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="5"/></filter></defs>' + s + '</g>';
 }
@@ -28,7 +28,10 @@ function tabPlayers() {
   const P = D.players[me][role], rl = RN[role].toLowerCase();
 
   let out = `<div class="pillrow">${friendPills('player', me, names, false)}<div class="pills"><span class="pill-label">Role</span>` +
-    roles.map(r => pill(`${RN[r]} · ${D.players[me][r].games}`, r === role, set({ role: r }), ' sm')).join('') + '</div></div>';
+    roles.map(r => pill(`${ricon(r)}${RN[r]} · ${D.players[me][r].games}`, r === role, set({ role: r }), ' sm')).join('') + '</div></div>';
+  out += `<div class="whohead"><span data-av-edit="${esc(me)}" role="button" tabindex="0" title="Change ${esc(me)}'s icon">${av(me, 56)}<i class="pen">\u270E</i></span>` +
+    `<div><div class="big" style="font-size:24px;font-weight:700;color:${col(me)}">${esc(me)}</div>` +
+    `<div class="muted">${P.games} stored ${rl} games · ${pc1(100 * P.wins / P.games)} winrate · click the portrait to change it</div></div></div>`;
 
   out += '<div class="tiles">' + P.tiles.map(t => tile(esc(STAT[t.k].label), stat(t.k, t.v),
     pcbar(t.pc) + `<div class="muted small" style="margin-top:6px">lobby ${rl}s avg ${stat(t.k, t.lobby)}</div>`)).join('') + '</div>';
@@ -112,7 +115,7 @@ function tabChampions() {
   let out = `<section class="card" style="margin-bottom:20px"><div class="champ-head"><div class="id">${cicon(cur.champ, 64)}<div><h2>${esc(cm.n)}</h2>` +
     `<div class="muted">${esc(cm.t || '')}${cm.t && cm.c ? ' · ' : ''}${esc(cm.c)}</div></div></div>` +
     `<input class="search" list="champ-list" placeholder="Search champion…" aria-label="Search champion" data-champ-search><datalist id="champ-list">${options}</datalist>` +
-    `<div class="pills"><span class="pill-label">Role</span>${roles.map(r => pill(`${RN[r[0]]} · ${r[1]}${r[0] === role ? ' games' : ''}`, r[0] === role, set({ champ: cur.champ, crole: r[0] }), ' sm')).join('')}</div>` +
+    `<div class="pills"><span class="pill-label">Role</span>${roles.map(r => pill(`${ricon(r[0])}${RN[r[0]]} · ${r[1]}${r[0] === role ? ' games' : ''}`, r[0] === role, set({ champ: cur.champ, crole: r[0] }), ' sm')).join('')}</div>` +
     (X ? `<div class="tiles" style="margin:0;flex:1 1 380px;grid-template-columns:repeat(3,1fr)">${tile('Group winrate', pc1(X.wr), `${X.games} games`, 'inner')}` +
       `${tile(`Lobby ${esc(cm.n)} ${rl}`, X.lobby.wr == null ? '-' : pc1(X.lobby.wr), X.lobby.n ? `${X.lobby.n} games` : 'none met yet', 'inner')}` +
       `${tile('Group gold diff @15', `<span class="${gcls(X.g15)}">${gold(X.g15)}</span>`, 'vs lane opponent', 'inner')}</div>` : '') +
@@ -175,7 +178,7 @@ function tabChampions() {
 function tabRoles() {
   const role = ROLES.includes(S.rtab) ? S.rtab : 'UTILITY', R = D.roles.roles[role], rl = RN[role].toLowerCase();
   const cls = R.views[S.cls] ? S.cls : 'All', V = R.views[cls];
-  let out = `<div class="pillrow"><div class="pills">${ROLES.map(r => pill(RN[r], r === role, set({ rtab: r, cls: 'All' }))).join('')}</div>` +
+  let out = `<div class="pillrow"><div class="pills">${ROLES.map(r => pill(ricon(r) + RN[r], r === role, set({ rtab: r, cls: 'All' }))).join('')}</div>` +
     `<div class="pills"><span class="pill-label">Class filter</span>${pill(`All ${rl}s`, cls === 'All', set({ cls: 'All' }), ' sm')}` +
     R.classes.map(c => pill(esc(c[0]), cls === c[0], set({ cls: c[0] }), ' sm')).join('') + '</div></div>';
   const cols = R.cols, short = { kp: 'Kill part.', vpm: 'Vision/min', hs: 'Heal+shield', cc: 'CC score', roam: 'Roam %', deaths: 'Deaths', g15: 'Gold@15',
@@ -209,7 +212,7 @@ function tabRoles() {
   });
   const matrix = card('Winrate by class', 'Every role, whole season. Faded cells have under ten games; the small number is games.', `<div class="scroll">${grid}</div></div>`);
   const objs = card('Objective participation by role', "Share of the team's dragons, grubs, heralds, barons and Atakhans each role was part of.",
-    D.roles.objectives.map(o => `<div class="hbar"><span>${RN[o.role]}</span><div class="track"><i style="width:${Math.round((o.group || 0) * 100)}%"></i>` +
+    D.roles.objectives.map(o => `<div class="hbar"><span class="cell-champ">${ricon(o.role)}${RN[o.role]}</span><div class="track"><i style="width:${Math.round((o.group || 0) * 100)}%"></i>` +
       (o.lobby != null ? `<em style="left:${Math.round(o.lobby * 100)}%"></em>` : '') + `</div><span class="num">${o.group == null ? '-' : Math.round(o.group * 100) + '%'}</span></div>`).join('') +
     '<div class="legend"><span><i class="sw" style="background:#8b6cf6"></i>Group</span><span><i class="sw" style="background:#fff;width:2px;height:12px"></i>lobby average</span></div>');
   const ins = card('Class insights', 'Worked out from the stored games; each appears once it has thirty or more to stand on.',

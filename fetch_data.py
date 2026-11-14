@@ -1237,6 +1237,10 @@ def main():
                 # a second copy of itself with these left out.
                 if friend.get("second"):
                     summary["second"] = True
+                # An optional champion name. The page shows each player as
+                # their most mastered champion unless this names another.
+                if friend.get("icon"):
+                    summary["icon"] = friend["icon"]
                 results.append(summary)
         except Exception as e:
             print(f"  ! error fetching {friend.get('label')}: {e}")

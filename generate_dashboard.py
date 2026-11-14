@@ -61,6 +61,10 @@ FRIEND_PALETTE = [
     #
     # Assigned by the order friends appear in config.json, not by rank, so a
     # player keeps their colour when the ladder moves under them.
+    #
+    # Only "dark" reaches the page. The site has been dark-only since the
+    # redesign, and "light" is kept for the day that changes rather than
+    # because anything reads it.
     {"light": "#0e8ea6", "dark": "#2ec4de"},  # 0 Winny   cyan
     {"light": "#b83a68", "dark": "#e0699a"},  # 1 Shas     pink
     {"light": "#2a78d6", "dark": "#3987e5"},  # 2 Kirish   blue
@@ -559,13 +563,58 @@ def signature_champion(friend):
     return champ
 
 
+def avatar_champion(friend):
+    """Whose portrait a friend wears until a viewer picks another.
+
+    The "icon" set for them in config.json if there is one, otherwise the
+    champion they have the most mastery on, and only if Riot returned no
+    mastery at all the one they have played most this season. Mastery rather
+    than games played because it is who they are known for, and it does not
+    change face every time they spend a week trying something new.
+    """
+    pick = friend.get("icon")
+    if pick and champion_icon_url(pick):
+        return pick
+    for m in friend.get("mastery") or []:
+        if m.get("championName") and champion_icon_url(m["championName"]):
+            return m["championName"]
+    return signature_champion(friend)
+
+
+def _icon_id(champion_name):
+    """Data Dragon's own id for a champion, read back off its icon URL so the
+    one function that knows every spelling stays the only one."""
+    url = champion_icon_url(champion_name)
+    return url.rsplit("/", 1)[1][:-4] if url else None
+
+
+def avatar_config(data):
+    """What the icon picker needs: each friend's default, the champions they
+    play most, and every champion there is. Call after set_icon_context."""
+    icon_map = data.get("championIconMap") or {}
+    defaults, played = {}, {}
+    for f in data.get("friends", []):
+        default = _icon_id(avatar_champion(f))
+        if default:
+            defaults[f["label"]] = default
+        counts = {}
+        for m in f.get("seasonMatches", []):
+            if not m.get("remake") and m.get("champion"):
+                counts[m["champion"]] = counts.get(m["champion"], 0) + 1
+        ids = [_icon_id(c) for c, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:14]]
+        played[f["label"]] = [i for i in ids if i]
+    return {"version": data.get("ddragonVersion") or "", "defaults": defaults, "played": played,
+            "champs": sorted(([name, slug] for name, slug in icon_map.items()), key=lambda c: c[0])}
+
+
 def render_avatar(friend, size=34):
-    """A friend's face on the page: their top champion.
+    """A friend's face on the page: a champion portrait.
 
     Falls back to their initial when there is no icon for it, so the slot is
-    never empty and never a broken image.
+    never empty and never a broken image. data-av names whose face it is, so
+    the picker can repaint every copy of it when someone chooses another.
     """
-    champ = signature_champion(friend)
+    champ = avatar_champion(friend)
     url = champion_icon_url(champ) if champ else None
     initial = esc((friend.get("label") or "?")[:1].upper())
     if not url:
@@ -575,7 +624,7 @@ def render_avatar(friend, size=34):
     # border Data Dragon draws inside every champion square is cropped away
     # rather than sitting there looking like a square in a circle.
     return (f'<span class="avatar-wrap" style="width:{size}px;height:{size}px;">'
-            f'<img class="avatar" src="{esc(url)}" alt="" '
+            f'<img class="avatar" data-av="{esc(friend.get("label") or "")}" src="{esc(url)}" alt="" '
             f'loading="lazy" title="{esc(champion_display(champ))}" '
             f'onerror="this.classList.add(&#39;broken&#39;)"></span>')
 
@@ -1263,7 +1312,15 @@ EXTRA_CSS = """
              border: 1px dashed var(--border-strong); color: var(--text-secondary); text-decoration: none; font-size: 13px; }
   .an-hint:hover { background: var(--surface-2); color: var(--text-primary); }
   .an-hint b { color: #c4b5fd; }
+  .av-pen { position: absolute; left: -5px; bottom: -5px; width: 20px; height: 20px; border-radius: 50%; font-size: 11px;
+            display: flex; align-items: center; justify-content: center; background: var(--surface-3);
+            border: 1px solid var(--border-strong); color: var(--text-primary); opacity: 0; transition: opacity .15s ease; }
+  .rank-crest:hover .av-pen, .rank-crest:focus-visible .av-pen { opacity: 1; }
+  @media (hover: none) { .av-pen { opacity: .9; } }
 """
+
+# The icon picker, shared with the analysis page. A real .js file, inlined.
+AVATAR_JS = (Path(__file__).parent / "analysis_assets" / "a0_avatars.js").read_text(encoding="utf-8")
 
 
 def render_match_dot(m):
@@ -2166,8 +2223,10 @@ def render_friend_card(f, rank_position, now, rank_history=(), tracking_since=""
              style="--card-tier: var({solo_var});">
       {card_art}
       <header class="card-head">
-        <div class="rank-crest">
+        <div class="rank-crest" data-av-edit="{esc(f["label"])}" role="button" tabindex="0"
+             title="Change {esc(f["label"])}&#39;s icon">
           {render_avatar(f, size=52)}
+          <span class="av-pen" aria-hidden="true">✎</span>
           <span class="rank-badge">#{rank_position}</span>
         </div>
         <div class="card-id">
@@ -7315,6 +7374,7 @@ def build_html(data, alt_href=None, alt_label="", analysis=None, analysis_href=N
                 on_side[(m.get("matchId"), m.get("teamId"))] = on_side.get((m.get("matchId"), m.get("teamId")), 0) + 1
     together = (round(100 * sum(1 for n in on_side.values() if n > 1) / len(on_side)) if on_side else None)
     last_day_panel = render_last_day_panel(friends_sorted, data.get("generatedAtMs"))
+    avatar_json = json.dumps(avatar_config(data), separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
     group_stats = f'''
       <div class="season-stats ov-tiles" style="margin-top:0;">
         <div class="stat-tile">
@@ -7450,7 +7510,6 @@ def build_html(data, alt_href=None, alt_label="", analysis=None, analysis_href=N
     tier_vars_dark = "\n      ".join(f"{tier_var(t)}: {c['dark']};" for t, c in TIER_COLOR.items())
     tier_vars_dark += f"\n      {tier_var(None)}: {DEFAULT_TIER_COLOR['dark']};"
 
-    friend_vars_light = "\n    ".join(f"{friend_var(i)}: {c['light']};" for i, c in enumerate(FRIEND_PALETTE))
     friend_vars_dark = "\n      ".join(f"{friend_var(i)}: {c['dark']};" for i, c in enumerate(FRIEND_PALETTE))
 
     return f'''<!doctype html>
@@ -11042,6 +11101,10 @@ def build_html(data, alt_href=None, alt_label="", analysis=None, analysis_href=N
       }}
     }})();
   </script>
+<script type="application/json" id="avatar-config">{avatar_json}</script>
+<script>
+{AVATAR_JS}
+</script>
 </body>
 </html>'''
 
@@ -11126,15 +11189,17 @@ def main():
             def colours(d):
                 return {f["label"]: FRIEND_PALETTE[min(i, len(FRIEND_PALETTE) - 1)]["dark"]
                         for i, f in enumerate(d.get("friends", []))}
+            set_icon_context(data.get("ddragonVersion"), data.get("championIconMap", {}))
             analysis = analysis_page.build(
                 data, store_games, colours(data), an_path, out_path.name,
-                an_alt_path.name if main_only else None, "Hide second accounts")
+                an_alt_path.name if main_only else None, "Hide second accounts",
+                avatars=avatar_config(data))
             print(f"Wrote {an_path} ({len(analysis.games)} stored games)")
             if main_only:
                 mark_legacy_remakes(main_only.get("friends", []))
                 analysis_main = analysis_page.build(
                     main_only, store_games, colours(main_only), an_alt_path, alt_path.name,
-                    an_path.name, "Show second accounts")
+                    an_path.name, "Show second accounts", avatars=avatar_config(main_only))
                 print(f"Wrote {an_alt_path}")
             days, count = analysis_page.write_game_files(analysis, out_path.parent / "g")
             print(f"Wrote {count} games into {days} day files under {out_path.parent / 'g'}")

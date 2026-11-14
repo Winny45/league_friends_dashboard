@@ -29,7 +29,7 @@ def _json_for_script(obj):
     return text.replace("</", "<\\/").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
-def render(payload, colours, basic_href, alt_href=None, alt_label=""):
+def render(payload, colours, basic_href, alt_href=None, alt_label="", avatars=None):
     meta = payload["meta"]
     css = (ASSETS / "analysis.css").read_text(encoding="utf-8")
     js = "\n".join(p.read_text(encoding="utf-8") for p in sorted(ASSETS.glob("a*.js")))
@@ -89,6 +89,7 @@ def render(payload, colours, basic_href, alt_href=None, alt_label=""):
 </div>
 <script type="application/json" id="analysis-data">{_json_for_script(payload)}</script>
 <script type="application/json" id="analysis-config">{_json_for_script(config)}</script>
+<script type="application/json" id="avatar-config">{_json_for_script(avatars or {"version": "", "defaults": {}, "played": {}, "champs": []})}</script>
 <script>
 {js}
 </script>
@@ -124,10 +125,10 @@ def load_store_games(root="games"):
         return []
 
 
-def build(data, store_games, colours, out_path, basic_href, alt_href=None, alt_label=""):
+def build(data, store_games, colours, out_path, basic_href, alt_href=None, alt_label="", avatars=None):
     """Build one analysis page. Returns the Analysis so the caller can reuse
     it for the main page's borrowed numbers and for the game files."""
     analysis = Analysis(data, store_games)
     Path(out_path).write_text(
-        render(analysis.payload(), colours, basic_href, alt_href, alt_label), encoding="utf-8")
+        render(analysis.payload(), colours, basic_href, alt_href, alt_label, avatars), encoding="utf-8")
     return analysis

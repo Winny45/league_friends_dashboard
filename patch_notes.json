@@ -1,5 +1,31 @@
 [
   {
+    "date": "2026-11-14",
+    "title": "Real icons, the real map, and a face you can choose",
+    "items": [
+      {
+        "type": "added",
+        "text": "Pick your own icon. Everyone is shown as a champion portrait, which starts as the champion you have the most mastery on. Click the portrait on your player card, or at the top of the Players tab in Data analysis, and choose any champion: your most played are listed first and there is a search for the rest. The choice is kept in your browser, so it is how you see that person, and it follows you between the two halves of the site."
+      },
+      {
+        "type": "changed",
+        "text": "The game map is the actual minimap now instead of a drawing of one, and in the Positions view every player is their champion's portrait, ringed blue or red for their team and in their own colour if they are one of you."
+      },
+      {
+        "type": "added",
+        "text": "The map plays. Press play and the game runs back at about forty times speed, or drag the bar to any five seconds of it. Riot only records where everyone stands once a minute, plus the exact spot of each death, so movement between those points is drawn as a straight line and anyone who has just died stays where they fell, faded, until the next sample."
+      },
+      {
+        "type": "changed",
+        "text": "Objectives look like what they are. Each drake has its own element's icon, and grubs, heralds, barons, Atakhan and elder have theirs, on the gold chart and in the objective log, ringed by which team took it. Roles have their icons beside them wherever a role is named."
+      },
+      {
+        "type": "changed",
+        "text": "The analysis now covers the whole season. It launched yesterday on about four games in ten while the rest were still being fetched; every game is in now, so the percentiles, the win-chance model and the lobby averages are standing on all of it."
+      }
+    ]
+  },
+  {
     "date": "2026-11-13",
     "title": "Data analysis: a second half of the site",
     "items": [
@@ -79,7 +105,7 @@
     "items": [
       {
         "type": "added",
-        "text": "KMan123123 joins as Kirish2nd, marked as Kirish's second account, so the switch in the header that hides second accounts now hides three: his, Brett's and Shas's."
+        "text": "Kirish's second account joins as Kirish2nd, marked as Kirish's second account, so the switch in the header that hides second accounts now hides three: his, Brett's and Shas's."
       },
       {
         "type": "changed",
@@ -161,7 +187,7 @@
     "items": [
       {
         "type": "added",
-        "text": "Dragonlord58 joins as Brett2nd, marked as Brett's second account. The switch in the header that hides second accounts now hides both his and Shas's, and every number on the page is recalculated without them."
+        "text": "Brett's second account joins as Brett2nd, marked as Brett's second account. The switch in the header that hides second accounts now hides both his and Shas's, and every number on the page is recalculated without them."
       },
       {
         "type": "changed",
