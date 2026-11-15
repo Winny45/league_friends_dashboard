@@ -2,7 +2,7 @@
 const ZONE = { top: ['Top lane', '#e6b450'], mid: ['Mid', '#b08cff'], bot: ['Bot lane', '#4c8dff'], river: ['River', '#1fa5b3'], jungle: ['Jungle', '#2f9a5d'] };
 const ZPART = { river_top: 'Top river', river_bot: 'Bot river', jungle_own: 'Own jungle', jungle_enemy: 'Enemy jungle' };
 const ROLE_COL = { TOP: '#e6b450', JUNGLE: '#2f9a5d', MIDDLE: '#b08cff', BOTTOM: '#4c8dff', UTILITY: '#2ec4b6' };
-const MODE_COL = { 'Ranked Solo/Duo': '#4c8dff', 'Ranked Flex': '#d6569c', 'Ranked 5s': '#e6b450' };
+const MODE_COL = { 'Ranked Solo': '#4c8dff', 'Ranked Duo': '#38bdf8', 'Ranked Solo/Duo': '#4c8dff', 'Ranked Flex': '#d6569c', 'Ranked 5s': '#e6b450' };
 const refName = (tier, role) => (tier == null ? 'All ' : TIERS[tier] + ' ') + RLS[role];
 
 /* The roaming bar: one block a lane, one for the river and one for the
@@ -61,7 +61,7 @@ function tabPlayers() {
   if (!names.length) return empty('No player has three stored games in one role yet.');
   const me = names.includes(S.player) ? S.player : names[0], PL = D.players[me];
   const roles = Object.keys(PL.roles);
-  const role = roles.includes(S.role) ? S.role : roles[0];
+  const role = roles.includes(S.role) ? S.role : roles.includes(PL.main) ? PL.main : roles[0];
   const P = PL.roles[role], rl = RN[role].toLowerCase(), rls = RLS[role], ref = refName(P.refTier, role);
 
   let out = `<div class="pillrow">${friendPills('player', me, names, false)}<div class="pills"><span class="pill-label">Role</span>` +
@@ -77,7 +77,8 @@ function tabPlayers() {
   const legend = parts => `<div class="dlegend">${parts.map(p => `<div><i class="sw" style="background:${p[2]}"></i>${esc(p[0])} <b>${p[1]}</b></div>`).join('')}</div>`;
   const mparts = PL.modes.map(m => [short(m[0]), m[1], MODE_COL[m[0]] || '#788296']);
   const pparts = PL.positions.map(p => [RN[p[0]], p[1], ROLE_COL[p[0]]]);
-  const cards = card('Games by mode', 'This season, all roles.', `<div class="drow">${donut(mparts, total, 'games')}${legend(mparts)}</div>`) +
+  const cards = card('Games by mode', 'This season, all roles. Duo means another tracked account was on the team; a duo with someone the site does not follow counts as solo.',
+      `<div class="drow">${donut(mparts, total, 'games')}${legend(mparts)}</div>`) +
     card('Roles played', 'Share of games.', pparts.length ? `<div class="drow">${donut(pparts, Math.round(100 * pparts[0][1] / ptotal) + '%', pparts[0][0].toLowerCase())}${legend(pparts)}</div>` : '<div class="empty">No roles recorded.</div>') +
     card('Winrate by mode', 'Every queue this season.', barRows(PL.modes.map(m => [esc(m[0]), 100 * m[2] / m[1], m[1], MODE_COL[m[0]] || '#788296']))) +
     card('Winrate by lobby rank', !D.meta.rankedGames ? 'No lobby ranks have been read yet, so for now this is the rank of the friend who played.'
@@ -230,17 +231,17 @@ function champGrid() {
     `<div class="filters" style="margin-top:14px"><span class="pill-label">Tag</span>${pill('Any', !tg, set({ ctag: '' }), ' sm')}` +
     `${tags.map(t => pill(esc(t), tg === t, set({ ctag: t }), ' sm')).join('')}</div></section>`;
   if (!pick.length) out += empty('No champion the group has played matches that role and tag.');
-  D.meta.families.forEach(([family, members]) => {
-    const mine = pick.filter(c => members.includes(C(c.champ).c)).sort((a, b) => sort === 'wr' ? (b.games >= LOW) - (a.games >= LOW) || b.wr - a.wr : b.games - a.games);
+  D.meta.classes.forEach(cls => {
+    const mine = pick.filter(c => C(c.champ).c === cls).sort((a, b) => sort === 'wr' ? (b.games >= LOW) - (a.games >= LOW) || b.wr - a.wr : b.games - a.games);
     if (!mine.length) return;
-    const open = UI.cexp[family], shown = open ? mine : mine.slice(0, 12);
-    out += `<div class="fam"><h2>${esc(family)}</h2><span class="muted">${mine.reduce((s, c) => s + c.games, 0)} games · ${mine.length} played · ${esc(members.join(', '))}</span>` +
-      (mine.length > 12 ? `<button type="button" class="linkbtn" ${ui({ cexp: Object.assign({}, UI.cexp, { [family]: !open }) })}>${open ? 'Show fewer' : 'Show all ' + mine.length + ' →'}</button>` : '') + '</div>' +
+    const open = UI.cexp[cls], shown = open ? mine : mine.slice(0, 12);
+    out += `<div class="fam"><h2>${esc(cls)}</h2><span class="muted">${mine.reduce((s, c) => s + c.games, 0)} games · ${plural(mine.length, 'champion')} played</span>` +
+      (mine.length > 12 ? `<button type="button" class="linkbtn" ${ui({ cexp: Object.assign({}, UI.cexp, { [cls]: !open }) })}>${open ? 'Show fewer' : 'Show all ' + mine.length + ' →'}</button>` : '') + '</div>' +
       `<div class="cgrid">${shown.map(c => `<button type="button" class="ccard${c.games < LOW ? ' thin' : ''}" ${set({ champ: c.champ, crole: rf === 'All' ? '' : rf })}>${cicon(c.champ, 52, true)}` +
         `<span><b>${esc(C(c.champ).n)}</b><small>${c.games} games · <span class="${c.games < LOW ? '' : c.wr >= 52 ? 'pos' : c.wr < 48 ? 'neg' : ''}">${pc1(c.wr)}</span></small>` +
-        `<small>${esc(C(c.champ).c)} · most: ${fn(c.most)}</small></span></button>`).join('')}</div>`;
+        `<small>most: ${fn(c.most)}</small></span></button>`).join('')}</div>`;
   });
-  return out + '<p class="muted small" style="margin-top:18px">Classes and tags are the League of Legends Wiki\'s. Winrate is the group\'s; under ten games it is greyed.</p>';
+  return out + '<p class="muted small" style="margin-top:18px">Classes and tags are the League of Legends Wiki\'s, and these are its subclasses: the parent classes it also keeps (Controller, Fighter, Slayer and so on) say less about what a champion does. A champion the wiki gives two classes is filed under the first. Winrate is the group\'s; under ten games it is greyed.</p>';
 }
 
 /* How one top-champions score was reached: the chain of multipliers, and the
@@ -250,14 +251,19 @@ function scoreWorking(w, slug, role) {
   if (!s) return '<div class="empty">None of these games could be scored yet.</div>';
   const box = (lab, big, sub, hi) => `<div class="swbox${hi ? ' hi' : ''}"><div class="lab">${lab}</div><div class="big">${big}</div><div class="sub">${sub}</div></div>`;
   const times = (v, lab) => `<div class="swx"><b>× ${v}</b><span>${lab}</span></div>`;
-  const chain = `<div class="swchain">${box('Average game score', s.raw.toFixed(1), `${s.scored} scored games`)}${times(s.rankW.toFixed(2), 'rank weight')}` +
-    `${box('Rank-weighted', s.weighted.toFixed(1), `mostly ${esc(rankName(s.rank))} = ${rankWeight(s.rank)}`)}${times(s.gamesMult.toFixed(2), 'games played')}` +
+  const spread = (s.ranks || []).map(r => `${esc(rankName([r[0], r[1]]))} ×${r[2]}`).join(' · ');
+  const chain = `<div class="swchain">${box('Average game score', s.raw.toFixed(1), `${s.scored} scored games`)}${times(s.rankW.toFixed(3), 'average rank weight')}` +
+    `${box('Rank-weighted', s.weighted.toFixed(1), 'each game at the rank it was played at')}${times(s.gamesMult.toFixed(2), 'games played')}` +
     `${box('Games-weighted', (s.weighted * s.gamesMult).toFixed(1), `0.5 + ${s.games} × 0.01 · full at ${SC.full}`)}${times(s.wrMult.toFixed(3), 'vs usual winrate')}` +
     `${box('Top champions score', s.score.toFixed(1), s.champWr == null ? 'no winrate to compare with yet' : `adjusted WR ${s.adjWr}% vs ${s.champWr}%`, true)}</div>`;
+  /* Every rank these games were played at is marked, not just the commonest:
+     the score multiplies each game by its own rank's weight. */
+  const used = {};
+  (s.ranks || []).forEach(r => { used[r[0] + '-' + r[1]] = r[2]; });
   const weights = `<div class="swcard"><h3>Rank weight</h3>${SC.weights.filter(r => TIERS.indexOf(r[0]) >= 2).map(r => {
     const t = TIERS.indexOf(r[0]);
-    return `<div class="kv"><span>${r[0]}${r[1].length > 1 ? ' I–IV' : ''}</span><span>${r[1].map((v, i) => t === s.rank[0] && (r[1].length === 1 || i + 1 === s.rank[1]) ? `<b style="color:${TCOL[t]}">${v.toFixed(2)}</b>` : v.toFixed(2)).join(' · ')}</span></div>`;
-  }).join('')}</div>`;
+    return `<div class="kv"><span>${r[0]}${r[1].length > 1 ? ' I–IV' : ''}</span><span>${r[1].map((v, i) => used[t + '-' + (r[1].length === 1 ? 1 : i + 1)] ? `<b style="color:${TCOL[t]}">${v.toFixed(2)}</b>` : v.toFixed(2)).join(' · ')}</span></div>`;
+  }).join('')}${spread ? `<p class="muted small" style="margin-top:8px">These games: ${spread}. Each is weighted on its own, and ${s.rankW.toFixed(3)} is what that came to on average.</p>` : ''}</div>`;
   const gx = g => 20 + 220 * Math.min(g, 60) / 60, gy = m => 100 - 80 * (m - 0.5) / 0.5;
   const gm = `<div class="swcard"><h3>Games played multiplier</h3><svg class="chart" viewBox="0 0 260 124" role="img" aria-label="Games played multiplier">` +
     [0.5, 0.75, 1].map(m => `<line x1="20" x2="240" y1="${gy(m)}" y2="${gy(m)}" class="axis"/><text x="16" y="${gy(m) + 4}" text-anchor="end">×${m}</text>`).join('') +

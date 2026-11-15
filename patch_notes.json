@@ -82,6 +82,38 @@
       {
         "type": "changed",
         "text": "Two things on the list turned out not to be bugs. There are no trios because no game this season has exactly three tracked accounts on a team: it is always solo, duo or a five, and the fours are fives with one account the site does not follow. And the minus signs on bot lane gold at 15 are real: the group's ADCs are behind at 15 more often than not and win later. Both cards now say so."
+      },
+      {
+        "type": "changed",
+        "text": "The pages use the full width of a big screen instead of stopping short of it, and rows that were sitting flush against each other have their spacing back."
+      },
+      {
+        "type": "changed",
+        "text": "Champions are grouped by the League wiki's subclasses: Enchanter, Catcher, Warden, Vanguard, Juggernaut, Diver, Skirmisher, Assassin, Burst mage, Battlemage, Artillery, Marksman, Specialist. The older parent classes the wiki also keeps (Controller, Fighter, Slayer and so on) are gone, because they say less about what a champion actually does."
+      },
+      {
+        "type": "changed",
+        "text": "Solo and duo are counted apart on the Players tab, in both the games-by-mode donut and the winrate by mode. Riot calls them one queue, so duo means another tracked account was on the team: a duo with someone the site does not follow still counts as solo."
+      },
+      {
+        "type": "changed",
+        "text": "The game-number pop-up on Time patterns shows every game number out to 20 and beyond, games 1 to 10 down one side and 11 up the other, each with its winrate, lane gold and deaths. It used to stop at 15."
+      },
+      {
+        "type": "fixed",
+        "text": "The day-and-hour heatmap writes the hours out in full, 5AM and 12PM rather than 5A and 12P."
+      },
+      {
+        "type": "fixed",
+        "text": "Roles on the Players tab are in map order, top to support, instead of being shuffled by how much each is played. It still opens on the role you actually play."
+      },
+      {
+        "type": "changed",
+        "text": "Top champions on the Basic page lists five rather than six."
+      },
+      {
+        "type": "fixed",
+        "text": "The top champions working said a score was weighted at the rank you were \"mostly\" playing. The score always weighted each game at its own rank; the page now says so and lists the ranks those games were played at."
       }
     ]
   },

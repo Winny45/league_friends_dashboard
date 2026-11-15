@@ -25,17 +25,9 @@ empty rather than filled in from memory.
 CLASSES = ["Enchanter", "Catcher", "Warden", "Vanguard", "Juggernaut", "Diver", "Skirmisher",
            "Assassin", "Burst mage", "Battlemage", "Artillery", "Marksman", "Specialist"]
 
-# The wiki's parent classes, used to group the champion grid.
-FAMILIES = [
-    ("Controller", ["Enchanter", "Catcher"]),
-    ("Fighter", ["Juggernaut", "Diver"]),
-    ("Mage", ["Burst mage", "Battlemage", "Artillery"]),
-    ("Marksman", ["Marksman"]),
-    ("Slayer", ["Assassin", "Skirmisher"]),
-    ("Tank", ["Vanguard", "Warden"]),
-    ("Specialist", ["Specialist"]),
-]
-FAMILY_OF = {cls: family for family, members in FAMILIES for cls in members}
+# The wiki also keeps the older parent classes (Controller, Fighter, Slayer
+# and so on) alongside these. Nothing here uses them: a champion is its
+# subclass, which is the one that says what it actually does.
 
 # Every tag the wiki uses. Only some can be measured from a match; scoring.py
 # says which.

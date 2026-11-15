@@ -265,8 +265,16 @@ class PlayerViews:
             mode_wins = Counter()
             positions = Counter()
             for m in season:
-                modes[m.get("queue") or "Other"] += 1
-                mode_wins[m.get("queue") or "Other"] += 1 if m.get("win") else 0
+                queue = m.get("queue") or "Other"
+                if queue == "Ranked Solo/Duo":
+                    # Solo queue and duo queue are one queue to Riot. They are
+                    # told apart by whether another tracked account was on the
+                    # team, so a duo with someone the site does not follow
+                    # counts as solo; the card says so.
+                    side = self.season_games.get((m["matchId"], m.get("teamId")))
+                    queue = "Ranked Duo" if side and len(side["friends"]) > 1 else "Ranked Solo"
+                modes[queue] += 1
+                mode_wins[queue] += 1 if m.get("win") else 0
                 if m.get("position") in ROLES:
                     positions[m["position"]] += 1
             by_rank = defaultdict(lambda: [0, 0])
@@ -278,7 +286,11 @@ class PlayerViews:
 
             per_role = {}
             counts = Counter(r["role"] for r in mine if r["role"])
-            for role, n in counts.most_common():
+            # In map order, top to support, rather than by how much each is
+            # played: the order is then the same for everyone and a support
+            # main's Top games are always in the same place.
+            for role in ROLES:
+                n = counts.get(role, 0)
                 if n < 3:
                     continue
                 rows = [r for r in mine if r["role"] == role]
@@ -314,6 +326,8 @@ class PlayerViews:
                 }
             out[label] = {
                 "games": len(season),
+                # Which one to open on: the one they actually play.
+                "main": counts.most_common(1)[0][0] if counts else None,
                 "modes": [[q, n, mode_wins[q]] for q, n in modes.most_common()],
                 "positions": [[r, n] for r, n in positions.most_common()],
                 "byRank": [[t, v[0], v[1]] for t, v in sorted(by_rank.items())],

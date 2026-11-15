@@ -38,7 +38,7 @@ body {
 }
 h1, h2, h3, .big, .brand-mark { font-family: "Outfit", "Inter", system-ui, sans-serif; }
 a { color: inherit; }
-.wrap { max-width: 1480px; margin: 0 auto; padding: 30px 20px 80px; }
+.wrap { max-width: 1840px; margin: 0 auto; padding: 30px 28px 80px; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -125,6 +125,7 @@ header.top h1 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0
 .card > .hint { color: var(--muted); font-size: 13px; margin: 4px 0 16px; }
 .card h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 18px 0 8px; font-family: inherit; }
 .grid { display: grid; gap: 20px; margin-bottom: 20px; }
+#view > .card, #view > .stack { margin-bottom: 20px; }
 .grid > * { min-width: 0; }
 .g2 { grid-template-columns: 1fr 1fr; } .g3 { grid-template-columns: repeat(3, 1fr); }
 .g-3-2 { grid-template-columns: 3fr 2fr; } .g-2-1 { grid-template-columns: 2fr 1fr; } .g-1-2 { grid-template-columns: 1fr 2fr; }
@@ -293,7 +294,8 @@ tr.click:hover td { background: color-mix(in srgb, var(--violet) 9%, transparent
 .wrrow > b { text-align: right; font-variant-numeric: tabular-nums; }
 .wrrow .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .swcard .wrrow { grid-template-columns: minmax(84px, 1fr) minmax(60px, 1.4fr) 54px; }
-.modal .wrrow { display: flex; padding: 0; min-width: 190px; }
+.modal .wrrow { display: flex; gap: 8px; padding: 0; min-width: 140px; }
+.modal .tbl td, .modal .tbl th { padding-left: 7px; padding-right: 7px; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; color: var(--text-secondary); font-size: 13px; }
 .kv b { color: var(--text-primary); }
 
@@ -380,7 +382,7 @@ tr.click:hover td { background: color-mix(in srgb, var(--violet) 9%, transparent
 
 /* ---- pop-up ------------------------------------------------------------------ */
 .modal-back { position: fixed; inset: 0; z-index: 100; background: rgba(5,7,12,0.72); display: flex; align-items: center; justify-content: center; padding: 20px; }
-.modal { background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: 18px; padding: 22px; width: min(760px, 100%); max-height: calc(100vh - 40px); overflow: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.7); }
+.modal { background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: 18px; padding: 22px; width: min(1180px, 100%); max-height: calc(100vh - 40px); overflow: auto; box-shadow: 0 30px 80px rgba(0,0,0,0.7); }
 .modal-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .modal-head h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .modal-head .hint { color: var(--muted); font-size: 13px; margin: 4px 0 14px; }

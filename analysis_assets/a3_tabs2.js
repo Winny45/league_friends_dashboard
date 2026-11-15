@@ -51,22 +51,31 @@ function tabRoles() {
 
 /* ---- Time patterns -------------------------------------------------------------- */
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const hourLabel = h => ((h % 12) || 12) + (h < 12 ? 'a' : 'p');
+const hourLabel = h => ((h % 12) || 12) + (h < 12 ? 'am' : 'pm');
 function sessionModal(me) {
   const bn = D.time.sessions[me].byNumber;
-  const rows = bn.map((b, i) => {
-    if (!b[0]) return '';
-    const wr = 100 * b[1] / b[0];
-    return `<tr class="${b[0] < 30 ? 'thin' : ''}"><td class="strong">Game ${i + 1}${i === bn.length - 1 ? '+' : ''}</td><td class="num">${b[0]}</td>` +
-      `<td><div class="wrrow" style="margin:0"><div class="wrbar"><i style="width:${Math.min(100, wr)}%;background:${heat(wr, 50, 9)}"></i><em></em></div><b>${pc1(wr)}</b></div></td>` +
-      `<td class="num strong ${gcls(b[2])}">${gold(b[2])}</td><td class="num">${b[3] == null ? '-' : b[3].toFixed(1)}</td></tr>`;
-  }).join('');
+  /* Half the game numbers in each column rather than one long column, so a
+     late game can be read against an early one without scrolling. */
+  const table = (from, to) => {
+    const body = bn.slice(from, to).map((b, k) => {
+      const i = from + k;
+      if (!b[0]) return `<tr class="thin"><td class="strong">Game ${i + 1}</td><td class="num">0</td><td></td><td></td><td></td></tr>`;
+      const wr = 100 * b[1] / b[0];
+      return `<tr class="${b[0] < 30 ? 'thin' : ''}"><td class="strong">Game ${i + 1}${i === bn.length - 1 ? '+' : ''}</td><td class="num">${b[0]}</td>` +
+        `<td><div class="wrrow" style="margin:0"><div class="wrbar"><i style="width:${Math.min(100, wr)}%;background:${heat(wr, 50, 9)}"></i><em></em></div><b>${pc1(wr)}</b></div></td>` +
+        `<td class="num strong ${gcls(b[2])}">${gold(b[2])}</td><td class="num">${b[3] == null ? '-' : b[3].toFixed(1)}</td></tr>`;
+    }).join('');
+    return `<div class="scroll"><table class="tbl"><thead><tr><th>Game in session</th><th class="num">Games</th>` +
+      `<th style="min-width:110px">Winrate</th><th class="num">Lane gold @15</th><th class="num">Deaths</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  };
+  const half = Math.ceil(bn.length / 2);
+  const rows = `<div class="grid g2" style="margin:0;gap:18px">${table(0, half)}${table(half, bn.length)}</div>`;
   const late = bn.slice(8).reduce((a, b) => [a[0] + b[0], a[1] + b[1]], [0, 0]), early = bn.slice(0, 3).reduce((a, b) => [a[0] + b[0], a[1] + b[1]], [0, 0]);
   const note = late[0] >= 30 && early[0] >= 30 ? `Games 1 to 3 are won ${pc0(100 * early[1] / early[0])} of the time; from game 9 on it is ${pc0(100 * late[1] / late[0])} over ${late[0]} games.` : '';
   openModal(`<div class="modal-head"><div><h2>Game number in a session · full breakdown</h2>` +
-    `<p class="hint">${me === 'All' ? 'All friends' : esc(me)} · every game number with data. A session ends after an hour with no game. Rows under 30 games are faded.</p></div>` +
+    `<p class="hint">${me === 'All' ? 'All friends' : esc(me)} · every game number, to game ${bn.length} and beyond. A session ends after an hour with no game. Rows under 30 games are faded.</p></div>` +
     `<button type="button" class="pill sm" data-close>✕ Close</button></div>` +
-    `<div class="scroll"><table class="tbl"><thead><tr><th>Game in session</th><th class="num">Games</th><th style="min-width:200px">Winrate</th><th class="num">Lane gold @15</th><th class="num">Deaths</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    rows +
     (note ? `<p class="muted small" style="margin-top:12px">${note}</p>` : ''));
 }
 function tabTime() {
@@ -84,7 +93,7 @@ function tabTime() {
   /* every hour of the day, starting where a night's games stop being last night's */
   const hours = []; for (let i = 0; i < 24; i++) hours.push((T.dayStarts + i) % 24);
   const maxN = Math.max(1, ...V.cells.flatMap(r => r.map(c => c[0])));
-  let grid = `<div class="hm day" style="grid-template-columns:44px repeat(24, minmax(34px, 1fr))"><div></div>` +
+  let grid = `<div class="hm day" style="grid-template-columns:48px repeat(24, minmax(44px, 1fr))"><div></div>` +
     hours.map(h => `<div class="h">${hourLabel(h)}</div>`).join('');
   DAYS.forEach((dname, d) => {
     grid += `<div class="r">${dname}</div>` + hours.map(h => {

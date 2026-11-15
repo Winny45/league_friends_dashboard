@@ -11,7 +11,7 @@ from analysis_views import BLANK_GAMES, CALLOUT_GAMES, LOW_GAMES
 from champion_classes import CLASSES
 
 SESSION_GAP_MS = 60 * 60 * 1000     # a new session starts after an hour with no game
-SESSION_BUCKETS = 15                # game 1 .. game 14, then 15 and beyond
+SESSION_BUCKETS = 20                # game 1 .. game 19, then 20 and beyond
 DAY_STARTS = 5                      # 5am: the hour a night's games stop belonging to the day before
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 

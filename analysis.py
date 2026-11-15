@@ -50,8 +50,7 @@ from analysis_util import (LANE_ZONE, LANING_END, POOLED, ROLE_NAME, ROLE_TABLE,
                            rnd, sigmoid, uk_time, zone_of)
 from analysis_views import PlayerViews
 from analysis_views2 import GroupViews
-from champion_classes import (CLASSES, FAMILIES, FAMILY_OF, champion_class, champion_classes,
-                              champion_tags)
+from champion_classes import CLASSES, champion_class, champion_classes, champion_tags
 
 QUANTILE_POINTS = 41
 # A rank tier gets its own baseline once this many rows of a role have been
@@ -573,14 +572,19 @@ class Analysis(PlayerViews, GroupViews):
         if not scored or not games:
             return None
         tier = Counter(r["tier"] for r in scored).most_common(1)[0][0]
-        rank = Counter((r["rank"][0], r["rank"][1]) for r in scored).most_common(1)[0][0]
+        spread = Counter((r["rank"][0], r["rank"][1]) for r in scored)
+        rank = spread.most_common(1)[0][0]
         champ = Counter(r["champ"] for r in scored).most_common(1)[0][0]
         avg, source, n = self.champion_average(champ, tier)
         out = scoring.champion_score([r["wscore"] for r in scored], wins, games, avg)
         raw = mean(r["score"] for r in scored)
         out.update({
             "raw": raw, "rankW": out["weighted"] / raw if raw else None,
-            "rank": list(rank), "wrSource": source, "wrGames": n,
+            # Every game carries the weight of the rank it was played at; this
+            # is only the spread, so the page can show what those games were
+            # rather than pretending they were all at one rank.
+            "rank": list(rank), "ranks": [[t, d, c] for (t, d), c in spread.most_common()],
+            "wrSource": source, "wrGames": n,
             "scored": len(scored), "games": games, "wins": wins,
             "verdict": "above" if raw >= 55 else "below" if raw <= 45 else "average",
         })
@@ -592,7 +596,8 @@ class Analysis(PlayerViews, GroupViews):
         if not s:
             return None
         return {"score": round(s["score"], 1), "raw": round(s["raw"], 1), "weighted": round(s["weighted"], 1),
-                "rankW": rnd(s["rankW"], 3), "rank": s["rank"], "gamesMult": round(s["gamesMult"], 2),
+                "rankW": rnd(s["rankW"], 3), "rank": s["rank"], "ranks": s["ranks"],
+                "gamesMult": round(s["gamesMult"], 2),
                 "wrMult": round(s["wrMult"], 3), "adjWr": round(s["adjWr"], 1),
                 "champWr": rnd(s["champWr"], 1), "wrSource": s["wrSource"], "wrGames": s["wrGames"],
                 "scored": s["scored"], "games": s["games"], "wins": s["wins"], "verdict": s["verdict"]}
@@ -721,7 +726,7 @@ class Analysis(PlayerViews, GroupViews):
             if c and c not in out:
                 classes = champion_classes(c, self._ddragon_tags(c))
                 out[c] = {"n": self.champ_name(c), "i": keys.get(c.lower(), c), "c": classes[0],
-                          "cs": classes, "tg": champion_tags(c), "f": FAMILY_OF.get(classes[0], "Specialist"),
+                          "cs": classes, "tg": champion_tags(c),
                           "s": round(self.scaling.get(c, 0.0), 4)}
         for r in self.rows:
             add(r["champ"])
@@ -747,7 +752,6 @@ class Analysis(PlayerViews, GroupViews):
             "friends": [{"label": f["label"], "second": bool(f.get("second")),
                          "accounts": f.get("accounts") or [f["label"]]} for f in self.friends],
             "roles": ROLES, "roleName": ROLE_NAME, "classes": CLASSES,
-            "families": [[name, members] for name, members in FAMILIES],
             "roleStats": scoring.ROLE_METRICS, "roleTable": ROLE_TABLE, "stats": self._stat_meta(),
             "tiers": scoring.TIER_NAMES, "tierShort": scoring.TIER_SHORT,
         }

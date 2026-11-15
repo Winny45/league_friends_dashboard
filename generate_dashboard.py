@@ -1286,7 +1286,7 @@ def analysis_week_tiles(now):
 EXTRA_CSS = """
   /* Wider than it was. The overview is two columns now, and a leaderboard
      beside a week summary does not fit in 1060px without squeezing both. */
-  .wrap { max-width: 1280px; }
+  .wrap { max-width: 1640px; }
   .brand { flex-wrap: wrap; }
   .mode { display: inline-flex; padding: 4px; border-radius: 13px; background: var(--surface-1);
           border: 1px solid var(--border-strong); margin-left: 6px; }
@@ -1992,7 +1992,7 @@ def render_top_champions(rows, label=None, season_matches=()):
             f'<td class="num">{v["games"]}</td>'
             f'<td class="num">{100 * v["wins"] / v["games"]:.1f}%</td>'
             f'<td class="num muted">{(sum(kdas[c]) / len(kdas[c])) if kdas.get(c) else 0:.1f}</td></tr>'
-            for c, v in mine[:6])
+            for c, v in mine[:5])
         if body:
             return f'''<table class="matches-table">
       <thead><tr><th>Champion</th><th>Score</th><th>Comfort</th>
