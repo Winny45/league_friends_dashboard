@@ -359,12 +359,19 @@ jobs:
           for f in matches_cache.json scrape_log.json champions_cache.json key_state.json; do
             if [ -f "$f" ]; then cp "$f" ".cache/$f"; fi
           done
-          # Copied over what is there rather than replacing the directory, so
-          # a run that died before loading the store cannot save an emptier
-          # one on top of a full one. game_store.py only ever adds.
+          # Merged with the branch as it is *now*, not as it was when this run
+          # started. The branch is force-pushed below, so without this a run
+          # silently drops everything that reached it in the meantime: another
+          # machine filling the store, or a run that overlapped this one. Both
+          # sides would then spend their next hour fetching the same games
+          # again. Falls back to a plain copy, because losing an hour of
+          # fetching is better than failing a publish over it.
           if [ -d games ]; then
             mkdir -p .cache/games
-            cp games/*.json .cache/games/ 2>/dev/null || true
+            python ci/merge_games.py .cache games .cache/games || {
+              echo "  ! could not merge with the branch; saving this run's store as it is."
+              cp games/*.json .cache/games/ 2>/dev/null || true
+            }
           fi
           cd .cache
           git config user.name "github-actions[bot]"
