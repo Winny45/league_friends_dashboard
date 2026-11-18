@@ -1,32 +1,48 @@
 # -*- coding: utf-8 -*-
-"""Last look at the page before it goes to a public URL.
+"""Last look at the pages before they go to a public URL.
 
 Cheap, and it runs on every hourly publish. The one that matters is the key:
-config.json is read at build time for site_url, so a bug that widened that
-read would put a live Riot key on a public page and nothing would say so.
+config.json is read at build time for site_url, and data.json carries the key
+too, so a bug that copied the wrong field would put a live Riot key on a
+public page and nothing would say so.
+
+The site, since the overhaul:
+    index.html     the site, second accounts merged (or the classic page
+                   standing in for it, if the new pages failed to build)
+    split.html     the site, every account on its own
+    classic.html   the old single page
+    main.html, analysis.html, analysis-split.html, analysis-main.html
+                   a few lines each that send an old address on
+    g/, c/         per-day game files and per-champion files
 """
 import pathlib
 import re
 import sys
 
-page = pathlib.Path("deploy/index.html")
-if not page.exists():
-    sys.exit("deploy/index.html is missing; the build did not produce a page.")
-
-html = page.read_text(encoding="utf-8")
+KEY = r"RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+PUUID = r'"[A-Za-z0-9_-]{78}"'
 problems = []
 
-# A development key is RGAPI- plus a UUID. The page legitimately contains the
-# literal "RGAPI-" in placeholder text and in its own key-validation regex, so
-# match the real shape rather than the prefix.
-if re.search(r"RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", html):
-    problems.append("a live-looking Riot API key is in the page")
 
-if len(html) < 500_000:
-    problems.append(f"the page is only {len(html)} bytes, far below a real build")
+def read(name):
+    path = pathlib.Path("deploy", name)
+    return path.read_text(encoding="utf-8") if path.exists() else None
 
-if "<title>" not in html:
-    problems.append("no <title>, so the build probably failed part way")
+
+page = read("index.html")
+if page is None:
+    sys.exit("deploy/index.html is missing; the build did not produce a page.")
+if re.search(KEY, page):
+    problems.append("a live-looking Riot API key is in index.html")
+if "<title>" not in page:
+    problems.append("index.html has no <title>, so the build probably failed part way")
+site = 'id="analysis-data"' in page
+if site and len(page) < 300_000:
+    problems.append(f"index.html is the site but only {len(page)} bytes, far below a real build")
+if not site and len(page) < 500_000:
+    problems.append(f"index.html is the classic page standing in, but only {len(page)} bytes")
+if not site:
+    print("note: index.html is the classic page this build; the new pages did not build.")
 
 # vercel.json decides caching and clean URLs, so its absence is a real
 # problem. The share images are decoration: say so and carry on.
@@ -36,58 +52,54 @@ for asset in ("og.png", "icon-180.png"):
     if not pathlib.Path("deploy", asset).exists():
         print(f"note: deploy/{asset} was not built, so the link preview will be plain.")
 
+if site:
+    split = read("split.html")
+    if split is not None:
+        if re.search(KEY, split):
+            problems.append("a live-looking Riot API key is in split.html")
+        if 'id="analysis-data"' not in split and "http-equiv=\"refresh\"" not in split:
+            problems.append("split.html is neither the site nor a redirect")
+    classic = read("classic.html")
+    if classic is None:
+        problems.append("classic.html is missing")
+    else:
+        if re.search(KEY, classic):
+            problems.append("a live-looking Riot API key is in classic.html")
+        if len(classic) < 500_000:
+            problems.append(f"classic.html is only {len(classic)} bytes")
+    # The analysis payload carries lobby names by design (everyone in a game
+    # is on its scoreboard), but never an account id.
+    if re.search(PUUID, page):
+        problems.append("index.html contains what looks like a puuid")
+
+for name in ("main.html", "analysis.html", "analysis-split.html", "analysis-main.html"):
+    text = read(name)
+    if text is not None and re.search(KEY, text):
+        problems.append(f"a live-looking Riot API key is in {name}")
+
 if problems:
     for p in problems:
         print(f"! {p}")
     sys.exit("Refusing to publish.")
 
-# The primary-accounts-only companion, when the config names any second
-# account. Same checks: it is published to the same public URL space and a
-# key leaking onto it would leak just as far.
-companion = pathlib.Path("deploy/main.html")
-if companion.exists():
-    alt = companion.read_text(encoding="utf-8")
-    if re.search(r"RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", alt):
-        sys.exit("! a live-looking Riot API key is in deploy/main.html. Refusing to publish.")
-    if len(alt) < 500_000:
-        sys.exit(f"! deploy/main.html is only {len(alt)} bytes. Refusing to publish.")
-    print(f"deploy/main.html looks publishable: {len(alt)} bytes, no key.")
-else:
-    print("note: no deploy/main.html, so no second accounts are configured.")
 
-# The analysis pages and the game files they load. Built only once the game
-# store has something in it, so their absence is a note and not a failure.
-# What they must never do is carry the key, or reach the public site as a
-# husk: a page that parsed its data and found nothing still has a title.
-KEY = r"RGAPI-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-# analysis.html has second accounts merged into their owners and
-# analysis-split.html shows every account; analysis-main.html is a few lines
-# that send an old address on, so it is checked for a key and nothing else.
-moved = pathlib.Path("deploy", "analysis-main.html")
-if moved.exists() and re.search(KEY, moved.read_text(encoding="utf-8")):
-    sys.exit("! a live-looking Riot API key is in deploy/analysis-main.html. Refusing to publish.")
-for name in ("analysis.html", "analysis-split.html"):
-    extra = pathlib.Path("deploy", name)
-    if not extra.exists():
-        print(f"note: no deploy/{name} this build.")
-        continue
-    text = extra.read_text(encoding="utf-8")
-    if re.search(KEY, text):
-        sys.exit(f"! a live-looking Riot API key is in deploy/{name}. Refusing to publish.")
-    if 'id="analysis-data"' not in text or len(text) < 100_000:
-        sys.exit(f"! deploy/{name} is {len(text)} bytes and looks incomplete. Refusing to publish.")
-    print(f"deploy/{name} looks publishable: {len(text)} bytes, no key.")
+def newest(folder, kind):
+    d = pathlib.Path("deploy", folder)
+    files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime) if d.is_dir() else []
+    if not files:
+        return
+    # A puuid is 78 characters of base64url. These files are meant to hold
+    # names and numbers only, so one turning up means the stripping was
+    # bypassed.
+    for f in (files[-1], files[0]):
+        sample = f.read_text(encoding="utf-8")
+        if re.search(KEY, sample):
+            sys.exit(f"! a live-looking Riot API key is in {f}. Refusing to publish.")
+        if '"pu"' in sample or re.search(PUUID, sample):
+            sys.exit(f"! {f} contains what looks like a puuid. Refusing to publish.")
+    print(f"deploy/{folder} holds {len(files)} {kind} files; newest and oldest checked, no key, no puuids.")
 
-games = sorted(pathlib.Path("deploy", "g").glob("*.json")) if pathlib.Path("deploy", "g").is_dir() else []
-if games:
-    # A puuid is 78 characters of base64url. The public game files are meant
-    # to hold names and numbers only, so one turning up means the stripping
-    # in analysis.public_game was bypassed.
-    sample = games[-1].read_text(encoding="utf-8")
-    if re.search(KEY, sample):
-        sys.exit(f"! a live-looking Riot API key is in {games[-1]}. Refusing to publish.")
-    if '"pu"' in sample or re.search(r'"[A-Za-z0-9_-]{78}"', sample):
-        sys.exit(f"! {games[-1]} contains what looks like a puuid. Refusing to publish.")
-    print(f"deploy/g holds {len(games)} day files; newest checked, no key, no puuids.")
 
-print(f"deploy/index.html looks publishable: {len(html)} bytes, no key, assets present.")
+newest("g", "day")
+newest("c", "champion")
+print(f"deploy/index.html looks publishable: {len(page)} bytes, {'the site' if site else 'the classic page'}, no key.")

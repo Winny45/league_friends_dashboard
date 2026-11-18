@@ -264,6 +264,7 @@ class PlayerViews:
             modes = Counter()
             mode_wins = Counter()
             positions = Counter()
+            position_wins = Counter()
             for m in season:
                 queue = m.get("queue") or "Other"
                 if queue == "Ranked Solo/Duo":
@@ -277,6 +278,7 @@ class PlayerViews:
                 mode_wins[queue] += 1 if m.get("win") else 0
                 if m.get("position") in ROLES:
                     positions[m["position"]] += 1
+                    position_wins[m["position"]] += 1 if m.get("win") else 0
             by_rank = defaultdict(lambda: [0, 0])
             for r in mine:
                 if r["lobby"]:
@@ -321,6 +323,7 @@ class PlayerViews:
                     "radar": {"axes": axes, "me": [rnd(self.agg_pc(rows, s, "pa"), 0) for s in axes], "ranks": lines},
                     "heat": self._heat(rows),
                     "roam": self._roaming(rows, role, tier),
+                    "roamX": self._roam_extra(rows, role, tier),
                     "jungle": self._jungle(rows) if role == "JUNGLE" else None,
                     "compare": {"champ": top_champ, "champGames": len(champ_rows), "rows": compare},
                 }
@@ -329,7 +332,7 @@ class PlayerViews:
                 # Which one to open on: the one they actually play.
                 "main": counts.most_common(1)[0][0] if counts else None,
                 "modes": [[q, n, mode_wins[q]] for q, n in modes.most_common()],
-                "positions": [[r, n] for r, n in positions.most_common()],
+                "positions": [[r, n, position_wins[r]] for r, n in positions.most_common()],
                 "byRank": [[t, v[0], v[1]] for t, v in sorted(by_rank.items())],
                 "roles": per_role,
             }

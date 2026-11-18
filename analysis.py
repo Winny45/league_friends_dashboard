@@ -48,6 +48,7 @@ import scoring
 from analysis_util import (LANE_ZONE, LANING_END, POOLED, ROLE_NAME, ROLE_TABLE, ROLES, STATS,
                            blue_camps, broad_zone, fit_slope, fit_two, mean, nearest_camp, pct_of,
                            rnd, sigmoid, uk_time, zone_of)
+from analysis_site import SiteViews
 from analysis_views import PlayerViews
 from analysis_views2 import GroupViews
 from champion_classes import CLASSES, champion_class, champion_classes, champion_tags
@@ -70,20 +71,25 @@ def quantiles(sorted_vals, points=QUANTILE_POINTS):
     return [round(sorted_vals[round(last * i / (points - 1))], 4) for i in range(points)]
 
 
-class Analysis(PlayerViews, GroupViews):
-    def __init__(self, data, store_games, highlights=None):
+class Analysis(PlayerViews, GroupViews, SiteViews):
+    def __init__(self, data, store_games, highlights=None, accounts=None):
         self.data = data
         self.highlights = highlights or []
+        # LP, ranks and form per login, from generate_dashboard.lp_export.
+        self.accounts = accounts or {}
         self.friends = data.get("friends", [])
         self.labels = [f["label"] for f in self.friends]
         self.merged = bool(data.get("mergedAccounts"))
         # A merged friend carries every account's puuid, so the second
         # account's games are simply more of that person's games.
         self.friend_of = {}
+        self.account_of = {}
         for f in self.friends:
-            for pu in f.get("puuids") or [f.get("puuid")]:
+            accounts = f.get("puuidLabels") or [f["label"]]
+            for k, pu in enumerate(f.get("puuids") or [f.get("puuid")]):
                 if pu:
                     self.friend_of[pu] = f["label"]
+                    self.account_of[pu] = accounts[k] if k < len(accounts) else f["label"]
         self.current_rank = {f["label"]: self._ranked_now(f) for f in self.friends}
         self.slug_info = {k.lower(): v for k, v in (data.get("championBySlug") or {}).items()}
         self.items = data.get("items") or {}
@@ -116,6 +122,7 @@ class Analysis(PlayerViews, GroupViews):
         self._score_rows()
         self._fit_model()
         self.row_of = {(r["friend"], r["game"]): r for r in self.rows if r["friend"]}
+        self._site_init()
 
     # -- names ---------------------------------------------------------------
 
@@ -258,9 +265,11 @@ class Analysis(PlayerViews, GroupViews):
         # player first took part in one or died.
         takedowns = defaultdict(list)
         first_td, first_death = {}, {}
+        deaths_at = defaultdict(list)
         for ev in g.get("kills", []):
             t, x, y, killer, victim = ev[0], ev[1], ev[2], ev[3], ev[4]
             first_death.setdefault(victim, t)
+            deaths_at[victim].append(t)
             for pid in [killer] + ev[5:]:
                 if 1 <= pid <= 10:
                     first_td.setdefault(pid, t)
@@ -293,6 +302,18 @@ class Analysis(PlayerViews, GroupViews):
             own_lane = LANE_ZONE.get(role)
             tk = [z for z, _t in takedowns.get(i + 1, []) if z != "base"]
             roam_n = sum(1 for z in tk if z != own_lane) if own_lane else 0
+            # When the roams happened, and how many cost the roamer their life
+            # within thirty seconds: a takedown away from lane followed by a
+            # death on the way back is a roam that was paid for.
+            roam_t, roam_dead = [0, 0, 0, 0], 0
+            if own_lane:
+                for z, t in takedowns.get(i + 1, []):
+                    if z in ("base", own_lane):
+                        continue
+                    if 180 <= t < LANING_END:
+                        roam_t[min(3, (t - 180) // 180)] += 1
+                    if any(t < d <= t + 30 for d in deaths_at.get(i + 1, [])):
+                        roam_dead += 1
 
             # Minutes 3 to 14 spent away from lane. Time in base is neither:
             # walking back from a recall is not a roam.
@@ -345,6 +366,7 @@ class Analysis(PlayerViews, GroupViews):
                 "botg15": None,
                 "g15": g15, "g10": g10, "x15": x15, "c15": c15,
                 "tk_n": len(tk) if own_lane else 0, "roam_n": roam_n,
+                "roam_t": roam_t, "roam_dead": roam_dead, "gold15": at(p["g"], 15),
                 "roam": roam_n / len(tk) if own_lane and tk else None,
                 "zones": Counter(tk), "out_n": out_n, "lane_n": lane_n,
                 "objp_n": sum(1 for o in team_objs if (i + 1) in o["parts"]),
@@ -358,6 +380,14 @@ class Analysis(PlayerViews, GroupViews):
                 row["jg"] = self._first_clear_of(p, i + 1, team, last_whole, takedowns, first_td, first_death, v2)
             game_rows.append(row)
 
+        # Each player's share of their team's gold at 15, and each team's share
+        # of all the gold in the game, for "did roaming move the gold".
+        team15 = {t: sum(r["gold15"] for r in game_rows if r["team"] == t and r["gold15"] is not None)
+                  for t in (100, 200)}
+        both15 = team15[100] + team15[200]
+        for r in game_rows:
+            r["gs15"] = r["gold15"] / team15[r["team"]] if r["gold15"] is not None and team15[r["team"]] else None
+            r["ts15"] = team15[r["team"]] / both15 if both15 and r["gold15"] is not None else None
         for team in (100, 200):
             adc, sup = by_role.get((team, "BOTTOM")), by_role.get((team, "UTILITY"))
             if adc is not None and sup is not None:
@@ -743,6 +773,7 @@ class Analysis(PlayerViews, GroupViews):
             "generatedAtMs": self.data.get("generatedAtMs"),
             "platform": self.data.get("platform"),
             "seasonStart": self.data.get("seasonStart"),
+            "rankTrackingSince": self.data.get("rankTrackingSince"),
             "ddragon": self.data.get("ddragonVersion"),
             "seasonGames": len(season_ids),
             "storedGames": len(stored),
@@ -791,17 +822,41 @@ class Analysis(PlayerViews, GroupViews):
     # -- the game list and the per-day game files -----------------------------
 
     def _games_index(self):
-        """Every stored game a friend was in, newest first, for the picker."""
+        """Every stored game a friend was in, newest first.
+
+        [id, start, seconds, queue, team, won, friends, lobby rank, flag,
+         scaling gap, lobby]
+        friends  one row each: [label, champion, role, k, d, a, gold @15,
+                 game score, rank, level, cs, vision, kill participation %,
+                 items in slot order with the trinket last, spells, runes,
+                 account]. Account is the login that played it, which differs
+                 from the label on a page where second accounts are merged.
+        lobby    all ten champions as numbers into champIndex, this team's
+                 five first, each team top to support; the names arrive with
+                 the game's own file when it is opened
+        """
+        cix = {c: i for i, c in enumerate(self.champ_index)}
         out = []
         for (gid, team), s in self.sides.items():
             if not s["friends"]:
                 continue
+            g = self.games[gid]
             rows = [r for r in self.by_game[gid] if r["team"] == team and r["friend"]]
-            out.append([gid, s["t0"], s["dur"], self.games[gid].get("q"), team, 1 if s["win"] else 0,
-                        [[r["friend"], r["champ"], r["role"], r["k"], r["d"], r["a"], r["g15"],
-                          rnd(r["score"], 1), r["rank"][:2] if r["rank"] else None] for r in rows],
+            friends = []
+            for r in rows:
+                p = g["p"][r["pid"] - 1]
+                items = p.get("it") or ((p.get("items") or []) + [0] * 7)[:7]
+                friends.append([r["friend"], r["champ"], r["role"], r["k"], r["d"], r["a"], r["g15"],
+                                rnd(r["score"], 1), r["rank"][:2] if r["rank"] else None,
+                                p.get("lvl"), p.get("cs"), p.get("vis"),
+                                round(100 * r["kp"]) if r["kp"] is not None else None,
+                                items, p.get("sp") or [0, 0], (p.get("ru") or [0, 0, 0])[:3],
+                                self.account_of.get(p.get("pu"), r["friend"])])
+            order = sorted(self.by_game[gid], key=lambda r: (r["team"] != team, ROLES.index(r["role"]) if r["role"] else 9))
+            out.append([gid, s["t0"], s["dur"], g.get("q"), team, 1 if s["win"] else 0, friends,
                         (self.lobby_rank.get(gid) or [None, None])[:2],
-                        1 if s["comeback"] else 2 if s["throw"] else 0, round(s["gap"], 4)])
+                        1 if s["comeback"] else 2 if s["throw"] else 0, round(s["gap"], 4),
+                        [cix.get(r["champ"], -1) for r in order]])
         out.sort(key=lambda g: -g[1])
         return out
 
@@ -837,6 +892,13 @@ class Analysis(PlayerViews, GroupViews):
                 entry["rk"] = read[:2]
             if r["role"]:
                 entry["m"] = {m: round(r[m], 4) for m in scoring.METRICS if r.get(m) is not None}
+            # What a scoreboard shows beside a champion. Facts about the game,
+            # so the file stays the same from one build to the next.
+            entry["lvl"] = p.get("lvl")
+            if p.get("it"):
+                entry["it"], entry["sp"], entry["ru"] = p["it"], p.get("sp"), p.get("ru")
+            elif p.get("items"):
+                entry["it"] = (p["items"] + [0] * 7)[:7]
             if r.get("jg"):
                 # How this jungler's first clear went: where they started, how
                 # it ended, when they hit level 4, how many of the first two
@@ -869,7 +931,6 @@ class Analysis(PlayerViews, GroupViews):
             "games": self._games_index(),
             "players": self._players(),
             "jungle": self._jungle_table(),
-            "champions": self._champions(),
             "roles": self._roles(),
             "time": self._time(),
             "duos": self._duos(),
@@ -877,6 +938,8 @@ class Analysis(PlayerViews, GroupViews):
             "records": self._records(),
             "usual": self._usual(),
             "scoring": self._scoring_payload(),
+            "acc": self.accounts,
+            **self._site_payload(),
         }
 
     # -- what the main page borrows ---------------------------------------------

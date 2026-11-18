@@ -13,16 +13,25 @@ const ROLES = D.meta.roles, RN = D.meta.roleName, STAT = D.meta.stats;
 const FR = D.meta.friends.map(f => f.label);
 const VER = D.meta.ddragon || '15.1.1';
 const TIERS = D.meta.tiers, TSHORT = D.meta.tierShort, SC = D.scoring;
-const TABS = [['game', 'Game breakdown'], ['players', 'Players'], ['champions', 'Champions'],
-  ['roles', 'Roles & classes'], ['time', 'Time patterns'], ['duos', 'Duos & stacks'], ['flow', 'Game flow'], ['records', 'Records']];
+/* The site's own pages. A player's profile has its own bar with the same
+   sections filtered to them (PTABS), and a game's breakdown opens from a
+   game rather than from either bar. */
+const TABS = [['home', 'Overview'], ['champions', 'Champions'], ['roles', 'Roles & classes'], ['time', 'Time patterns'],
+  ['duos', 'Duos & stacks'], ['flow', 'Game flow'], ['records', 'Records']];
+const PTABS = [['overview', 'Overview'], ['champions', 'Champions'], ['roles', 'Roles & classes'], ['roaming', 'Roaming'],
+  ['time', 'Time patterns'], ['duos', 'Duos & stacks'], ['flow', 'Game flow'], ['records', 'Records']];
 const MAPQ = 232;
 /* Small-sample rules, the same on every tab: under ten games an average is
    greyed, under five a cell is left blank. */
 const LOW = 10, BLANK = 5;
 
 /* ---- state lives in the URL, so any view can be linked to ----------------- */
-const KEYS = ['tab', 'game', 'team', 'gwho', 'player', 'role', 'champ', 'crole', 'cwho', 'crf', 'csort', 'ctag', 'rtab', 'cls',
-  'who', 'metric', 'queue', 'dview', 'dwho', 'dchamp', 'drole', 'dshow'];
+const KEYS = ['tab', 'p', 'pt', 'game', 'team', 'gwho', 'player', 'role', 'champ', 'crole', 'cwho', 'cg', 'crk', 'cpt', 'cshow',
+  'csort', 'ctag', 'rtab', 'cls', 'who', 'metric', 'queue', 'dview', 'dwho', 'dchamp', 'drole', 'dshow', 'pq', 'pc', 'pr', 'psort'];
+/* Changing any of these is going to another page, so it goes into the
+   browser's history and Back returns to where you were. A filter on the same
+   page replaces the entry instead, so Back does not step through every click. */
+const PAGE_KEYS = ['tab', 'p', 'pt', 'game', 'champ', 'crole'];
 function parseHash() {
   const o = {};
   location.hash.slice(1).split('&').forEach(kv => {
@@ -36,16 +45,28 @@ function parseHash() {
    account that played) are both read through this. */
 const OWNER = {};
 D.meta.friends.forEach(f => (f.accounts || [f.label]).forEach(a => { OWNER[a] = f.label; }));
-function ownState(o) { ['player', 'gwho', 'who', 'dwho', 'cwho'].forEach(k => { if (o[k] && OWNER[o[k]]) o[k] = OWNER[o[k]]; }); return o; }
-const S = ownState(Object.assign({ tab: 'game' }, parseHash()));
+function ownState(o) { ['p', 'player', 'gwho', 'who', 'dwho', 'cwho'].forEach(k => { if (o[k] && OWNER[o[k]]) o[k] = OWNER[o[k]]; }); return o; }
+/* Links from the old pages still land somewhere sensible: the old Players tab
+   is a profile now. */
+function legacyState(o) {
+  if (o.tab === 'players') { o.p = o.player || FR[0]; o.pt = 'overview'; delete o.tab; }
+  return o;
+}
+const S = ownState(legacyState(Object.assign({ tab: 'home' }, parseHash())));
 const UI = { hl: { pos: 1 }, hphase: '0', ml: { pos: 1 }, mapT: null, focus: null, rt: null, fmode: 'scale', cexp: {}, q: '' };
 function setState(patch) {
+  const before = PAGE_KEYS.map(k => S[k] || '').join('|');
   Object.assign(S, patch);
   const h = KEYS.filter(k => S[k] != null && S[k] !== '').map(k => k + '=' + encodeURIComponent(S[k])).join('&');
-  history.replaceState(null, '', '#' + h);
+  if (PAGE_KEYS.map(k => S[k] || '').join('|') !== before) history.pushState(null, '', '#' + h);
+  else history.replaceState(null, '', '#' + h);
   render();
 }
-window.addEventListener('hashchange', () => { KEYS.forEach(k => delete S[k]); ownState(Object.assign(S, { tab: 'game' }, parseHash())); render(); });
+function fromHash() { KEYS.forEach(k => delete S[k]); ownState(legacyState(Object.assign(S, { tab: 'home' }, parseHash()))); render(); }
+window.addEventListener('hashchange', fromHash);
+window.addEventListener('popstate', fromHash);
+/* Opening a player's profile, from anywhere a name is shown. */
+const openP = (label, pt = 'overview') => set({ p: OWNER[label] || label, pt, game: '', champ: '', pq: '', pc: '', pr: '', role: '' });
 
 /* ---- formatting ------------------------------------------------------------- */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -169,6 +190,30 @@ function iicon(id, s = 22) {
     `src="https://ddragon.leagueoflegends.com/cdn/${VER}/img/item/${id}.png" onerror="this.style.visibility='hidden'">`;
 }
 const champ = (slug, s = 22) => `<span class="cell-champ">${cicon(slug, s)}<b>${esc(C(slug).n)}</b></span>`;
+/* Summoner spells, runes and rank crests, from Data Dragon and Community
+   Dragon like the rest of the art. Each is hidden rather than broken when an
+   image does not load, and a slot with no id is an empty square. */
+const SPELLS = D.spells || {}, RUNES = D.runes || {};
+function sicon(id, s = 18) {
+  const sp = SPELLS[id];
+  if (!sp) return `<span class="slot" style="width:${s}px;height:${s}px"></span>`;
+  return `<img class="slot" width="${s}" height="${s}" alt="${esc(sp[0])}" title="${esc(sp[0])}" loading="lazy" ` +
+    `src="https://ddragon.leagueoflegends.com/cdn/${VER}/img/spell/${encodeURIComponent(sp[1])}" onerror="this.style.visibility='hidden'">`;
+}
+function rnicon(id, s = 18, cls = '') {
+  const r = RUNES[id];
+  if (!r) return `<span class="slot round${cls}" style="width:${s}px;height:${s}px"></span>`;
+  return `<img class="slot round${cls}" width="${s}" height="${s}" alt="${esc(r[0])}" title="${esc(r[0])}" loading="lazy" ` +
+    `src="https://ddragon.leagueoflegends.com/cdn/img/${r[1]}" onerror="this.style.visibility='hidden'">`;
+}
+function itemSlot(id, s = 24) {
+  if (!id) return `<span class="slot sq" style="width:${s}px;height:${s}px"></span>`;
+  return `<img class="slot sq" width="${s}" height="${s}" loading="lazy" alt="" title="${esc(D.items[id] || '')}" ` +
+    `src="https://ddragon.leagueoflegends.com/cdn/${VER}/img/item/${id}.png" onerror="this.style.visibility='hidden'">`;
+}
+const TIER_KEY = ['iron', 'bronze', 'silver', 'gold', 'platinum', 'emerald', 'diamond', 'master', 'grandmaster', 'challenger'];
+const crest = (tier, s = 22) => `<img class="crest" width="${s}" height="${s}" alt="" loading="lazy" onerror="this.style.visibility='hidden'" ` +
+  `src="${'https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-mini-crests/'}${tier == null ? 'unranked' : TIER_KEY[tier]}.svg">`;
 const col = label => CFG.colors[label] || '#aeb6c6';
 const fn = label => `<b style="color:${col(label)}">${esc(label)}</b>`;
 /* A player's face: the champion portrait they (or their mastery) chose, ringed

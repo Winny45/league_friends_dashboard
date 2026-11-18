@@ -622,9 +622,10 @@ def get_champion_data():
     if cache_path.exists() and time.time() - cache_path.stat().st_mtime < 86400:
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            # "items" arrived with the analysis pages; a cache written before
-            # then is re-fetched rather than read as having no items at all.
-            if isinstance(cached, dict) and "byName" in cached and "items" in cached:
+            # "items" arrived with the analysis pages and "spells" with the
+            # game list; a cache written before either is re-fetched rather
+            # than read as having none.
+            if isinstance(cached, dict) and "byName" in cached and "items" in cached and "spells" in cached:
                 _CHAMP_MAP_CACHE = cached
                 return _CHAMP_MAP_CACHE
         except Exception:
@@ -645,6 +646,22 @@ def get_champion_data():
             timeout=15,
         ) as resp:
             item_data = json.loads(resp.read().decode("utf-8"))["data"]
+        with urllib.request.urlopen(
+            f"https://ddragon.leagueoflegends.com/cdn/{latest_version}/data/en_US/summoner.json",
+            timeout=10,
+        ) as resp:
+            spell_data = json.loads(resp.read().decode("utf-8"))["data"]
+        with urllib.request.urlopen(
+            f"https://ddragon.leagueoflegends.com/cdn/{latest_version}/data/en_US/runesReforged.json",
+            timeout=10,
+        ) as resp:
+            rune_data = json.loads(resp.read().decode("utf-8"))
+        runes = {}
+        for tree in rune_data:
+            runes[str(tree["id"])] = [tree["name"], tree["icon"]]
+            for slot in tree.get("slots") or []:
+                for r in slot.get("runes") or []:
+                    runes[str(r["id"])] = [r["name"], r["icon"]]
         result = {
             "version": latest_version,
             "byKey": {str(v["key"]): v["name"] for v in champ_data.values()},
@@ -663,6 +680,11 @@ def get_champion_data():
                                "tags": v.get("tags", [])}
                       for k, v in item_data.items()
                       if (v.get("maps") or {}).get("11")},
+            # Summoner spells and runes by the numeric id a match carries:
+            # [name, image]. The image is a file name for a spell and a path
+            # under /cdn/img/ for a rune.
+            "spells": {str(v["key"]): [v["name"], v["image"]["full"]] for v in spell_data.values()},
+            "runes": runes,
         }
         cache_path.write_text(json.dumps(result), encoding="utf-8")
         _CHAMP_MAP_CACHE = result
@@ -1336,6 +1358,8 @@ def main():
         "championIconMap": champ_data.get("byName", {}),
         "championBySlug": champ_data.get("bySlug", {}),
         "items": champ_data.get("items", {}),
+        "spells": champ_data.get("spells", {}),
+        "runes": champ_data.get("runes", {}),
     }
     # Refuse to publish a worse dataset than the one already on disk.
     #

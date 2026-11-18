@@ -50,7 +50,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STORE_VERSION = 1
-RECORD_VERSION = 2
+RECORD_VERSION = 3
 STORE_DIR = Path("games")
 SKIP_FILE = "_skip.json"
 RANK_FILE = "_ranks.json"
@@ -80,6 +80,17 @@ _SKILL_LETTER = {1: "Q", 2: "W", 3: "E", 4: "R"}
 def _q(v):
     """A map coordinate, quantised."""
     return max(0, min(255, int(v) // POS_SCALE))
+
+
+def _runes(perks):
+    """[keystone, primary tree, secondary tree], or zeros when Riot sent none."""
+    styles = (perks or {}).get("styles") or []
+    try:
+        primary = styles[0]
+        keystone = (primary.get("selections") or [{}])[0].get("perk", 0)
+        return [keystone, primary.get("style", 0), styles[1].get("style", 0) if len(styles) > 1 else 0]
+    except (IndexError, AttributeError):
+        return [0, 0, 0]
 
 
 def reduce_game(match, timeline):
@@ -216,6 +227,12 @@ def reduce_game(match, timeline):
             "crab": ch.get("scuttleCrabKills"),
             "multi": int(ch.get("multikills", 0) or 0),
             "penta": p.get("pentaKills", 0),
+            # Version 3: what a game list shows beside the champion. Items in
+            # their slots with the empties kept, so the order on screen is the
+            # order in the game, and the trinket last.
+            "it": [p.get(f"item{j}", 0) for j in range(7)],
+            "sp": [p.get("summoner1Id", 0), p.get("summoner2Id", 0)],
+            "ru": _runes(p.get("perks")),
             "g": gold[i],
             "xy": xy[i],
             "x10": xp_at.get(10, {}).get(i), "x15": xp_at.get(15, {}).get(i),

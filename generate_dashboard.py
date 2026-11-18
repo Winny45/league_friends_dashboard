@@ -14,6 +14,7 @@ import math
 import re
 import sys
 import urllib.parse
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1188,11 +1189,11 @@ def render_perf_bar(score):
 
 
 def score_href(label, champion):
-    """Where a top-champions score is taken apart: the champion's own page in
-    Data analysis, opened on that player's working."""
+    """Where a top-champions score is taken apart: the player's profile on
+    the new site, on its Champions tab, where each card shows its working."""
     if not _AN["href"]:
         return None
-    return f'{_AN["href"]}#tab=champions&champ={champion}&cwho={label}'
+    return f'{_AN["href"]}#p={urllib.parse.quote(label)}&pt=champions'
 
 
 def champion_link(label, champion, inner):
@@ -5730,7 +5731,11 @@ def highlight_cards(data, colours):
         why = re.sub(r'<b style="color:var\([^)]*\);">([^<]+)</b>',
                      lambda m: f'<b style="color:{colours.get(html.unescape(m.group(1)), "#f2f4f8")}">{m.group(1)}</b>',
                      render_award_why(c))
-        out.append({"icon": c["icon"], "title": c["title"], "text": c["text"], "who": c.get("who"), "why": why})
+        # Who is first, second and third, so a player's profile can show the
+        # awards they hold or are close to.
+        top = [r["label"] for r in (c.get("standings") or [])[:3]]
+        out.append({"icon": c["icon"], "title": c["title"], "text": c["text"], "who": c.get("who"), "why": why,
+                    "top": top})
     return out
 
 
@@ -7303,6 +7308,154 @@ def without_second_accounts(data):
     for key in ("rankHistory", "rankReadings"):
         if out.get(key):
             out[key] = [r for r in out[key] if r.get("label") not in seconds]
+    return out
+
+
+
+# ---------------------------------------------------------------------------
+# LP for the new site. Everything the rank cards, the game list and the two
+# rank charts need, per account, worked out from the same reconstructed LP
+# path the classic page draws its chart from.
+#
+# Measured and estimated LP. Readings are taken every refresh, so most gaps
+# between two readings hold one game, and that game's LP is simply the
+# difference. When a gap holds several, queue_timeline shares the measured
+# change out between them, which lands exactly on the next reading but is a
+# guess for each game inside it. A game alone in its gap is "measured"; the
+# rest are "estimated", and the page marks them so.
+#
+# Predictions follow the method in the rebuild handoff, compared with the old
+# one before replacing it: the old one averaged every game, estimated ones
+# included, and agreed with this to within a point or two for anyone with
+# enough measured games. Where the two differ it is on thin samples, which is
+# where the old one leant hardest on its 20 LP prior. So: the last fifteen
+# measured wins and the last fifteen measured losses, each game back counting
+# 0.9 of the one after it, and only when there are five of each. Below that
+# the old estimate is shown and labelled as one.
+# ---------------------------------------------------------------------------
+
+LP_QUEUES = (("solo", "Ranked Solo/Duo"), ("flex", "Ranked Flex"), ("fives", "Ranked 5s"))
+PRED_WINDOW, PRED_DECAY, PRED_MIN = 15, 0.9, 5
+MMR_RECENT = 50
+LP_GAME_LIMIT = 60      # a single game cannot move more than this; anything bigger is a gap with a dodge in it
+
+
+def _weighted(values):
+    """Most recent last; each step back counts PRED_DECAY of the one after."""
+    vals = values[-PRED_WINDOW:]
+    if not vals:
+        return None
+    weights = [PRED_DECAY ** (len(vals) - 1 - i) for i in range(len(vals))]
+    return sum(v * w for v, w in zip(vals, weights)) / sum(weights)
+
+
+def _tier_tuple(entry):
+    """[tier index, division 1-4, lp] for a ranked entry, or None."""
+    if not entry or entry.get("tier") not in TIER_ORDER:
+        return None
+    div = {"I": 1, "II": 2, "III": 3, "IV": 4}.get(entry.get("rank"), 1)
+    return [TIER_ORDER.index(entry["tier"]), div, int(entry.get("leaguePoints") or 0)]
+
+
+def _mmr_block(games):
+    """LP per measured win and loss, the gap between them, winrate and net LP
+    over a run of games: [(win, delta, measured)]."""
+    if not games:
+        return None
+    mw = [d for w, d, ok in games if ok and w]
+    ml = [-d for w, d, ok in games if ok and not w]
+    wins = sum(1 for w, _d, _ok in games if w)
+    out = {"games": len(games), "wr": round(100.0 * wins / len(games), 1),
+           "net": round(sum(d for _w, d, _ok in games)), "nw": len(mw), "nl": len(ml),
+           "win": round(sum(mw) / len(mw), 1) if mw else None,
+           "loss": round(sum(ml) / len(ml), 1) if ml else None}
+    if out["win"] is not None and out["loss"] is not None:
+        out["gap"] = round(out["win"] - out["loss"], 1)
+    return out
+
+
+def lp_export(data):
+    """{account label: {...}} for every account in data, second ones included.
+
+    Each queue holds:
+        seq    [[matchId, lp change, measured 1/0, predicted win, predicted loss]]
+               in the order the games were played; the predictions are what
+               the page would have said before that game
+        start  ladder position at the first reading, so seq can be drawn
+        pred   {win, loss, nw, nl, est}: est is true when the old estimate
+               stands in for want of five measured games each way
+        mmr    {season: {...}, recent: {...}}
+        daily  [[day, ladder position]] at the end of each day
+    """
+    friends = data.get("friends", [])
+    readings = data.get("rankReadings") or []
+    history = daily_history_from_readings(readings) if readings else data.get("rankHistory", [])
+    set_readings(readings)
+    mark_legacy_remakes(friends)
+    now_ms = data.get("generatedAtMs") or int(datetime.now().timestamp() * 1000)
+    week_ago = datetime.fromtimestamp(now_ms / 1000 - 7 * 86400).strftime("%Y-%m-%d")
+    out = {}
+    for f in friends:
+        label = f["label"]
+        matches = [m for m in f.get("seasonMatches", []) if not m.get("remake")]
+        acc = {"riot": f.get("riotId") or "", "level": f.get("summonerLevel"),
+               "ranked": {}, "peak": {}, "q": {}, "champLp": {}}
+        for key in ("solo", "flex", "fives"):
+            t = _tier_tuple((f.get("ranked") or {}).get(key))
+            if t:
+                e = f["ranked"][key]
+                acc["ranked"][key] = t + [int(e.get("wins") or 0), int(e.get("losses") or 0)]
+            p = _tier_tuple((f.get("peakRank") or {}).get(key))
+            if p:
+                acc["peak"][key] = p
+        champ_lp = defaultdict(lambda: [0, 0, 0])
+        for qi, (qk, qn) in enumerate(LP_QUEUES):
+            daily = sorted((h for h in history if h.get("label") == label and h.get("queue") == qk),
+                           key=lambda h: h["date"])
+            q = {"daily": [[h["date"], ladder_lp(h)] for h in daily]}
+            tl = queue_timeline(history, label, qk, matches, qn)
+            if tl:
+                seq, mw, ml, run = [], [], [], []
+                for k in range(1, len(tl)):
+                    p = tl[k]
+                    if not p["match"]:
+                        continue
+                    m, delta = p["match"], p["delta"] or 0
+                    win = bool(m.get("win"))
+                    alone = p["exact"] and tl[k - 1]["exact"]
+                    # A measured game has to look like one: a win that gained
+                    # and a loss that lost, inside what one game can move. A
+                    # loss of nothing at nothing is demotion protection, which
+                    # says nothing about what a loss costs.
+                    measured = alone and 0 < abs(delta) <= LP_GAME_LIMIT and (delta > 0) == win
+                    pw = _weighted(mw) if len(mw) >= PRED_MIN and len(ml) >= PRED_MIN else None
+                    pl = _weighted(ml) if len(mw) >= PRED_MIN and len(ml) >= PRED_MIN else None
+                    seq.append([m["matchId"], round(delta), 1 if measured else 0,
+                                round(pw) if pw is not None else None, round(-pl) if pl is not None else None])
+                    if measured:
+                        (mw if win else ml).append(abs(delta))
+                    run.append((win, delta, measured))
+                    champ_lp[m.get("champion")][qi] += delta
+                pred = {"nw": len(mw), "nl": len(ml), "est": False}
+                if len(mw) >= PRED_MIN and len(ml) >= PRED_MIN:
+                    pred["win"], pred["loss"] = round(_weighted(mw), 1), round(-_weighted(ml), 1)
+                else:
+                    old = lp_rate(tl)
+                    if old:
+                        pred.update({"win": old["gain"], "loss": -old["drop"], "est": True})
+                q.update({"seq": seq, "start": tl[0]["score"], "pred": pred,
+                          "mmr": {"season": _mmr_block(run), "recent": _mmr_block(run[-MMR_RECENT:])}})
+            if len(q) > 1 or q["daily"]:
+                acc["q"][qk] = q
+        solo_daily = (acc["q"].get("solo") or {}).get("daily") or []
+        if solo_daily:
+            before = [v for d, v in solo_daily if d <= week_ago]
+            acc["lp7"] = solo_daily[-1][1] - (before[-1] if before else solo_daily[0][1])
+        solo_games = sorted((m for m in matches if m.get("queue") == "Ranked Solo/Duo"),
+                            key=lambda m: m.get("gameStartMs") or 0)
+        acc["form"] = [1 if m.get("win") else 0 for m in solo_games[-10:]]
+        acc["champLp"] = {c: [round(v) for v in vals] for c, vals in champ_lp.items() if c and any(vals)}
+        out[label] = acc
     return out
 
 
@@ -11203,35 +11356,27 @@ def main():
     data.setdefault("siteUrl", load_site_url())
     report_and_filter_queues(data)
 
-    # Two builds of the same page: everybody, and primary accounts only. A
-    # second copy rather than something the browser switches off, because
-    # every number on the page is computed here and recomputing them in
-    # JavaScript would be the same work done twice in two languages. The
-    # switch in the header is a link from one to the other.
-    main_only = without_second_accounts(data)
-    alt_path = out_path.with_name(
-        "main.html" if out_path.stem == "index" else out_path.stem + "-main" + out_path.suffix)
-
-    # The analysis pages, built first because the main page borrows a few of
-    # their numbers and links into them.
+    # The site is the pages analysis_page.py writes:
     #
-    #   analysis.html         the default: each person's second account folded
-    #                         into their first, so nobody is two half-players
-    #   analysis-split.html   every account on its own
-    #   analysis-main.html    where "second accounts hidden" used to live; it
-    #                         now only sends old links on to analysis.html
+    #   index.html     every person, second accounts folded into the first
+    #   split.html     every account on its own
+    #   classic.html   the old single page, kept for its full LP chart, its
+    #                  explanations and the whole patch-note history
+    #   g/  c/         one file per day of games and one per champion, which
+    #                  the pages fetch when a game or a champion is opened
     #
-    # The split build is also what both copies of this page borrow from. A
-    # leaderboard has to stay one row an account, because an account is what
-    # has a rank, so its numbers are per account too.
-    stem = "analysis" if out_path.stem == "index" else out_path.stem + "-analysis"
-    an_path = out_path.with_name(stem + ".html")
-    an_split_path = out_path.with_name(stem + "-split.html")
-    an_old_path = out_path.with_name(stem + "-main.html")
-    analysis = analysis_main = None
+    # And addresses that used to be pages, which now send their visitor on:
+    # main.html, analysis.html, analysis-split.html and analysis-main.html.
+    #
+    # If the new pages cannot be built, the classic page is written to
+    # index.html instead, so a fault in the newer code leaves the site on the
+    # old layout rather than blank.
+    named = (lambda s: out_path.with_name(s + out_path.suffix)) if out_path.stem == "index" else \
+        (lambda s: out_path.with_name(out_path.stem + "-" + s + out_path.suffix))
+    split_path, classic_path = named("split"), named("classic")
+    site = analysis = None
     try:
         import analysis_page
-        from analysis import Analysis
         store_games = analysis_page.load_store_games(data_path.parent / "games")
         if store_games:
             mark_legacy_remakes(data.get("friends", []))
@@ -11240,54 +11385,54 @@ def main():
             colours = {f["label"]: FRIEND_PALETTE[min(i, len(FRIEND_PALETTE) - 1)]["dark"]
                        for i, f in enumerate(data.get("friends", []))}
             set_icon_context(data.get("ddragonVersion"), data.get("championIconMap", {}))
+            # Ranks, LP and predictions per login, for both pages. A copy, so
+            # the remake marking and readings set-up inside cannot reach the
+            # classic page's own build further down.
+            accounts = lp_export(json.loads(json.dumps(data)))
+            notes = load_patch_notes()
             merged = analysis_page.merge_second_accounts(data)
             analysis = analysis_page.build(
-                data, store_games, colours, an_split_path if merged else an_path, out_path.name,
-                an_path.name if merged else None, "Merge second accounts",
-                avatars=avatar_config(data), highlights=highlight_cards(data, colours))
-            print(f"Wrote {an_split_path if merged else an_path} ({len(analysis.games)} stored games)")
+                data, store_games, colours, split_path if merged else out_path, classic_path.name,
+                out_path.name if merged else None, "Merge second accounts",
+                avatars=avatar_config(data), highlights=highlight_cards(data, colours),
+                accounts=accounts, notes=notes)
+            print(f"Wrote {split_path if merged else out_path} ({len(analysis.games)} stored games)")
             if merged:
                 analysis_page.build(
-                    merged, store_games, colours, an_path, out_path.name,
-                    an_split_path.name, "Show second accounts",
-                    avatars=avatar_config(merged), highlights=highlight_cards(merged, colours))
-                print(f"Wrote {an_path} (second accounts merged)")
-            an_old_path.write_text(analysis_page.redirect_page(an_path.name), encoding="utf-8")
-            if main_only:
-                # Numbers only, no page: the copy of this page that hides
-                # second accounts must not name them in a "this week" table.
-                mark_legacy_remakes(main_only.get("friends", []))
-                analysis_main = Analysis(main_only, store_games)
-            # Game files name a friend by account. The merged page maps each
-            # account to its owner as it reads them, so one set serves both.
+                    merged, store_games, colours, out_path, classic_path.name,
+                    split_path.name, "Show second accounts",
+                    avatars=avatar_config(merged), highlights=highlight_cards(merged, colours),
+                    accounts=accounts, notes=notes)
+                print(f"Wrote {out_path} (second accounts merged)")
+            # Game and champion files name a friend by account. The merged page
+            # maps each account to its owner as it reads them, so one set
+            # serves both pages.
             days, count = analysis_page.write_game_files(analysis, out_path.parent / "g")
             print(f"Wrote {count} games into {days} day files under {out_path.parent / 'g'}")
+            champs = analysis_page.write_champion_files(analysis, out_path.parent / "c")
+            print(f"Wrote {champs} champion files under {out_path.parent / 'c'}")
+            site = out_path
         else:
-            print("No stored games yet, so no analysis pages this build.")
+            print("No stored games yet, so the classic page is the site this build.")
     except Exception as e:
-        # The main page has run for months without any of this and must not
-        # stop publishing because the newer half of the site tripped.
         import traceback
         traceback.print_exc()
-        print(f"  ! analysis pages not built ({e}); the main page is unaffected")
-        analysis = analysis_main = None
+        print(f"  ! the site's pages were not built ({e}); the classic page stands in for them")
+        site = analysis = None
 
-    out_path.write_text(
-        build_html(data,
-                   alt_href=alt_path.name if main_only else None,
-                   alt_label="Hide second accounts",
-                   analysis=analysis, analysis_href=an_path.name),
+    classic_target = classic_path if site else out_path
+    classic_target.write_text(
+        build_html(data, analysis=analysis, analysis_href=out_path.name if site else None),
         encoding="utf-8")
-    print(f"Wrote {out_path}")
-
-    if main_only:
-        alt_path.write_text(
-            build_html(main_only, alt_href=out_path.name,
-                       alt_label="Show second accounts",
-                       analysis=analysis_main, analysis_href=an_path.name),
-            encoding="utf-8")
-        hidden = ", ".join(sorted(second_account_labels(data)))
-        print(f"Wrote {alt_path} (without {hidden})")
+    print(f"Wrote {classic_target}" + ("" if site else " (as the site, standing in for the new pages)"))
+    if site:
+        import analysis_page
+        for old, new in (("main", out_path.name), ("analysis", out_path.name),
+                         ("analysis-split", split_path.name), ("analysis-main", out_path.name)):
+            path = out_path.with_name(old + out_path.suffix) if out_path.stem == "index" else named(old)
+            path.write_text(analysis_page.redirect_page(new), encoding="utf-8")
+        if not split_path.exists():
+            split_path.write_text(analysis_page.redirect_page(out_path.name), encoding="utf-8")
 
     friends_sorted = sorted(data.get("friends", []),
                             key=lambda f: tier_score(f["ranked"].get("solo")), reverse=True)

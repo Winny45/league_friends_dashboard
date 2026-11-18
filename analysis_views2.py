@@ -190,6 +190,23 @@ class GroupViews:
                 g, w = window([d], i)
                 if g >= CALLOUT_GAMES:
                     candidates.append((w / g, g, f"{DAYS[d]} {span}"))
+        # Broader blocks as well. One player rarely has thirty games in any
+        # three hours of one day, but does across weekday evenings, so these
+        # are what give a single profile a best and a worst at all.
+        day_sets = (("Weekday", range(5)), ("Weekend", (5, 6)), ("Any day", range(7)))
+        hour_sets = (("mornings", "5am–12pm", range(5, 12)), ("afternoons", "12–6pm", range(12, 18)),
+                     ("evenings", "6–9pm", range(18, 21)), ("late evenings", "9pm–12am", range(21, 24)))
+        for dname, ds in day_sets:
+            for hname, span, hs in hour_sets:
+                g = sum(cells[d][h][0] for d in ds for h in hs)
+                w = sum(cells[d][h][1] for d in ds for h in hs)
+                if g >= CALLOUT_GAMES:
+                    label = f"{dname} {hname}" if dname != "Any day" else hname.capitalize()
+                    candidates.append((w / g, g, f"{label} {span}"))
+        g = sum(cells[d][h][0] for d in range(7) for h in range(0, DAY_STARTS))
+        w = sum(cells[d][h][1] for d in range(7) for h in range(0, DAY_STARTS))
+        if g >= CALLOUT_GAMES:
+            candidates.append((w / g, g, "After midnight"))
         tiles = {}
         if len(candidates) >= 2:
             best, worst = max(candidates), min(candidates)

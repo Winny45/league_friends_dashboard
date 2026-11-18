@@ -78,10 +78,12 @@ function sessionModal(me) {
     rows +
     (note ? `<p class="muted small" style="margin-top:12px">${note}</p>` : ''));
 }
-function tabTime() {
+/* `fixed` is a player whose profile this is drawn on: their games only, and
+   no picker for whose games. */
+function tabTime(fixed) {
   const T = D.time, names = FR.filter(l => T.views[l] && T.views[l].games);
-  const me = T.views[S.who] && S.who !== 'All' ? S.who : 'All', V = T.views[me], metric = ['wr', 'games', 'gold'].includes(S.metric) ? S.metric : 'wr';
-  let out = `<div class="pillrow">${friendPills('who', me, names, true)}<div class="pills">` +
+  const me = fixed && T.views[fixed] ? fixed : T.views[S.who] && S.who !== 'All' ? S.who : 'All', V = T.views[me], metric = ['wr', 'games', 'gold'].includes(S.metric) ? S.metric : 'wr';
+  let out = `<div class="pillrow">${fixed ? `<span class="muted">${esc(fixed)}'s games only, UK time.</span>` : friendPills('who', me, names, true)}<div class="pills">` +
     [['wr', 'Winrate'], ['games', 'Games played'], ['gold', 'Gold @15']].map(m => pill(m[1], metric === m[0], set({ metric: m[0] }), ' sm')).join('') + '</div></div>';
   const t = V.tiles;
   out += '<div class="tiles">' +
@@ -151,15 +153,16 @@ function tabTime() {
 }
 
 /* ---- Duos & stacks -------------------------------------------------------------- */
-function duoPartners() {
+function duoPartners(fixed) {
   const PT = D.duos.partners, names = FR.filter(n => PT[n]);
+  if (fixed && !PT[fixed]) return empty(`${esc(fixed)} has no champion with fifteen stored games yet.`);
   if (!names.length) return empty('Nobody has fifteen stored games on one champion yet.');
-  const me = names.includes(S.dwho) ? S.dwho : names[0], list = PT[me];
+  const me = fixed || (names.includes(S.dwho) ? S.dwho : names[0]), list = PT[me];
   const E = list.find(e => e.champ + '|' + e.role === S.dchamp) || list[0];
   const proles = Object.keys(E.with), prole = proles.includes(S.drole) ? S.drole : (proles.includes('UTILITY') ? 'UTILITY' : proles.includes('BOTTOM') ? 'BOTTOM' : proles[0]);
   const X = E.with[prole], onlyRandoms = S.dshow === 'randoms', lane = X.partners.some(p => p[5] != null);
   const rows = X.partners.filter(p => !onlyRandoms || !p[1]);
-  let out = `<section class="card" style="margin-bottom:20px"><div class="filters"><span class="pill-label">Player</span>${names.map(n => pill(av(n) + esc(n), n === me, set({ dwho: n, dchamp: '', drole: '' }), ' sm')).join('')}</div>` +
+  let out = `<section class="card" style="margin-bottom:20px">${fixed ? '' : `<div class="filters"><span class="pill-label">Player</span>${names.map(n => pill(av(n) + esc(n), n === me, set({ dwho: n, dchamp: '', drole: '' }), ' sm')).join('')}</div>`}` +
     `<div class="filters"><span class="pill-label">Champion</span>${list.map(e => pill(`${cicon(e.champ, 18)}${esc(C(e.champ).n)} · ${RN[e.role]} · ${e.games}g`, e === E, set({ dchamp: e.champ + '|' + e.role, drole: '' }), ' sm')).join('')}</div>` +
     `<div class="filters"><span class="pill-label">Partner role</span>${proles.map(r => pill(ricon(r) + RN[r], r === prole, set({ drole: r }), ' sm')).join('')}` +
     `<span class="pill-label" style="margin-left:10px">Show</span>${pill('Friends + randoms', !onlyRandoms, set({ dshow: '' }), ' sm')}${pill('Randoms only', onlyRandoms, set({ dshow: 'randoms' }), ' sm')}</div></section>`;

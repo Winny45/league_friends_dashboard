@@ -3,7 +3,7 @@ function tabRecords() {
   const R = D.records;
   /* The season highlights are the main dashboard's own cards, built by the
      same code that builds them there, so the two pages cannot disagree. */
-  const season = R.season.length ? `<section class="card" style="margin-bottom:20px"><h2>Season highlights</h2><p class="hint">The same awards as the Basic page, worked out the same way.</p>` +
+  const season = R.season.length ? `<section class="card" style="margin-bottom:20px"><h2>Season highlights</h2><p class="hint">Worked out the same way as on the classic page. "How this was worked out" gives everyone's numbers.</p>` +
     `<div class="awards">${R.season.map(c => `<div class="award" style="--stripe:${col(c.who)}"><div class="award-icon">${c.icon}</div><div class="award-body">` +
       `<div class="award-title">${esc(c.title)}</div><div class="award-text">${c.text}</div>${c.why || ''}</div></div>`).join('')}</div></section>` : '';
   const how = rows => !rows || !rows.length ? '' : `<details class="award-why"><summary>How this was worked out</summary><table class="why-table"><thead><tr><th class="num">#</th><th>Player</th>` +
@@ -13,7 +13,13 @@ function tabRecords() {
       `<div class="award-title">${esc(c.title)}</div><div class="award-text">${c.text}</div>` +
       (c.game ? `<button type="button" class="linkbtn" ${set({ tab: 'game', game: c.game[0], team: c.game[1] })}>Open this game →</button>` : '') + how(c.how) + '</div></div>').join('')}</div></section>`
     : empty('No game records yet.');
-  return season + game;
+  const bests = D.bests.length ? `<section class="card" style="margin-top:20px"><h2>Single-game bests</h2><p class="hint">The best single game each, with the top three.</p>` +
+    `<div class="awards">${D.bests.map(b => { const t = b.top[0];
+      return `<div class="award" style="--stripe:${col(t[0])}"><div class="award-icon">${b.icon}</div><div class="award-body"><div class="award-title">${esc(b.title)}</div>` +
+        `<div class="award-text">${esc(b.desc)}: <b>${Math.round(t[1]).toLocaleString('en-GB')}</b> by ${fn(t[0])} on ${esc(C(t[4]).n)}, ${DS.format(new Date(t[5]))}.</div>` +
+        `<button type="button" class="linkbtn" ${set({ tab: 'game', game: t[2], team: t[3], p: '' })}>Open this game →</button>` +
+        `<div class="muted small" style="margin-top:6px">${b.top.slice(1).map((x, i) => `#${i + 2} ${fn(x[0])} ${Math.round(x[1]).toLocaleString('en-GB')}`).join(' · ')}</div></div></div>`; }).join('')}</div></section>` : '';
+  return season + game + bests;
 }
 
 /* ---- Check -----------------------------------------------------------------------

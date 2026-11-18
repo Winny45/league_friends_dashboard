@@ -1,5 +1,47 @@
 [
   {
+    "date": "2026-11-18",
+    "title": "A new layout: one site, a page for each of you, and a page for each champion",
+    "items": [
+      {
+        "type": "changed",
+        "text": "The Basic and Data halves are now one site. Across the top: Overview, Champions, Roles & classes, Time patterns, Duos & stacks, Game flow and Records. The old one-page layout is still there as Classic view, linked at the bottom of every page, and old links send you to the right place."
+      },
+      {
+        "type": "added",
+        "text": "Every player has a profile: rank card, predicted LP for the next win and loss, and tabs for Overview, Champions, Roles & classes, Roaming, Time patterns, Duos & stacks, Game flow and Records. Open one from the search box in the header or by clicking a name."
+      },
+      {
+        "type": "added",
+        "text": "A profile's Overview lists every game as a bar: champion, level, spells, runes, KDA, kill share, CS, vision, lobby rank, score, items and the LP it moved. Open one for both scoreboards, laning, objectives and builds, or go on to the full game breakdown."
+      },
+      {
+        "type": "added",
+        "text": "Ranked panels on each profile: rank change game by game for each queue, daily rank, LP gained on each champion, and an MMR panel comparing LP per win and per loss over the season and the last 50 games. MMR is shown as above, around or below your rank with the gap, and is an estimate."
+      },
+      {
+        "type": "changed",
+        "text": "Predicted LP now uses only games whose LP change was measured on its own, leaves out remakes, weights the last 15 wins and 15 losses so recent ones count most, and says 'not enough games' below five. Where there are too few it falls back to the old estimate."
+      },
+      {
+        "type": "added",
+        "text": "Champions has an index grouped by role or by class, with rank, patch and group-or-everyone filters, and every champion has a page: overall record, winrate by patch, counters (30 games or more), averages by rank, and how each of you does on it."
+      },
+      {
+        "type": "added",
+        "text": "The Overview front page shows everyone's ranked accounts, rank charts, the last 24 hours, the group's top 10 champions and a This week panel."
+      },
+      {
+        "type": "added",
+        "text": "Records gains single-game bests, top three each: most healing and shielding on allies, highest vision score, most kills, most damage to champions and highest game score."
+      },
+      {
+        "type": "changed",
+        "text": "Games are being fetched again for item, spell and rune detail. Game bars show them as each game is reached."
+      }
+    ]
+  },
+  {
     "date": "2026-11-15",
     "title": "The checklist: game scores, ranks, jungle pathing, records, and a drawn map",
     "items": [

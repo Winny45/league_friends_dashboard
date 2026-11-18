@@ -84,11 +84,13 @@ def _notices(meta):
     return "".join(f'<div class="notice">{text}</div>' for text in out)
 
 
-def render(payload, colours, basic_href, alt_href=None, alt_label="", avatars=None):
+def render(payload, colours, basic_href, alt_href=None, alt_label="", avatars=None, notes=None):
     meta = payload["meta"]
     css = (ASSETS / "analysis.css").read_text(encoding="utf-8")
     js = "\n".join(p.read_text(encoding="utf-8") for p in sorted(ASSETS.glob("a*.js")))
-    config = {"colors": colours, "basicHref": basic_href}
+    # The fifteen newest patch notes travel with the page; the classic page
+    # keeps the full history.
+    config = {"colors": colours, "basicHref": basic_href, "notes": (notes or [])[:15]}
     stored = meta.get("storedGames", 0)
     alt = (f'<a class="hbtn" href="{escape(alt_href)}" title="{escape(alt_label)}">⇄ {escape(alt_label)}</a>'
            if alt_href else "")
@@ -97,7 +99,7 @@ def render(payload, colours, basic_href, alt_href=None, alt_label="", avatars=No
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>League Friends Dashboard · Data analysis</title>
+<title>League Friends Dashboard</title>
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0a0c12">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -115,12 +117,10 @@ def render(payload, colours, basic_href, alt_href=None, alt_label="", avatars=No
     <div class="brand">
       <div class="brand-mark" aria-hidden="true">{_BRAND_MARK}</div>
       <h1>League Friends Dashboard</h1>
-      <nav class="mode" aria-label="Dashboard mode">
-        <a href="{escape(basic_href)}">Basic</a>
-        <a class="on" href="#" aria-current="page">Data analysis</a>
-      </nav>
+      <div class="gsearch"><input class="search" type="search" autocomplete="off" placeholder="Search a friend or champion…"
+        aria-label="Search a friend or champion" data-gsearch><div class="gs-pop"></div></div>
     </div>
-    <div class="header-actions">{alt}</div>
+    <div class="header-actions"><button type="button" class="hbtn nbtn" data-notes title="What's new">✨ What's new</button>{alt}</div>
   </header>
   <div class="status-strip">
     <span>{escape(str(meta.get("platform") or ""))}</span>
@@ -135,6 +135,7 @@ def render(payload, colours, basic_href, alt_href=None, alt_label="", avatars=No
     <div id="view"></div>
   </main>
   <footer>
+    <a href="{escape(basic_href)}">Classic view</a> keeps the old one-page layout, the full LP chart and every patch note.<br>
     Data via the Riot Games API. Not endorsed by Riot Games. Champion classes and tags are from the
     <a href="https://wiki.leagueoflegends.com/en-us/" rel="noopener">League of Legends Wiki</a>. Objective and role
     icons are Riot&#39;s, served by Community Dragon. "Lobby" means everyone else in the group&#39;s own games,
@@ -178,6 +179,18 @@ def write_game_files(analysis, out_dir):
     return len(days), sum(len(g) for g in days.values())
 
 
+def write_champion_files(analysis, out_dir):
+    """deploy/c/Zed.json for every champion seen in a role: what its page
+    shows, fetched when it is opened so the page itself stays small."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = analysis.champion_files()
+    for champ, doc in files.items():
+        (out_dir / f"{champ}.json").write_text(json.dumps(doc, separators=(",", ":"), ensure_ascii=False),
+                                               encoding="utf-8")
+    return len(files)
+
+
 def load_store_games(root="games"):
     """Every stored game, or an empty list when the store is not there yet."""
     try:
@@ -216,6 +229,9 @@ def merge_second_accounts(data):
             continue
         person = dict(f)
         person["puuids"] = [a.get("puuid") for a in [f] + mine if a.get("puuid")]
+        # Which login each of those puuids is, in the same order, so a game can
+        # still be traced to the account whose LP it moved.
+        person["puuidLabels"] = [a["label"] for a in [f] + mine if a.get("puuid")]
         person["accounts"] = [a["label"] for a in [f] + mine]
         for key in ("seasonMatches", "recentMatches"):
             rows = [m for a in [f] + mine for m in a.get(key, [])]
@@ -228,10 +244,10 @@ def merge_second_accounts(data):
 
 
 def build(data, store_games, colours, out_path, basic_href, alt_href=None, alt_label="", avatars=None,
-          highlights=None):
-    """Build one analysis page. Returns the Analysis so the caller can reuse
-    it for the main page's borrowed numbers and for the game files."""
-    analysis = Analysis(data, store_games, highlights=highlights)
+          highlights=None, accounts=None, notes=None):
+    """Build one page of the site. Returns the Analysis so the caller can
+    reuse it for the classic page's borrowed numbers and for the game files."""
+    analysis = Analysis(data, store_games, highlights=highlights, accounts=accounts)
     Path(out_path).write_text(
-        render(analysis.payload(), colours, basic_href, alt_href, alt_label, avatars), encoding="utf-8")
+        render(analysis.payload(), colours, basic_href, alt_href, alt_label, avatars, notes), encoding="utf-8")
     return analysis

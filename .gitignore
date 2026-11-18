@@ -78,3 +78,10 @@ deploy/g/
 
 # Local preview config for the desktop app; nothing the build reads.
 .claude/
+# The site's pages and the per-champion files they load.
+split.html
+classic.html
+c/
+deploy/split.html
+deploy/classic.html
+deploy/c/
