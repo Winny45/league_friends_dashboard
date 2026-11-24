@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-11-24",
+    "title": "A tab icon",
+    "items": [
+      {
+        "type": "added",
+        "text": "The site now has its own icon in the browser tab: the L from the header, on its blue-to-teal tile."
+      }
+    ]
+  },
+  {
     "date": "2026-11-18",
     "title": "A new layout: one site, a page for each of you, and a page for each champion",
     "items": [

@@ -15,6 +15,7 @@ import json
 import re
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 
 from analysis import Analysis
 
@@ -22,6 +23,15 @@ ASSETS = Path(__file__).parent / "analysis_assets"
 
 _BRAND_MARK = ('<svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true" focusable="false">'
                '<path d="M22 13 H35 V39 H50 V46 L44 52 H22 Z" fill="#fff"/></svg>')
+
+# The tab icon: the header's mark on the header's gradient tile. The mark is
+# drawn larger than in the header and centred, so it still reads at 16px.
+_FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+            '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+            '<stop offset="0" stop-color="#4c8dff"/><stop offset="1" stop-color="#17d3c1"/>'
+            '</linearGradient></defs><rect width="64" height="64" rx="18" fill="url(#g)"/>'
+            '<path transform="translate(-.4 2.75) scale(.9)" d="M22 13 H35 V39 H50 V46 L44 52 H22 Z" fill="#fff"/></svg>')
+_FAVICON_URI = "data:image/svg+xml," + quote(_FAVICON, safe="")
 
 # How each shape of the map drawing is coloured. Lanes, river and jungle take
 # their colour from the stylesheet so one drawing can be shown two ways; the
@@ -105,6 +115,7 @@ def render(payload, colours, basic_href, alt_href=None, alt_label="", avatars=No
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="{_FAVICON_URI}">
 <link rel="apple-touch-icon" href="icon-180.png">
 <style>
 {css}
