@@ -65,7 +65,7 @@ function tabGame() {
     strip += `<button type="button" class="gcard ${g[5] ? 'w' : 'l'}${g === cur ? ' on' : ''}" ${set({ game: g[0], team: g[4] })}>` +
       `<div class="who">${cicon(f[1], 26)}<span>${esc(C(f[1]).n)}<br><span style="color:${col(f[0])}">${esc(f[0])}${g[6].length > 1 ? ' +' + (g[6].length - 1) : ''}</span></span></div>` +
       `<div class="meta"><span class="tag ${g[5] ? 'win' : 'loss'}">${g[5] ? 'WIN' : 'LOSS'}</span><b>${f[3]}/${f[4]}/${f[5]}</b></div>` +
-      `<div class="meta"><span>${DS.format(new Date(g[1]))}</span><span>${f[7] == null ? '' : 'score ' + Math.round(f[7])}</span></div></button>`;
+      `<div class="meta"><span>${DS.format(new Date(g[1]))}</span><span>${f[7] == null ? '' : 'score ' + scoreNum(f[7], false)}</span></div></button>`;
   });
   return `<div class="pillrow">${friendPills('gwho', me, names, true)}<span class="muted small">${list.length} stored games · newest first</span></div>` +
     `<div class="strip">${strip}</div><div id="game-body" data-id="${esc(cur[0])}" data-team="${cur[4]}"><div class="card"><div class="empty">Loading this game…</div></div></div>`;
@@ -134,7 +134,7 @@ function gameBody(G, entry) {
   const k = v => v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v;
   const scores = {};
   P.forEach((p, i) => { scores[i + 1] = scoreOf(p, entry); });
-  const sc = p => { const s = scores[p.pid]; return !s || s.score == null ? '<span class="muted">-</span>' : `<b style="color:rgb(${blend([255, 122, 122], [110, 231, 160], Math.max(0, Math.min(1, (s.score - 25) / 50)))})">${Math.round(s.score)}</b>`; };
+  const sc = p => { const s = scores[p.pid]; return !s || s.score == null ? '<span class="muted">-</span>' : scoreNum(s.score); };
   const board = (rows, blue, mineSide) => `<div><div class="side-title ${blue ? 'blue' : 'red'}"><span>${blue ? 'Blue side' : 'Red side'}${mineSide ? ' · your team' : ''}</span></div>` +
     tableWrap('<thead><tr><th>Player</th><th>Champion</th><th>Rank</th><th class="num">Score</th><th class="num">K/D/A</th><th class="num">CS</th><th class="num">Gold</th><th class="num">Dmg</th><th class="num">Vis</th></tr></thead><tbody>' +
     rows.map(p => `<tr class="${isFriend(p) ? 'me' : ''}"><td><span class="cell-champ">${ricon(p.r)}${isFriend(p) ? who(p.f) : '<span class="muted">' + esc(p.n) + '</span>'}</span></td><td>${champ(p.c)}</td>` +

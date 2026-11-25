@@ -35,11 +35,12 @@ const qShort = q => ({ 420: 'Ranked Solo', 440: 'Ranked Flex', 710: 'Ranked 5s' 
 function ring(v, s = 46) {
   if (v == null) return `<span class="ring muted" style="width:${s}px;height:${s}px">-</span>`;
   const r = s / 2 - 3, c = 2 * Math.PI * r, k = Math.max(0, Math.min(1, v / 100));
-  const colr = `rgb(${blend([255, 122, 122], [110, 231, 160], Math.max(0, Math.min(1, (v - 25) / 50)))})`;
-  return `<svg class="ring" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" role="img" aria-label="Score ${Math.round(v)}">` +
+  const colr = scoreRGB(Math.round(v)), hot = Math.round(v) >= HOT;
+  const svg = `<svg class="ring" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" role="img" aria-label="Score ${Math.round(v)}">` +
     `<circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="#2a3040" stroke-width="3"/>` +
     `<circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="${colr}" stroke-width="3" stroke-dasharray="${(c * k).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 ${s / 2} ${s / 2})" stroke-linecap="round"/>` +
-    `<text x="${s / 2}" y="${s / 2 + 5}" text-anchor="middle" style="fill:#f2f4f8;font-size:${s > 40 ? 15 : 12}px;font-weight:800">${Math.round(v)}</text></svg>`;
+    `<text x="${s / 2}" y="${s / 2 + 5}" text-anchor="middle" style="fill:${hot ? colr : '#f2f4f8'};font-size:${s > 40 ? 15 : 12}px;font-weight:800">${Math.round(v)}</text></svg>`;
+  return hot ? `<span class="hotring" title="90+: a game better than nine in ten for that role and rank">${svg}<i></i><i></i><i></i></span>` : svg;
 }
 
 /* ---- the header ---------------------------------------------------------------- */
@@ -263,7 +264,7 @@ function gameExpand(label, g, f, G) {
     .map(t => pill(t[1], xt === t[0], ui({ pxt: t[0] }), ' sm')).join('')}</div>` +
     `<div class="gx-nums small"><span>Gold @15 <b class="${gcls(f[6])}">${gold(f[6])}</b></span><span>Bot lane @15 <b class="${gcls(botLead)}">${gold(botLead)}</b></span>` +
     `<span>Objectives <b>${objOurs} / ${objTheirs}</b></span><span>Win chance @15 <b>${chance == null ? '-' : Math.round(100 * chance) + '%'}</b></span></div></div>${body}` +
-    `<div class="gx-foot"><span class="muted small">${f[7] != null ? `Game score ${Math.round(f[7])}` + (w ? ` · rank-weighted ${Math.round(Math.min(100, f[7] * w))}` : '') : 'No game score for this role'}` +
+    `<div class="gx-foot"><span class="muted small">${f[7] != null ? `Game score ${scoreNum(f[7])}` + (w ? ` · rank-weighted ${Math.round(Math.min(100, f[7] * w))}` : '') : 'No game score for this role'}` +
     `${avgOn[0] ? ` · ${esc(label)}'s ${esc(C(f[1]).n)} over ${avgOn[0]} games` : ''}</span>` +
     `<button type="button" class="pill sm on" ${set({ tab: 'game', game: g[0], team: g[4], p: '' })}>Open full game breakdown →</button></div></div>`;
 }

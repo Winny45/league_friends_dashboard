@@ -1,5 +1,47 @@
 [
   {
+    "date": "2026-11-25",
+    "title": "A draft helper, champions to learn, and a pick-versus-win chart",
+    "items": [
+      {
+        "type": "added",
+        "text": "Draft: a new tab for champion select. Put yourselves in pick order (it can suggest one: fewest strong champions picks first, the deepest pool last), fill in the enemy as they lock in, and get suggestions for each pick from your own games on the champion, how it has done beside your locked picks and against theirs, and the lane matchup."
+      },
+      {
+        "type": "added",
+        "text": "Each profile's Roles & classes tab now suggests champions to learn in that role: strong in lobbies near your rank, sharing a class with what you already play, and rarely picked or banned, so you can count on getting them."
+      },
+      {
+        "type": "added",
+        "text": "Champions has a Pick vs win view: every champion placed by winrate against pick rate, ringed by ban rate, with hidden gems, underachievers and the most banned listed underneath."
+      },
+      {
+        "type": "added",
+        "text": "Bans are now recorded with each game. Older games are being fetched again for theirs, so ban rates fill in over the next day or so."
+      },
+      {
+        "type": "changed",
+        "text": "Rank change by game now plots your rank after each game on the same scale as Daily rank, and both charts have each tier's colour behind them again."
+      },
+      {
+        "type": "changed",
+        "text": "The last-ten-games strip on each account card now reads newest first, left to right."
+      },
+      {
+        "type": "added",
+        "text": "A game score of 90 or more shows in blue with small flames: better than nine in ten games for that role and rank."
+      },
+      {
+        "type": "improved",
+        "text": "The champion lists can be sorted by games or winrate as well as A to Z: use the Sort buttons or click a column heading."
+      },
+      {
+        "type": "fixed",
+        "text": "A game score could differ by a fraction of a point between the site and the page that explains it when a number fell exactly on a fraction like one third. Both now round the same way."
+      }
+    ]
+  },
+  {
     "date": "2026-11-24",
     "title": "A tab icon",
     "items": [

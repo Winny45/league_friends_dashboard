@@ -1,7 +1,7 @@
 /* ---- wiring ----------------------------------------------------------------------
    Last of the scripts on purpose: everything above only defines things, and
    this is where the page is first drawn. */
-const VIEWS = { home: tabHome, champions: tabChampionsSite, roles: tabRoles, time: () => tabTime(), duos: tabDuos, flow: tabFlow, records: tabRecords, game: tabGame };
+const VIEWS = { home: tabHome, champions: tabChampionsSite, draft: tabDraft, roles: tabRoles, time: () => tabTime(), duos: tabDuos, flow: tabFlow, records: tabRecords, game: tabGame };
 let LAST_P = null;
 function render() {
   const inProfile = !!S.p;
@@ -73,6 +73,8 @@ document.addEventListener('click', e => {
   }
   const sess = e.target.closest('[data-session]');
   if (sess) return sessionModal(sess.dataset.session);
+  const da = e.target.closest('[data-dra]');
+  if (da) return draftAction(JSON.parse(da.dataset.dra));
   const wk = e.target.closest('[data-working]');
   if (wk) return showWorking(S.p, wk.dataset.working);
   const a = e.target.closest('[data-set]');
@@ -110,6 +112,8 @@ document.addEventListener('change', e => {
   const pf = e.target.closest('[data-pf]');
   if (pf) return setState({ [pf.dataset.pf]: pf.value });
   if (e.target.matches('[data-cpt]')) return setState({ cpt: e.target.value });
+  const dr = e.target.closest('[data-dr]');
+  if (dr) return draftChange(dr.dataset.dr, dr.value);
 });
 document.addEventListener('keydown', e => {
   /* Bars and blocks that act as buttons answer to the keyboard as well. */

@@ -23,7 +23,8 @@ function predOf(label, q = 'solo') {
   const p = ((ACC(label).q || {})[q] || {}).pred;
   return p && p.win != null ? p : null;
 }
-const formDots = f => `<span class="form">${(f || []).map(w => `<i class="${w ? 'w' : 'l'}"></i>`).join('')}</span>`;
+/* The last ten solo games, newest on the left, the way a match history reads. */
+const formDots = f => `<span class="form" title="Last ${(f || []).length} solo games, newest first">${(f || []).slice().reverse().map(w => `<i class="${w ? 'w' : 'l'}"></i>`).join('')}</span>`;
 
 function accountCard(label) {
   const a = ACC(label), r = (a.ranked || {}).solo, pr = predOf(label), PL = D.players[label] || {};
@@ -37,25 +38,30 @@ function accountCard(label) {
     `<div class="acct-low">${formDots(a.form)}<span class="muted small">${pr ? `next <b class="pos">${signedInt(pr.win)}</b> / <b class="neg">${signedInt(pr.loss)}</b>${pr.est ? ' <span title="Too few measured games; this is the older estimate">≈</span>' : ''}` : 'next: not enough games'}</span></div></button>`;
 }
 
+/* Rank after every game, on the same ladder as the daily chart: a gridline
+   at each tier and the tier's colour behind it. */
 function rankChangeChart(q) {
   const lines = [];
-  let lo = 0, hi = 0, n = 0;
+  let lo = Infinity, hi = -Infinity, n = 0;
   FR.forEach(label => {
-    const seq = ((ACC(label).q || {})[q] || {}).seq;
-    if (!seq || seq.length < 2) return;
-    let run = 0;
-    const pts = [[0, 0]].concat(seq.map((g, i) => { run += g[1]; return [i + 1, run]; }));
+    const Q = (ACC(label).q || {})[q] || {}, seq = Q.seq;
+    if (!seq || seq.length < 2 || seq[0][5] == null) return;
+    const pts = [[0, Q.start]].concat(seq.map((g, i) => [i + 1, g[5]])).filter(p => p[1] != null);
     pts.forEach(p => { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); });
     n = Math.max(n, pts.length - 1);
     lines.push({ pts, color: col(label), end: label, width: 1.8 });
   });
-  if (!lines.length) return '<div class="empty">No LP recorded in this queue yet.</div>';
-  const step = Math.max(100, Math.ceil(Math.max(Math.abs(lo), Math.abs(hi)) / 300) * 100);
-  const y0 = Math.floor(lo / step) * step, y1 = Math.ceil(hi / step) * step || step, yt = [];
-  for (let v = y0; v <= y1; v += step) yt.push(v);
+  if (!lines.length) return '<div class="empty">No ranked games recorded in this queue yet.</div>';
+  const { y0, y1, yt } = rankAxis(lo, hi);
   const xstep = n > 300 ? 100 : n > 120 ? 50 : n > 40 ? 20 : 10, xt = [];
   for (let x = 0; x <= n; x += xstep) xt.push(x);
-  return lineChart(lines, { x0: 0, x1: Math.max(n, 1), y0, y1, xt, yt, yf: v => v === 0 ? '0' : signedInt(v), zero: true, r: 70, h: 360, label: 'LP change by game' });
+  return lineChart(lines, { x0: 0, x1: Math.max(n, 1), y0, y1, xt, yt, yf: v => ladderName(v), tiers: true, r: 70, l: 70, h: 360, label: 'Rank by game' });
+}
+/* A gridline at the start of every tier, and one division of padding. */
+function rankAxis(lo, hi) {
+  const y0 = Math.floor((lo - 50) / 400) * 400, y1 = Math.ceil((hi + 50) / 400) * 400, yt = [];
+  for (let v = y0; v <= y1; v += 400) yt.push(v);
+  return { y0, y1, yt };
 }
 
 function dailyRankChart(q, days) {
@@ -71,12 +77,10 @@ function dailyRankChart(q, days) {
     lines.push({ pts, color: col(label), end: label, width: 1.8 });
   });
   if (!lines.length) return '<div class="empty">No daily ranks recorded in this queue yet.</div>';
-  /* A gridline at the start of every tier, and one division of padding. */
-  const y0 = Math.floor((lo - 50) / 400) * 400, y1 = Math.ceil((hi + 50) / 400) * 400, yt = [];
-  for (let v = y0; v <= y1; v += 400) yt.push(v);
+  const { y0, y1, yt } = rankAxis(lo, hi);
   const span = x1 - x0, xt = [0, 1, 2, 3].map(k => x0 + span * k / 3);
   const MON = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
-  return lineChart(lines, { x0, x1, y0, y1, xt, yt, yf: v => ladderName(v), xf: v => MON.format(new Date(v)), r: 70, l: 70, h: 360, label: 'Rank by day' });
+  return lineChart(lines, { x0, x1, y0, y1, xt, yt, yf: v => ladderName(v), xf: v => MON.format(new Date(v)), tiers: true, r: 70, l: 70, h: 360, label: 'Rank by day' });
 }
 
 function last24() {
@@ -87,7 +91,7 @@ function last24() {
   return `<div class="g24">${rows.slice(0, 14).map(([g, f]) => `<button type="button" class="g24c ${g[5] ? 'w' : 'l'}" ${set({ tab: 'game', game: g[0], team: g[4], p: '' })}>` +
     `<div class="g24h">${cicon(f[1], 34, true)}<span><b>${esc(C(f[1]).n)}</b><br><span style="color:${col(f[0])};font-weight:600">${esc(f[0])}</span></span></div>` +
     `<div class="g24m"><span class="tag ${g[5] ? 'win' : 'loss'}">${g[5] ? 'WIN' : 'LOSS'}</span><b>${f[3]}/${f[4]}/${f[5]}</b></div>` +
-    `<div class="g24m"><span class="muted small">@15 <b class="${gcls(f[6])}">${gold(f[6])}</b></span><span class="g24s"><small>score</small><b>${f[7] == null ? '-' : Math.round(f[7])}</b></span></div></button>`).join('')}</div>` +
+    `<div class="g24m"><span class="muted small">@15 <b class="${gcls(f[6])}">${gold(f[6])}</b></span><span class="g24s"><small>score</small>${f[7] == null ? '<b>-</b>' : scoreNum(f[7], false)}</span></div></button>`).join('')}</div>` +
     (rows.length > 14 ? `<p class="muted small" style="margin-top:10px">and ${rows.length - 14} more.</p>` : '');
 }
 
@@ -120,9 +124,9 @@ function tabHome() {
   const qp = (key, cur) => ['solo', 'flex', 'fives'].map(k => pill(QNAME[k], cur === k, ui({ [key]: k }), ' sm')).join('');
   const since = esc(D.meta.rankTrackingSince || '');
   out += `<div class="grid g2">` +
-    card('Rank change by game', `LP gained or lost, game by game, since ranks were first tracked${since ? ' on ' + since : ''}.`, rankChangeChart(q) +
-      '<p class="muted small">Each line ends at that player\'s total LP change. Hover a line\'s end for its name.</p>', `<span class="pills" style="margin-left:auto">${qp('hq', q)}</span>`) +
-    card('Daily rank', 'Rank at the end of each day. Gridlines mark each tier; one division is a hundred LP of height.', dailyRankChart(dq, days),
+    card('Rank change by game', `Rank after every game since ranks were first tracked${since ? ' on ' + since : ''}, on the same scale as the daily chart. Each band is a tier.`, rankChangeChart(q) +
+      '<p class="muted small">Each line ends at that player\'s rank after their latest game. Across is games played, not days.</p>', `<span class="pills" style="margin-left:auto">${qp('hq', q)}</span>`) +
+    card('Daily rank', 'Rank at the end of each day. Each band is a tier; one division is a hundred LP of height.', dailyRankChart(dq, days),
       `<span class="pills" style="margin-left:auto">${qp('dq', dq)}${pill('90 days', days === 90, ui({ dd: '90' }), ' sm')}${pill('Season', days === 0, ui({ dd: 'season' }), ' sm')}</span>`) + '</div>';
 
   out += `<div class="grid">${card('Last 24 hours', 'Every game since yesterday. Click one for its breakdown.', last24())}</div>`;

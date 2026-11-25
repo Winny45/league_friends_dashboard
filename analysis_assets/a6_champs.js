@@ -35,14 +35,23 @@ function champIndexData() {
   });
   return Object.values(sums);
 }
+/* How the lists are ordered: A-Z, most games, or best winrate. Under ten
+   games a winrate is noise, so those go to the bottom of a winrate sort. */
+const CSORT = { '': 'A–Z', games: 'Games', wr: 'Winrate' };
+function champSort(list) {
+  const name = r => C(D.champIndex[r[0]]).n;
+  if (S.csort === 'games') return list.sort((a, b) => b[2] - a[2] || name(a).localeCompare(name(b)));
+  if (S.csort === 'wr') return list.sort((a, b) => ((b[2] >= LOW) - (a[2] >= LOW)) || b[3] / b[2] - a[3] / a[2] || b[2] - a[2]);
+  return list.sort((a, b) => name(a).localeCompare(name(b)));
+}
+const sortTh = (key, label, cls = 'num') => `<th class="${cls} sortable${(S.csort || '') === key ? ' on' : ''}" ${set({ csort: key })} title="Sort by ${label.toLowerCase()}">${label}${(S.csort || '') === key ? ' ▾' : ''}</th>`;
 function champColumn(title, key, rows, roleOf, accent) {
   const q = (UI.cq || '').toLowerCase();
-  const list = rows.filter(r => !q || C(D.champIndex[r[0]]).n.toLowerCase().includes(q))
-    .sort((a, b) => C(D.champIndex[a[0]]).n.localeCompare(C(D.champIndex[b[0]]).n));
+  const list = champSort(rows.filter(r => !q || C(D.champIndex[r[0]]).n.toLowerCase().includes(q)));
   if (!list.length) return '';
   const open = UI.cexp[key], n = 16, shown = open || q ? list : list.slice(0, n);
-  return `<section class="card ccol"><h2 style="--acc:${accent}">${esc(title)}<span class="muted small" style="margin-left:auto;font-weight:500">A–Z</span></h2>` +
-    `<table class="tbl tight"><thead><tr><th>Champion</th><th class="num">Games</th><th class="num">WR</th></tr></thead><tbody>` +
+  return `<section class="card ccol"><h2 style="--acc:${accent}">${esc(title)}<span class="muted small" style="margin-left:auto;font-weight:500">${CSORT[S.csort || ''] || 'A–Z'}</span></h2>` +
+    `<table class="tbl tight"><thead><tr>${sortTh('', 'Champion', '')}${sortTh('games', 'Games')}${sortTh('wr', 'WR')}</tr></thead><tbody>` +
     shown.map(r => { const slug = D.champIndex[r[0]], wr = 100 * r[3] / r[2];
       return `<tr class="click" ${set({ tab: 'champions', champ: slug, crole: roleOf(r) || '', p: '' })}><td>${champ(slug, 20)}</td><td class="num muted">${r[2].toLocaleString('en-GB')}</td>` +
         `<td class="num ${wrClass(wr, r[2])}">${pc1(wr)}</td></tr>`; }).join('') + '</tbody></table>' +
@@ -51,14 +60,17 @@ function champColumn(title, key, rows, roleOf, accent) {
 function champIndex() {
   const by = S.cg === 'class' ? 'class' : 'role', rk = S.crk || 'all', all = S.cshow === 'all';
   const tiers = rankTiers();
+  const meta = S.cview === 'meta';
   const head = `<section class="card" style="margin-bottom:20px"><div class="filters">` +
-    `<input class="search" type="search" placeholder="Search a champion…" aria-label="Search a champion" value="${esc(UI.cq || '')}" data-cq>` +
-    `<span class="pill-label">Group by</span>${pill('Role', by === 'role', set({ cg: '' }), ' sm')}${pill('Class', by === 'class', set({ cg: 'class' }), ' sm')}` +
+    `<span class="pill-label">View</span>${pill('Lists', !meta, set({ cview: '' }), ' sm')}${pill('Pick vs win', meta, set({ cview: 'meta' }), ' sm')}` +
+    (meta ? '' : `<input class="search" type="search" placeholder="Search a champion…" aria-label="Search a champion" value="${esc(UI.cq || '')}" data-cq>` +
+    `<span class="pill-label">Group by</span>${pill('Role', by === 'role', set({ cg: '' }), ' sm')}${pill('Class', by === 'class', set({ cg: 'class' }), ' sm')}`) +
     `<span class="pill-label">Rank</span>${pill('All', rk === 'all', set({ crk: '' }), ' sm')}${tiers.map(t => `<button type="button" class="pill sm${String(t) === rk ? ' on' : ''}" style="${String(t) === rk ? '' : 'color:' + TCOL[t]}" ${set({ crk: String(t) })}>${TIERS[t]}</button>`).join('')}` +
     `${pill('Diamond+', rk === 'd', set({ crk: 'd' }), ' sm')}` +
     `<span class="pill-label">Patch</span><select class="sel" data-cpt aria-label="Patch"><option value="">Season</option>${D.patches.slice().reverse().map(p => `<option value="${esc(p)}"${S.cpt === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select>` +
-    `<span class="pill-label">Show</span>${pill('Group', !all, set({ cshow: '' }), ' sm')}${pill('All lobbies', all, set({ cshow: 'all' }), ' sm')}</div></section>`;
-  return head + champIndexCols();
+    (meta ? '' : `<span class="pill-label">Show</span>${pill('Group', !all, set({ cshow: '' }), ' sm')}${pill('All lobbies', all, set({ cshow: 'all' }), ' sm')}` +
+    `<span class="pill-label">Sort</span>${Object.entries(CSORT).map(([k, l]) => pill(l, (S.csort || '') === k, set({ csort: k }), ' sm')).join('')}`) + '</div></section>';
+  return head + (meta ? metaChart() : champIndexCols());
 }
 /* The lists alone, so typing in the search box redraws them without taking
    the cursor out of the box. */

@@ -249,6 +249,11 @@ def percentile(quantiles, value, higher=True):
     """
     if value is None or not quantiles:
         return None
+    # The page sees every value and every point rounded to six places (see
+    # analysis.public_game and quantiles), so this rounds the same way. Without
+    # it a kill share of exactly 1/3 ties with the points at 0.333333 on the
+    # page but sits just above them here.
+    value = round(value, 6)
     n = len(quantiles)
     # How many points are below the value, and how many are at or below it.
     lo, hi = bisect.bisect_left(quantiles, value), bisect.bisect_right(quantiles, value)

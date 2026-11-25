@@ -7378,7 +7378,8 @@ def lp_export(data):
     """{account label: {...}} for every account in data, second ones included.
 
     Each queue holds:
-        seq    [[matchId, lp change, measured 1/0, predicted win, predicted loss]]
+        seq    [[matchId, lp change, measured 1/0, predicted win, predicted loss,
+                 ladder position after the game]]
                in the order the games were played; the predictions are what
                the page would have said before that game
         start  ladder position at the first reading, so seq can be drawn
@@ -7431,7 +7432,8 @@ def lp_export(data):
                     pw = _weighted(mw) if len(mw) >= PRED_MIN and len(ml) >= PRED_MIN else None
                     pl = _weighted(ml) if len(mw) >= PRED_MIN and len(ml) >= PRED_MIN else None
                     seq.append([m["matchId"], round(delta), 1 if measured else 0,
-                                round(pw) if pw is not None else None, round(-pl) if pl is not None else None])
+                                round(pw) if pw is not None else None, round(-pl) if pl is not None else None,
+                                round(p["score"])])
                     if measured:
                         (mw if win else ml).append(abs(delta))
                     run.append((win, delta, measured))

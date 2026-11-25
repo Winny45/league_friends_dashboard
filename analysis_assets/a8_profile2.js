@@ -82,6 +82,7 @@ function profRoles(label) {
         return `<tr class="${c[2] < LOW ? 'thin' : ''}"><td class="strong">${esc(c[0])}</td><td class="muted">${c[1].map(x => esc(C(x).n)).join(', ')}</td><td class="num">${c[2]}</td>` +
           `<td class="num strong">${pc1(wr)}</td><td class="num muted">${pc1(c[4])}</td><td class="num ${gcls(d)}">${d == null ? '-' : signed(d, ' pts')}</td><td class="num">${c[5] == null ? '-' : c[5]}</td></tr>`; }).join('') + '</tbody>') +
     (best.length >= 2 ? `<p class="muted small" style="margin-top:10px">${esc(label)} is strongest on ${esc(classPlural(best[0][1]))} (${signed(best[0][0], ' pts')}) and weakest on ${esc(classPlural(best[best.length - 1][1]))} (${signed(best[best.length - 1][0], ' pts')}).</p>` : ''));
+  out += learnCard(label, role);
   return out;
 }
 

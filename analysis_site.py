@@ -71,6 +71,42 @@ class SiteViews:
                 c[1] += 1 if r["win"] else 0
         return [list(k) + v for k, v in sorted(cells.items())]
 
+    def _ban_table(self):
+        """How often each champion is banned, for ban rates beside the cube.
+
+        bans   [[champion, tier, patch, games it was banned in]]
+        games  [[tier, patch, games with bans recorded]]
+
+        Only games stored with their bans count (record version 4), and a
+        champion banned by both teams counts once. A game's tier is the
+        middle of its players' tiers, since a ban belongs to nobody's rank.
+        """
+        by_key = {str(k): v for k, v in (self.data.get("championByKey") or {}).items()}
+        cix = {c.lower(): i for i, c in enumerate(self.champ_index)}
+        pix = {p: i for i, p in enumerate(self.patches)}
+        tiers = defaultdict(list)
+        for r in self.rows:
+            if r["tier"] is not None:
+                tiers[r["game"]].append(r["tier"])
+        bans, games = defaultdict(int), defaultdict(int)
+        for gid in {r["game"] for r in self.rows}:
+            g = self.games[gid]
+            if "bans" not in g:
+                continue
+            ts = sorted(tiers.get(gid, []))
+            key = (ts[len(ts) // 2] if ts else -1, pix.get(g.get("patch"), -1))
+            games[key] += 1
+            seen = set()
+            for side in g["bans"]:
+                for cid in side:
+                    slug = by_key.get(str(cid))
+                    ci = cix.get(slug.lower()) if slug else None
+                    if ci is not None and ci not in seen:
+                        seen.add(ci)
+                        bans[(ci,) + key] += 1
+        return {"bans": [list(k) + [n] for k, n in sorted(bans.items())],
+                "games": [list(k) + [n] for k, n in sorted(games.items())]}
+
     # -- one file per champion -----------------------------------------------
 
     def champion_files(self):
@@ -398,6 +434,7 @@ class SiteViews:
             "champIndex": self.champ_index,
             "patches": self.patches,
             "cube": self._champ_cube(),
+            "banc": self._ban_table(),
             "top10": self._top10(),
             "week": self._week(),
             "profiles": self._profiles(),

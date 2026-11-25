@@ -16,7 +16,7 @@ const TIERS = D.meta.tiers, TSHORT = D.meta.tierShort, SC = D.scoring;
 /* The site's own pages. A player's profile has its own bar with the same
    sections filtered to them (PTABS), and a game's breakdown opens from a
    game rather than from either bar. */
-const TABS = [['home', 'Overview'], ['champions', 'Champions'], ['roles', 'Roles & classes'], ['time', 'Time patterns'],
+const TABS = [['home', 'Overview'], ['champions', 'Champions'], ['draft', 'Draft'], ['roles', 'Roles & classes'], ['time', 'Time patterns'],
   ['duos', 'Duos & stacks'], ['flow', 'Game flow'], ['records', 'Records']];
 const PTABS = [['overview', 'Overview'], ['champions', 'Champions'], ['roles', 'Roles & classes'], ['roaming', 'Roaming'],
   ['time', 'Time patterns'], ['duos', 'Duos & stacks'], ['flow', 'Game flow'], ['records', 'Records']];
@@ -27,7 +27,7 @@ const LOW = 10, BLANK = 5;
 
 /* ---- state lives in the URL, so any view can be linked to ----------------- */
 const KEYS = ['tab', 'p', 'pt', 'game', 'team', 'gwho', 'player', 'role', 'champ', 'crole', 'cwho', 'cg', 'crk', 'cpt', 'cshow',
-  'csort', 'ctag', 'rtab', 'cls', 'who', 'metric', 'queue', 'dview', 'dwho', 'dchamp', 'drole', 'dshow', 'pq', 'pc', 'pr', 'psort'];
+  'csort', 'ctag', 'rtab', 'cls', 'who', 'metric', 'queue', 'dview', 'dwho', 'dchamp', 'drole', 'dshow', 'pq', 'pc', 'pr', 'psort', 'cview', 'cvr'];
 /* Changing any of these is going to another page, so it goes into the
    browser's history and Back returns to where you were. A filter on the same
    page replaces the entry instead, so Back does not step through every click. */
@@ -268,6 +268,16 @@ function pcbar(p) {
   return `<div class="pcbar"><div class="bar pc ${pcClass(p)}"><i style="width:${Math.max(3, Math.min(100, p))}%"></i></div>` +
     `<span class="pcnum">${ord(p)}</span></div>`;
 }
+/* A game score's colour: red through green, and blue with flames from 90,
+   which is a game better than nine in ten at that role and rank. */
+const HOT = 90;
+const scoreRGB = v => v >= HOT ? '#4fb3ff' : `rgb(${blend([255, 122, 122], [110, 231, 160], Math.max(0, Math.min(1, (v - 25) / 50)))})`;
+function scoreNum(v, coloured = true) {
+  if (v == null) return '<span class="muted">-</span>';
+  const n = Math.round(v);
+  return n >= HOT ? `<b class="hot" style="color:${scoreRGB(n)}" title="90+: a game better than nine in ten for that role and rank">${n}</b>`
+    : `<b${coloured ? ` style="color:${scoreRGB(n)}"` : ''}>${n}</b>`;
+}
 function scoreBar(v, title = '') {
   if (v == null) return '<span class="muted">-</span>';
   return `<div class="perf" title="${esc(title)}"><div class="bar"><i style="width:${Math.max(3, Math.min(100, v))}%"></i></div><b>${v.toFixed(1)}</b></div>`;
@@ -390,6 +400,15 @@ function lineChart(lines, o) {
   const W = o.w || 760, H = o.h || 320, L = o.l || 46, Rm = o.r || 16, T = 14, B = 28;
   const x = v => L + (W - L - Rm) * (v - o.x0) / (o.x1 - o.x0), y = v => T + (H - T - B) * (o.y1 - v) / (o.y1 - o.y0);
   let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.label || 'Chart')}">`;
+  /* tiers: the y axis is the ladder (400 a tier), so each tier gets a band in
+     its own colour behind everything else. Master and up share one scale. */
+  if (o.tiers) {
+    for (let t = Math.max(0, Math.floor(o.y0 / 400)); t * 400 < o.y1 && t < 10; t++) {
+      const a = Math.max(o.y0, t * 400), b = Math.min(o.y1, t === 9 ? o.y1 : (t + 1) * 400);
+      if (b <= a) continue;
+      s += `<rect x="${L}" width="${W - L - Rm}" y="${y(b).toFixed(1)}" height="${(y(a) - y(b)).toFixed(1)}" fill="${TCOL[t]}" fill-opacity=".09"/>`;
+    }
+  }
   (o.yt || []).forEach(v => {
     s += `<line x1="${L}" x2="${W - Rm}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="axis"${o.zero && v === 0 ? ' stroke="#56607a"' : ''}/>` +
       `<text x="${L - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${esc(o.yf ? o.yf(v) : v)}</text>`;

@@ -68,7 +68,7 @@ _DIVISION = {"I": 1, "II": 2, "III": 3, "IV": 4}
 
 def quantiles(sorted_vals, points=QUANTILE_POINTS):
     last = len(sorted_vals) - 1
-    return [round(sorted_vals[round(last * i / (points - 1))], 4) for i in range(points)]
+    return [round(sorted_vals[round(last * i / (points - 1))], 6) for i in range(points)]
 
 
 class Analysis(PlayerViews, GroupViews, SiteViews):
@@ -891,7 +891,7 @@ class Analysis(PlayerViews, GroupViews, SiteViews):
             if read:
                 entry["rk"] = read[:2]
             if r["role"]:
-                entry["m"] = {m: round(r[m], 4) for m in scoring.METRICS if r.get(m) is not None}
+                entry["m"] = {m: round(r[m], 6) for m in scoring.METRICS if r.get(m) is not None}
             # What a scoreboard shows beside a champion. Facts about the game,
             # so the file stays the same from one build to the next.
             entry["lvl"] = p.get("lvl")

@@ -1357,6 +1357,8 @@ def main():
         "ddragonVersion": champ_data.get("version"),
         "championIconMap": champ_data.get("byName", {}),
         "championBySlug": champ_data.get("bySlug", {}),
+        # Bans name a champion by its numeric id only.
+        "championByKey": {k: champ_data.get("byName", {}).get(v, v) for k, v in champ_data.get("byKey", {}).items()},
         "items": champ_data.get("items", {}),
         "spells": champ_data.get("spells", {}),
         "runes": champ_data.get("runes", {}),

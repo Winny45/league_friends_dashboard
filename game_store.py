@@ -26,6 +26,8 @@ Record shape (see reduce_game for the authority)
     kills   [t, x, y, killer, victim, assist...]
     mon     [t, code, killer, team, assist...]
     bld     [t, losingTeam, code, lane]
+    bans    [[championId x5] team 100, [championId x5] team 200] in ban
+            order, -1 for a ban not used (version 4)
     rk      [[solo, flex] x 10], each 0 (unranked) or [tier, division, lp];
             None for a player whose lookup failed. rkt is when it was read.
 Times are whole seconds from game start. Positions are map units // 64, which
@@ -50,7 +52,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STORE_VERSION = 1
-RECORD_VERSION = 3
+RECORD_VERSION = 4
 STORE_DIR = Path("games")
 SKIP_FILE = "_skip.json"
 RANK_FILE = "_ranks.json"
@@ -248,6 +250,7 @@ def reduce_game(match, timeline):
         "win": win_team,
         "remake": bool(remake),
         "pv": RECORD_VERSION,
+        "bans": _bans(info),
         "p": players,
         "kills": kills,
         "mon": mon,
@@ -352,6 +355,28 @@ class _KeyRejected(RuntimeError):
     """Every later call would fail the same way, so the caller should stop."""
 
 
+def _bans(info):
+    """Each team's bans as champion ids in ban order; -1 is a ban not used."""
+    out = []
+    for team in (100, 200):
+        t = next((x for x in info.get("teams") or [] if x.get("teamId") == team), {})
+        out.append([b.get("championId", -1) for b in sorted(t.get("bans") or [], key=lambda b: b.get("pickTurn", 0))])
+    return out
+
+
+def _fetch_bans(client, mid):
+    """Bans alone, for a version 3 record: everything else in it is already
+    current, so the match is enough and the timeline is not asked for."""
+    try:
+        match = client.get_match(mid)
+    except RuntimeError as e:
+        if " 401 " in str(e) or " 403 " in str(e):
+            raise _KeyRejected(str(e))
+        raise
+    info = (match or {}).get("info")
+    return (_bans(info), None) if info else (None, "no match")
+
+
 def _fetch_record(client, mid):
     """(record, None), or (None, why it is not worth asking for again).
 
@@ -438,7 +463,11 @@ def upgrade(client, store, budget_seconds, wait=None, save_every=25, oldest_firs
             wait()
         old = store.get(mid)
         try:
-            rec, why = _fetch_record(client, mid)
+            if old.get("pv") == 3 and RECORD_VERSION == 4:
+                bans, why = _fetch_bans(client, mid)
+                rec = dict(old, bans=bans, pv=4) if bans is not None else None
+            else:
+                rec, why = _fetch_record(client, mid)
         except _KeyRejected as e:
             log(f"  ! key rejected while upgrading games; stopping ({e})")
             break
