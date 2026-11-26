@@ -120,6 +120,45 @@ function pickOrder(st) {
    pulled hard toward nothing (fifty games' worth, thirty for the lane) and
    held within four points (six for the lane): pairings are thin even across
    a few thousand games, and a 4-0 together is luck far more than synergy. */
+/* ---- Blind safety ---------------------------------------------------------------
+   How safe a champion is to pick before seeing the enemy laner, 0 to 100,
+   against the other champions in the same role. Three parts, equal weight,
+   each a percentile in the role:
+     steady     its gold @15 moves little with who it faces (low spread)
+     uncounted  little chance of meeting a lane counter (500+ behind at 15)
+                once counters that are banned, or already picked by either
+                team, are taken out, and the rest are discounted by how
+                often they are banned
+     resilient  it still wins when 500+ behind at 15 (pulled toward the
+                role's usual, twenty games' worth)
+   Built per draft, because what is still available changes the middle one. */
+function blindTable(st) {
+  const B = D.blind || { rows: [], behind: {} }, R = metaRates(() => true);
+  const gone = new Set([...st.us.map(x => x.c), ...st.them, ...st.bans].filter(Boolean).map(s => CIX[s]));
+  const byRole = {};
+  B.rows.forEach(([ci, ri, n, spread, nb, wb, counters]) => {
+    const live = counters.filter(c => !gone.has(c[0]));
+    const expo = live.reduce((t, c) => t + c[3] * (1 - (R.ban(c[0]) || 0) / 100), 0);
+    const bwr = (wb + (B.behind[ri] || 0.4) * 20) / (nb + 20);
+    (byRole[ri] = byRole[ri] || []).push({ ci, n, spread, expo, bwr, nb, live });
+  });
+  /* Where a value sits among the role's champions, 0 to 1, ties shared. */
+  const pctIn = (list, key, v) => (list.filter(x => x[key] < v).length + 0.5 * list.filter(x => x[key] === v).length) / list.length;
+  const out = {};
+  Object.entries(byRole).forEach(([ri, list]) => list.forEach(x => {
+    const parts = [1 - pctIn(list, 'spread', x.spread), 1 - pctIn(list, 'expo', x.expo), pctIn(list, 'bwr', x.bwr)];
+    out[x.ci + '|' + ri] = Object.assign(x, { parts, score: Math.round(100 * (parts[0] + parts[1] + parts[2]) / 3) });
+  }));
+  return out;
+}
+const safeCls = v => v >= 65 ? 'pos' : v <= 35 ? 'neg' : '';
+function safeCell(b) {
+  if (!b) return '<span class="muted" title="Fewer than twenty lanes with gold at fifteen">-</span>';
+  const t = `Steady ${Math.round(100 * b.parts[0])} (gold @15 swing ±${b.spread}) · Uncounted ${Math.round(100 * b.parts[1])} (meets a counter ${pc1(100 * b.expo)} of the time) · ` +
+    `Resilient ${Math.round(100 * b.parts[2])} (${pc1(100 * b.bwr)} won when 500+ behind) · ${b.n} lanes`;
+  return `<b class="${safeCls(b.score)}" title="${esc(t)}">${b.score}</b>`;
+}
+
 function draftSuggest(st) {
   const slot = st.us[st.focus], ri = ROLES.indexOf(slot.r), L = lobbyStats();
   const gone = new Set([...st.us.map(x => x.c), ...st.them, ...st.bans].filter(Boolean));
@@ -128,6 +167,10 @@ function draftSuggest(st) {
   const pool = poolOf(slot.p, slot.r);
   const cand = new Set(Object.keys(pool).filter(s => pool[s][0] >= 2));
   if (!st.pool || !slot.p) L.base.forEach((v, k) => { const [ci, i] = k.split('|'); if (+i === ri && v[0] >= 25) cand.add(D.champIndex[+ci]); });
+  /* Blind safety matters most for the first pick and not at all once the
+     enemy laner is known: up to four points of winrate at pick one, none
+     by pick ten. */
+  const BT = blindTable(st), pickNo = PICK_NO[st.side][st.focus], blindW = laneFoe ? 0 : (10 - pickNo) / 9;
   const delta = (v, b, k = 50, cap = 0.04) => v ? { d: Math.max(-cap, Math.min(cap, shrink(v[1], v[0], b, k) - b)), n: v[0] } : null;
   const out = [];
   cand.forEach(s => {
@@ -139,9 +182,13 @@ function draftSuggest(st) {
     const lane = laneFoe ? delta(L.lane.get(ci + '>' + CIX[laneFoe] + '|' + ri), base, 30, 0.06) : null;
     const sum = a => a.reduce((t, x) => t + x.d, 0);
     const exp = own + sum(syn) + sum(vsE) + (lane ? 1.5 * lane.d : 0);
-    out.push({ s, exp, base, b0, own, me, syn, vsE, lane });
+    const safe = BT[ci + '|' + ri] || null;
+    const rank = exp + (safe ? blindW * 0.04 * (safe.score - 50) / 50 : 0);
+    out.push({ s, exp, base, b0, own, me, syn, vsE, lane, safe, rank });
   });
-  return out.sort((a, b) => b.exp - a.exp).slice(0, 10);
+  const top = out.sort((a, b) => b.rank - a.rank).slice(0, 10);
+  top.blindW = blindW;
+  return top;
 }
 
 /* A role inside a sentence: lower case, except ADC. */
@@ -179,13 +226,18 @@ function tabDraft() {
   const rows = sug.map(r => `<tr><td>${champ(r.s, 24)}</td><td class="num"><b class="${r.exp >= 0.52 ? 'pos' : r.exp <= 0.48 ? 'neg' : ''}">${pc1(100 * r.exp)}</b></td>` +
     `<td class="num muted">${pc1(100 * r.base)} <small>(${r.b0[0]})</small></td>` +
     `<td class="num">${slot.p ? (r.me[0] ? `${pc1(100 * r.me[1] / r.me[0])} <small class="muted">(${r.me[0]})</small>` : '<span class="muted">new</span>') : '-'}</td>` +
-    `<td>${r.syn.map(x => chip(x, cicon(x.c, 16))).join('')}${r.vsE.map(x => chip(x, 'vs ' + cicon(x.c, 16))).join('')}${r.lane && r.lane.n ? chip(r.lane, '<b>lane</b>') : ''}</td>` +
+    `<td class="num">${safeCell(r.safe)}</td>` +
+    `<td>${r.syn.map(x => chip(x, cicon(x.c, 16))).join('')}${r.vsE.map(x => chip(x, 'vs ' + cicon(x.c, 16))).join('')}${r.lane && r.lane.n ? chip(r.lane, '<b>lane</b>') : ''}` +
+    (!st.them[ROLES.indexOf(slot.r)] && r.safe && r.safe.live.length ? `<span class="dchip warn" title="Its worst lane still available: ${r.safe.live[0][2]} games">⚠ ${cicon(D.champIndex[r.safe.live[0][0]], 16)} ${gold(r.safe.live[0][1])}</span>` : '') + `</td>` +
     `<td><button type="button" class="pill sm" data-dra='${esc(JSON.stringify({ a: 'pick', c: r.s }))}'>Pick</button></td></tr>`).join('');
   const sugCard = card(`Suggestions for ${who} · ${RN[slot.r]}`,
     `Expected winrate: the champion's winrate as a ${roleWord(slot.r)} in the stored lobbies, then ${slot.p ? esc(slot.p) + "'s own games on it, " : ''}then how it has done beside your locked picks and against the enemy's, with the lane matchup counted half again. ` +
-    `Each adjustment is pulled toward nothing when it rests on few games; hover one for its sample. These are the group's lobbies (${lobbyStats().games.toLocaleString('en-GB')} games), not the whole server.`,
+    `Each adjustment is pulled toward nothing when it rests on few games; hover one for its sample. These are the group's lobbies (${lobbyStats().games.toLocaleString('en-GB')} games), not the whole server. ` +
+    `<br><b>Blind safety</b> (0 to 100 among ${RLS[slot.r]}; hover for its parts): steady lane gold whoever it faces, little chance of meeting a counter that is still available, and still winning from behind. ` +
+    (sug.blindW > 0 ? `This is pick ${PICK_NO[st.side][st.focus]} with the enemy ${roleWord(slot.r)} unknown, so safety moves the order by up to ${(4 * sug.blindW).toFixed(1)} points of winrate.`
+      : st.them[ROLES.indexOf(slot.r)] ? 'The enemy laner is known, so the lane matchup counts instead and safety does not change the order.' : 'Last pick: safety does not change the order.'),
     (slot.p ? `<div class="filters" style="margin-bottom:10px">${pill('Their champions only', st.pool, `data-dra='{"a":"pool"}'`, ' sm')}</div>` : '') +
-    (rows ? tableWrap(`<thead><tr><th>Champion</th><th class="num">Expected</th><th class="num">${RN[slot.r]} WR</th><th class="num">${slot.p ? esc(slot.p) : 'Player'}</th><th>With allies · vs enemies</th><th></th></tr></thead><tbody>${rows}</tbody>`)
+    (rows ? tableWrap(`<thead><tr><th>Champion</th><th class="num">Expected</th><th class="num">${RN[slot.r]} WR</th><th class="num">${slot.p ? esc(slot.p) : 'Player'}</th><th class="num" title="How safe to pick before seeing the enemy laner, 0 to 100">Blind safety</th><th>With allies · vs enemies</th><th></th></tr></thead><tbody>${rows}</tbody>`)
       : '<div class="empty">Nothing to suggest: every candidate is picked or banned.</div>'));
 
   return names + `<div class="grid g2">` +

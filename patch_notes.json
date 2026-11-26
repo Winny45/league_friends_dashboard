@@ -26,6 +26,10 @@
       {
         "type": "changed",
         "text": "Comeback specialist now goes to whoever comes back from 5k+ behind in the biggest share of their games, rather than the most comebacks in total."
+      },
+      {
+        "type": "added",
+        "text": "Draft suggestions have a Blind safety score from 0 to 100: how safe a champion is to pick before you see the enemy laner. It rewards steady lane gold whoever it faces, little chance of meeting a counter that is still available (banned or already picked counters drop out) and still winning from behind. It moves the order most for the first pick and not at all once the enemy laner is known. A warning chip names the worst lane still open."
       }
     ]
   },

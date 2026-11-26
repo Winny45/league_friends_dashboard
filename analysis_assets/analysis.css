@@ -751,3 +751,4 @@ th.sortable:hover, th.sortable.on { color: var(--text-primary); }
 .stk.w { color: #6ee7a0; border-color: rgba(46,204,113,0.4); } .stk.l { color: #a3abb9; border-color: rgba(163,171,185,0.4); }
 .stk.gold { color: #ffd65a; border-color: rgba(245,197,66,0.6); box-shadow: 0 0 8px rgba(245,197,66,0.35); }
 .acct, .acct-top { overflow: visible; }
+.dchip.warn { color: #ffcf70; border-color: rgba(245,179,1,0.4); }

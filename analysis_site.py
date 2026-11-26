@@ -121,6 +121,59 @@ class SiteViews:
         return {"bans": [list(k) + [n] for k, n in sorted(bans.items())],
                 "games": [list(k) + [n] for k, n in sorted(games.items())]}
 
+    def _blind_table(self):
+        """What a blind pick needs to know, per champion and role, from every
+        lane in the stored lobbies (all ten players).
+
+        rows  [[champion, role, games, spread, behind games, behind wins,
+                [[counter, gold @15 against it, games, share of lanes]]]]
+        behind  {role: winrate of every champion there when 500+ behind}
+
+        spread   how much the champion's gold @15 moves with the enemy laner:
+                 the standard deviation of its per-opponent averages,
+                 weighted by how often it meets each. Each average is first
+                 pulled toward the champion's own (five games' worth), so a
+                 three-game fluke cannot make a matchup.
+        counter  an opponent it averages 500+ gold behind at 15 against, over
+                 three or more games. The share says how often it is met.
+        behind   games it was 500+ behind at 15, and how many it still won.
+        """
+        cix = {c: i for i, c in enumerate(self.champ_index)}
+        lanes = defaultdict(lambda: defaultdict(list))
+        behind = defaultdict(lambda: [0, 0])
+        role_behind = defaultdict(lambda: [0, 0])
+        for gid, rows in self.by_game.items():
+            by_side = {(r["team"], r["role"]): r for r in rows if r["role"]}
+            for r in rows:
+                if not r["role"] or r["g15"] is None:
+                    continue
+                opp = by_side.get((300 - r["team"], r["role"]))
+                if not opp:
+                    continue
+                lanes[(r["champ"], r["role"])][opp["champ"]].append(r["g15"])
+                if r["g15"] <= -500:
+                    for d in (behind[(r["champ"], r["role"])], role_behind[r["role"]]):
+                        d[0] += 1
+                        d[1] += 1 if r["win"] else 0
+        out = []
+        for (champ, role), opps in lanes.items():
+            n = sum(len(v) for v in opps.values())
+            if n < 20 or champ not in cix:
+                continue
+            mean_all = sum(sum(v) for v in opps.values()) / n
+            var, counters = 0.0, []
+            for o, v in opps.items():
+                avg = (sum(v) + 5 * mean_all) / (len(v) + 5)
+                w = len(v) / n
+                var += w * (avg - mean_all) ** 2
+                if len(v) >= 3 and avg <= -500 and o in cix:
+                    counters.append([cix[o], round(avg), len(v), round(w, 4)])
+            counters.sort(key=lambda c: c[1])
+            b = behind[(champ, role)]
+            out.append([cix[champ], ROLES.index(role), n, round(var ** 0.5), b[0], b[1], counters])
+        return {"rows": out,
+                "behind": {ROLES.index(r): round(v[1] / v[0], 4) for r, v in role_behind.items() if v[0]}}
+
     # -- one file per champion -----------------------------------------------
 
     def champion_files(self):
@@ -517,6 +570,7 @@ class SiteViews:
             "patches": self.patches,
             "cube": self._champ_cube(),
             "banc": self._ban_table(),
+            "blind": self._blind_table(),
             "top10": self._top10(),
             "week": self._week(),
             "profiles": self._profiles(),
