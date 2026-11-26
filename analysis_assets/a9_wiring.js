@@ -89,6 +89,7 @@ document.addEventListener('click', e => {
     const pageChange = PAGE_KEYS.some(k => k in patch && (patch[k] || '') !== (S[k] || ''));
     setState(patch);
     if (pageChange) window.scrollTo({ top: 0 });
+    else if (a.hasAttribute('data-to-matchups')) { const m = document.getElementById('matchups'); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     return;
   }
   const u = e.target.closest('[data-ui]');

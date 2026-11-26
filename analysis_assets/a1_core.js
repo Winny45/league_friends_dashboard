@@ -27,7 +27,7 @@ const LOW = 10, BLANK = 5;
 
 /* ---- state lives in the URL, so any view can be linked to ----------------- */
 const KEYS = ['tab', 'p', 'pt', 'game', 'team', 'gwho', 'player', 'role', 'champ', 'crole', 'cwho', 'cg', 'crk', 'cpt', 'cshow',
-  'csort', 'ctag', 'rtab', 'cls', 'who', 'metric', 'queue', 'dview', 'dwho', 'dchamp', 'drole', 'dshow', 'pq', 'pc', 'pr', 'psort', 'cview', 'cvr'];
+  'csort', 'ctag', 'rtab', 'cls', 'who', 'metric', 'queue', 'dview', 'dwho', 'dchamp', 'drole', 'dshow', 'pq', 'pc', 'pr', 'psort', 'cview', 'cvr', 'pmc', 'pmr', 'pms'];
 /* Changing any of these is going to another page, so it goes into the
    browser's history and Back returns to where you were. A filter on the same
    page replaces the entry instead, so Back does not step through every click. */

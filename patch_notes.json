@@ -26,6 +26,10 @@
       {
         "type": "changed",
         "text": "Your team's pick order in the Draft tab is now set by dragging: pick a row up by its ⠿ handle and the other rows slide out of its way as you move it, so what you see is the order you will get; let go and it settles into place. A finger works too, or focus the handle and use the arrow keys. Rows that have already picked stay where they are."
+      },
+      {
+        "type": "added",
+        "text": "Matchups on each profile's Champions tab: pick any champion the player has three or more games on (and the role, if they play it in more than one) to see every lane opponent they have faced, with their record, lane gold at 15 minutes and KDA, beside how everyone in the stored lobbies does in the same matchup, plus their best and worst matchups. Each champion card links straight to its matchups."
       }
     ]
   },

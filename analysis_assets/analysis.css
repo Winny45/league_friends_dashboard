@@ -840,3 +840,7 @@ button.dr-no { cursor: pointer; }
 .dr-row.dragging .dr-grip { cursor: grabbing; color: var(--text-primary); }
 .dr-team.sorting .dr-row:not(.dragging), .dr-row.settling { transition: transform 0.16s ease; }
 .dr-team.sorting { user-select: none; }
+.mu-champs { margin-bottom: 8px; }
+.mu-sum { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin: 10px 0 12px; }
+.mu-sum > .muted { margin-left: 6px; } .mu-sum > .muted:first-child { margin-left: 0; }
+#matchups { margin-top: 20px; }

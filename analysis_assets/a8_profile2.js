@@ -23,7 +23,8 @@ function champCard(label, c) {
     `<div class="muted small">${esc(RN[c.role] || '-')} · ${esc(cls)}</div></div><div class="cc-sc">${ring(t ? t.score : null, 56)}<span class="muted small">score</span></div></div>` +
     rad + `<div class="cboxes">${box('Games', c.games)}${box('Winrate', pc1(100 * c.wins / c.games))}${box('KDA', c.kda == null ? '-' : c.kda.toFixed(1))}${box('Avg game', c.score == null ? '-' : c.score)}</div>` +
     `<div class="cboxes lp">${box('Solo/Duo', lpBox(lp[0]))}${box('Flex', lpBox(lp[1]))}${box('5s', lpBox(lp[2]))}${box('Total LP', lpBox(total))}</div>` +
-    `<p class="muted small cc-w">${working}${t ? ` · <button type="button" class="linkbtn" data-working="${esc(c.champ)}">how this was worked out</button>` : ''}</p></section>`;
+    `<p class="muted small cc-w">${working}${t ? ` · <button type="button" class="linkbtn" data-working="${esc(c.champ)}">how this was worked out</button>` : ''}` +
+    ` · <button type="button" class="linkbtn" ${set({ pmc: c.champ, pmr: c.role || '' })} data-to-matchups>matchups ↓</button></p></section>`;
 }
 function profChampions(label) {
   const cards = ((D.profiles[label] || {}).champs || []).slice(), sort = ['score', 'games', 'wr', 'lp'].includes(S.psort) ? S.psort : 'score';
@@ -36,7 +37,57 @@ function profChampions(label) {
   return `<div class="sec-head"><div><h2>${esc(label)}'s champions</h2><p class="muted small" style="margin:4px 0 0">Every champion with ten or more games this season. ` +
     `The radar is a percentile against that champion in that role at ${esc(label)}'s rank${tier != null ? ' (' + TIERS[tier] + ')' : ''}, or every rank when there are too few. LP is the change across every game on it, shared out where a reading covered several games.</p></div>` +
     `<div class="pills">${[['score', 'Score'], ['games', 'Games'], ['wr', 'Winrate'], ['lp', 'LP gained']].map(s => pill(s[1], sort === s[0], set({ psort: s[0] }), ' sm')).join('')}</div></div>` +
-    (cards.length ? `<div class="ccards">${cards.map(c => champCard(label, c)).join('')}</div>` : empty('No champion with ten games yet.'));
+    (cards.length ? `<div class="ccards">${cards.map(c => champCard(label, c)).join('')}</div>` : empty('No champion with ten games yet.')) +
+    champMatchups(label);
+}
+
+/* ---- One player's lane matchups on one champion -------------------------
+   Every stored game they played it in that role, grouped by the enemy in
+   the same lane (the lobby lists both teams in role order), with how
+   everyone in the stored lobbies does in the same matchup beside it. */
+function champMatchups(label) {
+  const games = gamesOf(label);
+  /* Their champions in each role, most played first. */
+  const per = {};
+  games.forEach(([g, f]) => { if (!f[1] || !f[2]) return; const k = f[1] + '|' + f[2]; per[k] = (per[k] || 0) + 1; });
+  const list = Object.entries(per).filter(e => e[1] >= 3).sort((a, b) => b[1] - a[1]).map(([k, n]) => { const [c, r] = k.split('|'); return { c, r, n }; });
+  if (!list.length) return '';
+  const champs = [...new Set(list.map(x => x.c))];
+  const mc = champs.includes(S.pmc) ? S.pmc : champs[0];
+  const roles = list.filter(x => x.c === mc), role = (roles.find(x => x.r === S.pmr) || roles[0]).r, ri = ROLES.indexOf(role);
+  const L = lobbyStats(), ci = CIX[mc], opp = {};
+  games.forEach(([g, f]) => {
+    if (f[1] !== mc || f[2] !== role || !g[10] || g[10].length !== 10) return;
+    const oi = g[10][5 + ri];
+    if (oi == null || oi < 0) return;
+    const o = opp[oi] || (opp[oi] = { oi, n: 0, w: 0, g15: 0, gn: 0, k: 0, d: 0, a: 0 });
+    o.n++; o.w += g[5] ? 1 : 0; o.k += f[3]; o.d += f[4]; o.a += f[5];
+    if (f[6] != null) { o.g15 += f[6]; o.gn++; }
+  });
+  const sorts = { games: o => o.n, wr: o => o.w / o.n, gold: o => o.gn ? o.g15 / o.gn : -1e9 };
+  const sort = sorts[S.pms] ? S.pms : 'games';
+  /* Under three games a winrate or gold average is noise, so those go last. */
+  const rows = Object.values(opp).sort((a, b) => (sort !== 'games' && ((b.n >= 3) - (a.n >= 3))) || sorts[sort](b) - sorts[sort](a) || b.n - a.n);
+  /* Best and worst need three games against them to mean anything. */
+  const solid = rows.filter(o => o.n >= 3), byWr = solid.slice().sort((a, b) => (b.w / b.n - a.w / a.n) || b.n - a.n);
+  const tag = (o, good) => `<span class="dchip ${good ? 'pos' : 'neg'}">${cicon(D.champIndex[o.oi], 16)} ${esc(C(D.champIndex[o.oi]).n)} ${o.w}W ${o.n - o.w}L</span>`;
+  const picks = `<div class="pills mu-champs">${champs.slice(0, 14).map(c => pill(cicon(c, 18) + esc(C(c).n), c === mc, set({ pmc: c, pmr: '' }), ' sm')).join('')}</div>` +
+    (roles.length > 1 ? `<div class="pills">${roles.map(x => pill(ricon(x.r) + RN[x.r] + ` · ${x.n}`, x.r === role, set({ pmr: x.r }), ' sm')).join('')}</div>` : '');
+  const summary = solid.length >= 2 ? `<div class="mu-sum"><span class="muted small">Best into</span>${byWr.slice(0, 3).filter(o => o.w / o.n > 0.5).map(o => tag(o, true)).join('') || '<span class="muted small">none above half</span>'}` +
+    `<span class="muted small">Worst into</span>${byWr.slice(-3).reverse().filter(o => o.w / o.n < 0.5).map(o => tag(o, false)).join('') || '<span class="muted small">none below half</span>'}</div>` : '';
+  const th = (k, lab) => `<th class="num sortable${sort === k ? ' on' : ''}" ${set({ pms: k })}>${lab}${sort === k ? ' ▾' : ''}</th>`;
+  const body = rows.map(o => {
+    const wr = 100 * o.w / o.n, all = L.lane.get(ci + '>' + o.oi + '|' + ri), allWr = all ? 100 * all[1] / all[0] : null, g15 = o.gn ? o.g15 / o.gn : null;
+    return `<tr class="${o.n < 3 ? 'thin' : ''}"><td>${champ(D.champIndex[o.oi], 22)}</td><td class="num">${o.n}</td>` +
+      `<td class="num ${wrClass(wr, o.n * 4)}"><b>${pc1(wr)}</b> <span class="muted small">${o.w}W ${o.n - o.w}L</span></td>` +
+      `<td class="num ${gcls(g15)}">${g15 == null ? '-' : gold(g15)}</td><td class="num">${((o.k + o.a) / Math.max(1, o.d)).toFixed(2)}</td>` +
+      `<td class="num muted">${allWr == null ? '-' : `${pc1(allWr)} <small>(${all[0]})</small>`}</td></tr>`;
+  }).join('');
+  return `<div id="matchups">` + card(`${esc(label)}'s matchups on ${esc(C(mc).n)} · ${RN[role]}`,
+    `Every stored game ${esc(label)} played ${esc(C(mc).n)} as ${/^[AEIOU]/.test(RN[role]) ? 'an' : 'a'} ${role === 'BOTTOM' ? 'ADC' : RN[role].toLowerCase()}, by the enemy in the same lane: their record, lane gold at 15 minutes and KDA, ` +
+    `and how every ${C(mc).n} ${RLS[role]} in the stored lobbies does in the same matchup. Champions with three or more games are listed; rows under three games are faded and left out of best and worst.`,
+    picks + summary + (rows.length ? tableWrap(`<thead><tr><th>Against</th>${th('games', 'Games')}${th('wr', 'Winrate')}${th('gold', 'Gold @15')}<th class="num">KDA</th><th class="num">Everyone</th></tr></thead><tbody>${body}</tbody>`, 'tight')
+      : '<div class="empty">No lane opponents recorded for this champion yet.</div>')) + '</div>';
 }
 function showWorking(label, slug) {
   const c = ((D.profiles[label] || {}).champs || []).find(x => x.champ === slug);
