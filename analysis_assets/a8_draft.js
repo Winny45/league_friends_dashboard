@@ -331,7 +331,7 @@ function tabDraft() {
         : `<span class="dr-no">${L}${i + 1}<small>pick ${n}</small></span>`;
       return `<div class="dr-row${on ? ' now' : ''}${focused ? ' on' : ''}">${label}${champCell}${rest}${mv}</div>`;
     }).join('');
-    return `<section class="card dr-team ${blue ? 'blue' : 'red'}${mine ? ' mine' : ''}"><h2>${blue ? 'Blue side' : 'Red side'} · ${mine ? 'your team' : 'enemy team'}</h2>` +
+    return `<section class="card dr-team ${blue ? 'blue' : 'red'}${mine ? ' mine' : ''}"><h2>${mine ? 'Your team' : 'Enemy team'} · ${blue ? 'blue side, first pick' : 'red side, second pick'}</h2>` +
       (st.mode === 'fives' ? `<div class="dr-bans split">${[0, 1, 2].map(banSlot).join('')}<span class="dr-sep" title="Second ban phase"></span>${[3, 4].map(banSlot).join('')}</div>`
         : `<div class="dr-bans">${[0, 1, 2, 3, 4].map(banSlot).join('')}</div>`) + `${rows}</section>`;
   };
@@ -348,7 +348,7 @@ function tabDraft() {
   }
   const head = `<section class="card" style="margin-bottom:20px"><div class="filters">` +
     `<span class="pill-label">Format</span>${Object.entries(DRAFT_MODES).map(([k, m]) => pill(m.name, st.mode === k, dra({ a: 'mode', v: k }), ' sm')).join('')}` +
-    `<span class="pill-label">Side</span>${pill('Blue', st.side === 'blue', dra({ a: 'side', v: 'blue' }), ' sm')}${pill('Red', st.side === 'red', dra({ a: 'side', v: 'red' }), ' sm')}` +
+    `<span class="pill-label">You are</span>${pill('Blue side · first pick', st.side === 'blue', dra({ a: 'side', v: 'blue' }), ' sm')}${pill('Red side · second pick', st.side === 'red', dra({ a: 'side', v: 'red' }), ' sm')}` +
     `<button type="button" class="linkbtn" style="margin-left:auto" ${dra({ a: 'reset' })}>Start again</button></div>` +
     `${strip}<p class="dr-now">${nowTxt}</p>` +
     `<p class="hint">${st.mode === 'ranked' ? 'Solo/duo and flex: every player bans once, all at the same time, then picks go B1 · R1 R2 · B2 B3 · R3 R4 · B4 B5 · R5.'
@@ -384,8 +384,9 @@ function tabDraft() {
         : '<div class="empty">Nothing to suggest: every candidate is picked or banned.</div>'));
   } else sugCard = card('Suggestions', '', '<div class="empty">All five of your picks are in.</div>');
 
-  /* Blue always on the left, red on the right, as in the client. */
-  const left = st.side === 'blue' ? 'us' : 'them', right = left === 'us' ? 'them' : 'us';
+  /* Your team always on the left, the enemy on the right. The side you
+     choose only decides who picks first: blue has pick 1, red picks second. */
+  const left = 'us', right = 'them';
   return names + head + `<div class="grid g2 dr-board">${teamCard(left)}${teamCard(right)}</div>` + draftPrediction(st, ER) +
     (orderTxt ? `<section class="card" style="margin-bottom:20px">${orderTxt}</section>` : '') + sugCard + draftBuilds(st, ER) + multisearchCard(st);
 }

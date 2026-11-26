@@ -1,6 +1,6 @@
 [
   {
-    "date": "2026-11-27",
+    "date": "2026-11-26",
     "title": "Draft: builds, a predicted winrate and a multisearch",
     "items": [
       {
@@ -18,6 +18,10 @@
       {
         "type": "changed",
         "text": "Pick suggestions are steadier: the player's own record leans more on the champion's usual winrate when it rests on a handful of games, and the ally, enemy and lane adjustments together are held to a few points, so one lucky pairing cannot push a pick to the top."
+      },
+      {
+        "type": "fixed",
+        "text": "Choosing red side in the Draft tab no longer moves your team across the board. Your team stays on the left and the enemy on the right; the side you choose only decides whether you have first pick (blue) or second pick (red)."
       }
     ]
   },
