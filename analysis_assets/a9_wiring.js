@@ -74,6 +74,8 @@ document.addEventListener('click', e => {
   const sess = e.target.closest('[data-session]');
   if (sess) return sessionModal(sess.dataset.session);
   if (e.target.closest('[data-mss]')) return runMultisearch();
+  if (e.target.closest('[data-shot-apply]')) return applyShot();
+  if (e.target.closest('[data-shot-clear]')) { UI.shot = null; return drawShot(); }
   const da = e.target.closest('[data-dra]');
   if (da) return draftAction(JSON.parse(da.dataset.dra));
   const wk = e.target.closest('[data-working]');
@@ -115,11 +117,13 @@ document.addEventListener('change', e => {
   if (e.target.matches('[data-cpt]')) return setState({ cpt: e.target.value });
   const dr = e.target.closest('[data-dr]');
   if (dr) return draftChange(dr.dataset.dr, dr.value);
+  if (e.target.matches('[data-shot-file]') && e.target.files[0]) return readScreenshot(e.target.files[0]);
 });
 document.addEventListener('keydown', e => {
   /* Bars and blocks that act as buttons answer to the keyboard as well. */
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-session]')) { e.preventDefault(); return sessionModal(e.target.dataset.session); }
   if (e.target.matches('[data-ms]') && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); return runMultisearch(); }
+  if (e.target.matches('[data-grip]') && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return gripKey(e);
   if (!e.target.matches('[data-gsearch]')) return;
   const host = e.target.parentNode.querySelector('.gs-pop'), rows = [...host.querySelectorAll('.sg-row')];
   const i = rows.findIndex(r => r.classList.contains('on'));
@@ -159,6 +163,38 @@ document.addEventListener('focusout', e => {
 });
 document.addEventListener('focusin', e => {
   if (e.target.matches && e.target.matches('[data-gsearch]') && e.target.value) drawSearch(e.target);
+});
+/* Dragging a draft row by its handle. */
+document.addEventListener('pointerdown', e => {
+  const g = e.target.closest && e.target.closest('[data-grip]');
+  if (!g || g.disabled || e.button > 0) return;
+  e.preventDefault();
+  dragStart(e, g);
+});
+document.addEventListener('pointermove', dragMove);
+document.addEventListener('pointerup', dragEnd);
+document.addEventListener('pointercancel', dragEnd);
+/* A screenshot of champion select: pasted anywhere on the Draft tab, or
+   dropped on its box. */
+document.addEventListener('paste', e => {
+  if (S.tab !== 'draft' || S.p || !SHOT_READY) return;
+  const item = [...(e.clipboardData || {}).items || []].find(i => i.type && i.type.startsWith('image/'));
+  if (!item) return;
+  e.preventDefault();
+  readScreenshot(item.getAsFile());
+});
+document.addEventListener('dragover', e => {
+  const z = e.target.closest && e.target.closest('[data-shot-drop]');
+  if (z) { e.preventDefault(); z.classList.add('over'); }
+});
+document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('[data-shot-drop]'); if (z) z.classList.remove('over'); });
+document.addEventListener('drop', e => {
+  const z = e.target.closest && e.target.closest('[data-shot-drop]');
+  if (!z) return;
+  e.preventDefault();
+  z.classList.remove('over');
+  const f = [...(e.dataTransfer || {}).files || []].find(f => f.type.startsWith('image/'));
+  if (f) readScreenshot(f);
 });
 /* A new face was chosen: everything that shows it is redrawn. */
 document.addEventListener('avatars:changed', () => render());

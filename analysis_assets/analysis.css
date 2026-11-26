@@ -821,3 +821,21 @@ button.dr-no { cursor: pointer; }
 .ms-card.busy { border-color: var(--violet); }
 .ms-seen { border-top: 1px solid var(--border); padding-top: 6px; }
 .pill:disabled { opacity: 0.6; cursor: default; }
+
+/* ---- draft: reading a screenshot ------------------------------------------------- */
+.sh-drop { display: grid; place-items: center; min-height: 64px; padding: 12px; border: 2px dashed var(--border-strong); border-radius: 14px;
+  color: var(--text-secondary); cursor: pointer; text-align: center; }
+.sh-drop:hover, .sh-drop.over { border-color: var(--violet); color: var(--text-primary); background: color-mix(in srgb, var(--violet) 8%, transparent); }
+.sh-msg { margin-top: 10px; }
+.sh-res { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; margin-top: 14px; align-items: start; }
+.sh-prev { width: 100%; border-radius: 10px; border: 1px solid var(--border-strong); }
+.sh-found { display: grid; gap: 10px; }
+.sh-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .sh-list > .muted:first-child { flex-basis: 100%; }
+.sh-hit { display: inline-grid; justify-items: center; gap: 1px; } .sh-hit small { font-size: 10px; color: var(--muted); }
+@media (max-width: 900px) { .sh-res { grid-template-columns: minmax(0, 1fr); } }
+.dr-grip { border: 0; background: none; color: var(--muted); font-size: 20px; line-height: 1; padding: 6px 8px; border-radius: 8px; cursor: grab; touch-action: none; }
+.dr-grip:hover:not(:disabled), .dr-grip:focus-visible { color: var(--text-primary); background: var(--surface-2); }
+.dr-grip:disabled { opacity: 0.2; cursor: default; }
+.dr-row.dragging { position: relative; z-index: 5; cursor: grabbing; background: var(--surface-2); box-shadow: 0 10px 28px rgba(0,0,0,0.45); border-color: var(--violet); transition: none; }
+.dr-row.dragging .dr-grip { cursor: grabbing; color: var(--text-primary); }
+.dr-row.drop { box-shadow: inset 0 0 0 2px var(--violet); }

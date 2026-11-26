@@ -119,8 +119,7 @@ function draftChange(path, value) {
 function draftAction(a) {
   const st = draftState(), us = st.us;
   const movable = i => i >= 0 && i < 5 && !us[i].c;
-  if (a.a === 'up' && movable(a.i) && movable(a.i - 1)) [us[a.i - 1], us[a.i]] = [us[a.i], us[a.i - 1]];
-  else if (a.a === 'down' && movable(a.i) && movable(a.i + 1)) [us[a.i + 1], us[a.i]] = [us[a.i], us[a.i + 1]];
+  if (a.a === 'move') draftMove(st, a.from, a.to);
   else if (a.a === 'focus') st.focus = a.i;
   else if (a.a === 'pick') { const f = draftFocus(st); if (f != null) us[f].c = a.c; st.focus = null; }
   else if (a.a === 'unpick') st[a.side][a.i].c = '';
@@ -135,6 +134,62 @@ function draftAction(a) {
   saveDraft();
   render();
 }
+/* Move one of our rows to another place in the order. Only the rows still
+   to pick move: those already picked keep their places, and the rest close
+   up around them. */
+function draftMove(st, from, to) {
+  const open = [0, 1, 2, 3, 4].filter(i => !st.us[i].c);
+  const a = open.indexOf(from), b = open.indexOf(to);
+  if (a < 0 || b < 0 || a === b) return false;
+  const seq = open.map(i => st.us[i]);
+  seq.splice(b, 0, seq.splice(a, 1)[0]);
+  open.forEach((i, k) => { st.us[i] = seq[k]; });
+  if (st.focus === from) st.focus = to;
+  return true;
+}
+/* Dragging a row by its handle. The row follows the pointer, the row it
+   would land on is marked, and letting go moves it there. Pointer events,
+   so a finger works as well as a mouse. */
+let DRAG = null;
+function dragStart(e, grip) {
+  const row = grip.closest('.dr-row'), rows = [...row.parentElement.querySelectorAll('.dr-row')];
+  DRAG = { from: +grip.dataset.grip, to: +grip.dataset.grip, row, rows, y0: e.clientY, id: e.pointerId };
+  grip.setPointerCapture(e.pointerId);
+  row.classList.add('dragging');
+}
+function dragMove(e) {
+  if (!DRAG || e.pointerId !== DRAG.id) return;
+  DRAG.row.style.transform = `translateY(${e.clientY - DRAG.y0}px)`;
+  const st = draftState();
+  let best = DRAG.from, dist = Infinity;
+  DRAG.rows.forEach((r, i) => {
+    if (st.us[i].c) return;
+    const b = r.getBoundingClientRect(), d = Math.abs(e.clientY - (b.top + b.height / 2));
+    if (d < dist) { dist = d; best = i; }
+  });
+  DRAG.to = best;
+  DRAG.rows.forEach((r, i) => r.classList.toggle('drop', i === best && i !== DRAG.from));
+}
+function dragEnd(e) {
+  if (!DRAG || (e && e.pointerId !== DRAG.id)) return;
+  const d = DRAG;
+  DRAG = null;
+  d.row.style.transform = '';
+  d.row.classList.remove('dragging');
+  d.rows.forEach(r => r.classList.remove('drop'));
+  const st = draftState();
+  if (draftMove(st, d.from, d.to)) { saveDraft(); render(); }
+}
+/* The arrow keys on a focused handle move it one place, and keep the focus
+   on it so it can be moved again. */
+function gripKey(e) {
+  const i = +e.target.dataset.grip, st = draftState(), open = [0, 1, 2, 3, 4].filter(k => !st.us[k].c), at = open.indexOf(i);
+  const to = open[at + (e.key === 'ArrowUp' ? -1 : 1)];
+  if (to == null) return;
+  e.preventDefault();
+  if (draftMove(st, i, to)) { saveDraft(); render(); const g = document.querySelector(`[data-grip="${to}"]`); if (g) g.focus(); }
+}
+
 /* The pick suggestions are for: one clicked, or our next empty pick. */
 function draftFocus(st) {
   if (st.focus != null && !st.us[st.focus].c) return st.focus;
@@ -325,8 +380,11 @@ function tabDraft() {
         rest = `<select class="sel span2" data-dr="them.${i}.r" aria-label="Lane"><option value="">${g && !g.set ? `Lane: ${RN[g.r]} ${Math.round(100 * g.p)}%` : 'Lane: guess'}</option>` +
           ROLES.map(r => `<option value="${r}"${r === x.r ? ' selected' : ''}>${RN[r]}</option>`).join('') + '</select>';
       }
-      const mv = mine ? `<span class="dr-mv"><button type="button" class="x" ${dra({ a: 'up', i })} aria-label="Move up"${i && !x.c && !st.us[i - 1].c ? '' : ' disabled'}>▲</button>` +
-        `<button type="button" class="x" ${dra({ a: 'down', i })} aria-label="Move down"${i < 4 && !x.c && !st.us[i + 1].c ? '' : ' disabled'}>▼</button></span>` : '<span class="dr-mv"></span>';
+      /* A handle to drag the row up or down the order (or focus it and use
+         the arrow keys). A row whose champion is in has had its pick and
+         stays where it is. */
+      const mv = mine ? `<span class="dr-mv"><button type="button" class="dr-grip" data-grip="${i}"${x.c ? ' disabled title="Already picked"' : ' title="Drag to change the order"'} ` +
+        `aria-label="Move ${x.p ? esc(x.p) : 'this pick'} in the pick order: drag, or use the up and down arrow keys">⠿</button></span>` : '<span class="dr-mv"></span>';
       const label = mine ? `<button type="button" class="dr-no" ${dra({ a: 'focus', i })} title="Suggest for this pick">${L}${i + 1}<small>pick ${n}</small></button>`
         : `<span class="dr-no">${L}${i + 1}<small>pick ${n}</small></span>`;
       return `<div class="dr-row${on ? ' now' : ''}${focused ? ' on' : ''}">${label}${champCell}${rest}${mv}</div>`;
@@ -387,7 +445,7 @@ function tabDraft() {
   /* Your team always on the left, the enemy on the right. The side you
      choose only decides who picks first: blue has pick 1, red picks second. */
   const left = 'us', right = 'them';
-  return names + head + `<div class="grid g2 dr-board">${teamCard(left)}${teamCard(right)}</div>` + draftPrediction(st, ER) +
+  return names + head + (SHOT_READY ? shotCard() : '') + `<div class="grid g2 dr-board">${teamCard(left)}${teamCard(right)}</div>` + draftPrediction(st, ER) +
     (orderTxt ? `<section class="card" style="margin-bottom:20px">${orderTxt}</section>` : '') + sugCard + draftBuilds(st, ER) + multisearchCard(st);
 }
 

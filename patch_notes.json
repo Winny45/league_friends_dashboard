@@ -22,6 +22,10 @@
       {
         "type": "fixed",
         "text": "Choosing red side in the Draft tab no longer moves your team across the board. Your team stays on the left and the enemy on the right; the side you choose only decides whether you have first pick (blue) or second pick (red)."
+      },
+      {
+        "type": "changed",
+        "text": "Your team's pick order in the Draft tab is now set by dragging: pick a row up by its ⠿ handle and drop it where it should go (a finger works too, or focus the handle and use the arrow keys). Rows that have already picked stay where they are."
       }
     ]
   },
