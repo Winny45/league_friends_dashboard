@@ -130,6 +130,15 @@ class SiteViews:
         return {"bans": [list(k) + [n] for k, n in sorted(bans.items())],
                 "games": [list(k) + [n] for k, n in sorted(games.items())]}
 
+    def _champ_keys(self):
+        cix = {c.lower(): i for i, c in enumerate(self.champ_index)}
+        out = {}
+        for k, slug in (self.data.get("championByKey") or {}).items():
+            i = cix.get(str(slug).lower())
+            if i is not None:
+                out[str(k)] = i
+        return out
+
     def _blind_table(self):
         """What a blind pick needs to know, per champion and role, from every
         lane in the stored lobbies (all ten players).
@@ -604,6 +613,9 @@ class SiteViews:
             "cube": self._champ_cube(),
             "banc": self._ban_table(),
             "blind": self._blind_table(),
+            # Riot's numeric champion id -> position in champIndex, for what
+            # the live lookup returns (masteries name a champion by id).
+            "champKeys": self._champ_keys(),
             "top10": self._top10(),
             "week": self._week(),
             "profiles": self._profiles(),

@@ -340,6 +340,10 @@ jobs:
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          # For api/lookup.js, the draft tab's live multisearch. It is given to
+          # the deployment as a runtime variable, so it lives on Vercel's
+          # side only: no page or file that is published contains it.
+          RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
         run: |
           npm install --global vercel@latest
           cd deploy
@@ -348,7 +352,7 @@ jobs:
           # exactly that and sat on a device-code prompt forever, with no
           # console to show it. Actions would time out rather than hang, but
           # an hour of a runner is still an hour.
-          CI=1 vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
+          CI=1 vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}" --env RIOT_API_KEY="$RIOT_API_KEY"
 
       # always(), so a run killed by the job timeout still keeps whatever it
       # managed to fetch. fetch_data.py writes the cache incrementally, so

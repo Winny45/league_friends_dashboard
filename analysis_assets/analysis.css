@@ -816,3 +816,8 @@ button.dr-no { cursor: pointer; }
 @media (max-width: 640px) { .bd-row { grid-template-columns: minmax(0, 1fr); } .dr-pred { grid-template-columns: auto 1fr; } .dr-pred .wrbar { grid-column: 1 / -1; } }
 .bd-why .dchip, .bd-comp .dchip { white-space: normal; }
 .bd-row > * { min-width: 0; }
+.ms-warn { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(245,179,1,0.4); color: #ffcf70; font-size: 13px; }
+.ms-prog { display: grid; gap: 6px; margin-bottom: 12px; }
+.ms-card.busy { border-color: var(--violet); }
+.ms-seen { border-top: 1px solid var(--border); padding-top: 6px; }
+.pill:disabled { opacity: 0.6; cursor: default; }

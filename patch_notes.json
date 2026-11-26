@@ -13,7 +13,7 @@
       },
       {
         "type": "added",
-        "text": "Multisearch: paste the enemy's Riot IDs (or their joined-the-lobby lines) to see, for anyone the group has played with or against before, their rank when last seen, record, KDA, roles and the three champions they are most likely to pick. Every name also links to op.gg and League of Graphs, with op.gg and u.gg multisearch links for all of them."
+        "text": "Multisearch: paste the enemy's Riot IDs (or their joined-the-lobby lines) and press Search. Each is looked up live with Riot: solo and flex rank with winrate, the last ten ranked games (record, KDA, roles), top champion masteries, and the three champions they are most likely to pick, plus anything the group's own games know about them. It shows how long a search will take and how much of the site's Riot allowance it uses, and if the allowance runs low it pauses with a countdown and carries on by itself."
       },
       {
         "type": "changed",

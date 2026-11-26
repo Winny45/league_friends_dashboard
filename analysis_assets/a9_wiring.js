@@ -138,7 +138,12 @@ document.addEventListener('input', e => {
   if (e.target.id === 'map-t') { stopPlay(); UI.mapT = Number(e.target.value); redrawMap(); return; }
   if (e.target.matches('[data-gsearch]')) return drawSearch(e.target);
   /* The multisearch box keeps what was typed without a redraw, so the cursor stays put. */
-  if (e.target.matches('[data-ms]')) { draftState().ms = e.target.value; saveDraft(); return; }
+  if (e.target.matches('[data-ms]')) {
+    draftState().ms = e.target.value; saveDraft();
+    const est = document.querySelector('#mscard .ms-est');
+    if (est) est.textContent = msEstText(parseIds(e.target.value).length);
+    return;
+  }
   if (e.target.matches('[data-cq]')) {
     /* Only the lists are redrawn, so the cursor stays in the box. */
     UI.cq = e.target.value;

@@ -141,11 +141,18 @@ function draftPrediction(st, ER) {
 }
 
 /* ---- Multisearch -------------------------------------------------------------------
-   Riot IDs pasted in, looked up in every lobby the group has played: their
-   champions, roles, record and the rank they were at. Anyone the group has
-   never played with or against is not in there, so each name also links
-   out to the usual sites. The lookup files are keyed by a hash of the name
-   (see name_key in analysis_site.py), so they never list anyone. */
+   Riot IDs pasted in and looked up live, one at a time, by api/lookup.js:
+   their ranks, recent ranked games and top champion masteries, straight
+   from Riot. What the group's own stored lobbies know about each of them
+   (games played with or against the group) shows alongside, from files
+   keyed by a hash of the name (see name_key in analysis_site.py), so those
+   files never list anyone.
+
+   The Riot key behind the lookup is the same one the hourly update uses,
+   and it allows 100 requests every two minutes. A name costs about 14, so
+   the page watches the counts Riot reports back and waits before a name
+   that would run it out, saying how long. */
+const MS_COST = 14, MS_HEADROOM = 10, MS_WINDOW = 120;
 function nameKey(id) {
   let h = 0x811c9dc5;
   for (const b of new TextEncoder().encode(String(id).replace(/\s+/g, '').toLowerCase())) h = Math.imul(h ^ b, 0x01000193) >>> 0;
@@ -163,62 +170,196 @@ function parseIds(text) {
   });
   return out.slice(0, 10);
 }
+/* Rows of [champion, role, won, k, d, a, tier, division, day] -> a summary. */
 function msSummary(rows) {
   if (!rows || !rows.length) return null;
   const today = Math.floor(Date.now() / 86400000);
-  const sum = (k) => rows.reduce((t, r) => t + r[k], 0);
+  const sum = k => rows.reduce((t, r) => t + r[k], 0);
   const roles = [0, 0, 0, 0, 0];
   rows.forEach(r => { if (r[1] >= 0) roles[r[1]]++; });
-  /* Champions by how often, recent games counting more (half as much after
-     two months), so a new main shows over an old one. */
   const per = {};
   rows.forEach(r => { const p = per[r[0]] || (per[r[0]] = { ci: r[0], n: 0, w: 0, k: 0, d: 0, a: 0, wt: 0, roles: [0, 0, 0, 0, 0] });
     p.n++; p.w += r[2]; p.k += r[3]; p.d += r[4]; p.a += r[5]; p.wt += Math.pow(0.5, (today - r[8]) / 60); if (r[1] >= 0) p.roles[r[1]]++; });
-  const top = Object.values(per).sort((a, b) => b.wt - a.wt).slice(0, 3);
   const last = rows.slice().sort((a, b) => b[8] - a[8]), ranked = last.find(r => r[6] >= 0);
-  return { n: rows.length, w: sum(2), kda: (sum(3) + sum(5)) / Math.max(1, sum(4)), roles, top, last: last[0][8], rank: ranked ? [ranked[6], ranked[7]] : null };
+  return { n: rows.length, w: sum(2), kda: (sum(3) + sum(5)) / Math.max(1, sum(4)), roles, per, last: last[0][8], rank: ranked ? [ranked[6], ranked[7]] : null };
+}
+const ciOf = name => CIX[name] != null ? CIX[name] : D.champIndex.findIndex(s => s.toLowerCase() === String(name).toLowerCase());
+/* What api/lookup.js sends back, in the same shape, plus the live extras. */
+function liveSummary(L) {
+  const rows = (L.games || []).map(g => [ciOf(g[0]), ROLES.indexOf(g[1]), g[2], g[3], g[4], g[5], -1, 0, Math.floor(g[7] / 86400000)]).filter(r => r[0] >= 0);
+  const s = msSummary(rows) || { n: 0, w: 0, kda: 0, roles: [0, 0, 0, 0, 0], per: {}, last: null, rank: null };
+  /* Mastery points count toward the likely picks too: a champion with a
+     lot of points is a comfort pick even if it was not in the last ten. */
+  (L.mastery || []).forEach(([key, lvl, pts]) => {
+    const ci = (D.champKeys || {})[String(key)];
+    if (ci == null) return;
+    const p = s.per[ci] || (s.per[ci] = { ci, n: 0, w: 0, k: 0, d: 0, a: 0, wt: 0, roles: [0, 0, 0, 0, 0] });
+    p.wt += Math.log10(Math.max(10, pts)) / 3;
+    p.mastery = [lvl, pts];
+  });
+  s.ranks = L.ranks || {};
+  return s;
+}
+const topPicks = s => Object.values(s.per).sort((a, b) => b.wt - a.wt).slice(0, 3);
+/* The busiest count Riot reported for a window of a minute or more, as
+   [used, limit]. */
+function rateOf(rate) {
+  let best = null;
+  Object.values(rate || {}).forEach(({ limits, counts }) => {
+    const lim = {};
+    limits.split(',').forEach(p => { const [n, w] = p.split(':').map(Number); lim[w] = n; });
+    counts.split(',').forEach(p => { const [n, w] = p.split(':').map(Number); if (w >= 60 && lim[w] && (!best || n / lim[w] > best[0] / best[1])) best = [n, lim[w]]; });
+  });
+  return best;
+}
+/* What the key has left, as far as this page last heard: forgotten after
+   two minutes, when Riot's window has certainly moved on. */
+function msBudget() {
+  const R = UI.msRate;
+  return R && Date.now() - R.at <= MS_WINDOW * 1000 ? R : null;
+}
+const fmtSecs = s => s < 60 ? `${Math.max(1, Math.round(s))}s` : `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, '0')}s`;
+function msPlan(n) {
+  const B = msBudget(), per = UI.msPer || 3, cost = n * MS_COST, limit = B ? B.limit : 100;
+  const room = (B ? B.limit - B.used : limit) - MS_HEADROOM;
+  /* Names that do not fit now wait for the window to move on. */
+  const waits = cost > room ? Math.ceil((cost - room) / (limit - MS_HEADROOM)) : 0;
+  return { cost, secs: n * per + waits * MS_WINDOW / 2, wait: waits > 0, B };
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function msWait(secs, why) {
+  const R = UI.msRes;
+  for (let left = Math.ceil(secs); left > 0; left--) {
+    if (UI.msRes !== R) return false;
+    R.waitMsg = `${why} Waiting ${fmtSecs(left)}…`;
+    drawMs();
+    await sleep(1000);
+  }
+  R.waitMsg = '';
+  return UI.msRes === R;
 }
 async function runMultisearch() {
   const st = draftState(), ids = parseIds(st.ms || '');
-  UI.msRes = { ids, busy: true, found: {} };
-  render();
+  if (!ids.length || (UI.msRes && UI.msRes.busy)) return;
+  const R = UI.msRes = { ids, busy: true, local: {}, live: {}, done: 0, waitMsg: '' };
+  drawMs();
+  /* What the group's own lobbies know, which costs nothing. */
   const keys = ids.map(nameKey);
-  const shards = await Promise.all([...new Set(keys.map(k => k[0]))].map(s => loadShard(s).then(d => [s, d])));
-  const by = Object.fromEntries(shards);
-  ids.forEach((id, k) => { UI.msRes.found[id] = msSummary((by[keys[k][0]] || {})[keys[k]]); });
-  UI.msRes.busy = false;
-  if (S.tab === 'draft' && !S.p) render();
+  const shards = Object.fromEntries(await Promise.all([...new Set(keys.map(k => k[0]))].map(s => loadShard(s).then(d => [s, d]))));
+  ids.forEach((id, k) => { R.local[id] = msSummary((shards[keys[k][0]] || {})[keys[k]]); });
+  drawMs();
+  for (const id of ids) {
+    if (UI.msRes !== R) return;
+    const B = msBudget();
+    if (B && B.limit - B.used - MS_HEADROOM < MS_COST) {
+      if (!await msWait(MS_WINDOW / 2, `The Riot key is close to its limit (${B.used} of ${B.limit} in the last two minutes).`)) return;
+      UI.msRate = null;
+    }
+    R.live[id] = { state: 'busy' };
+    drawMs();
+    const t0 = Date.now();
+    let tries = 0;
+    for (;;) {
+      let body = null, status = 0;
+      try {
+        const res = await fetch('api/lookup?id=' + encodeURIComponent(id));
+        status = res.status;
+        body = await res.json().catch(() => null);
+      } catch (e) { status = 0; }
+      if (body && body.rate) { const r = rateOf(body.rate); if (r) UI.msRate = { used: r[0], limit: r[1], at: Date.now() }; }
+      if (status === 429 && body && tries++ < 2) {
+        if (!await msWait((body.after || 10) + 1, 'Riot asked the site to slow down.')) return;
+        continue;
+      }
+      if (status === 200 && body) R.live[id] = { state: body.found ? 'ok' : 'none', data: body, s: body.found ? liveSummary(body) : null };
+      else {
+        const why = !status || status === 404 ? 'The live lookup is not reachable from here (it runs on the published site).'
+          : body && body.error === 'nokey' ? 'The live lookup has no Riot key yet; it gets one on the next publish.'
+            : body && body.error === 'badid' ? 'That is not a Riot ID (Name#TAG).' : 'Riot did not answer properly; try again in a minute.';
+        R.live[id] = { state: 'err', why };
+      }
+      break;
+    }
+    /* Seconds a name, as measured, for the estimates. Cached answers are
+       quick and pull it down, which is right: they cost nothing either. */
+    const took = (Date.now() - t0) / 1000;
+    UI.msPer = UI.msPer ? 0.6 * UI.msPer + 0.4 * took : took;
+    R.done++;
+    drawMs();
+  }
+  R.busy = false;
+  drawMs();
+}
+/* Redraw just the multisearch card, so a running search does not jump the page. */
+function drawMs() {
+  const host = document.getElementById('mscard');
+  if (host && S.tab === 'draft' && !S.p) host.outerHTML = multisearchCard(draftState());
 }
 const opggSlug = id => { const [n, t] = id.split('#'); return encodeURIComponent(n) + '-' + encodeURIComponent(t || ''); };
+const TIER_IX = { IRON: 0, BRONZE: 1, SILVER: 2, GOLD: 3, PLATINUM: 4, EMERALD: 5, DIAMOND: 6, MASTER: 7, GRANDMASTER: 8, CHALLENGER: 9 };
+function rankLine(r, label) {
+  if (!r) return '';
+  const t = TIER_IX[r[0]], wr = r[3] + r[4] ? 100 * r[3] / (r[3] + r[4]) : null;
+  return `<span><span class="muted small">${label}</span> <b style="color:${t != null ? TCOL[t] : 'inherit'}">${t != null ? TIERS[t] : esc(r[0])}${t != null && t < 7 ? ' ' + esc(r[1]) : ''}</b> <span class="muted">${r[2]} LP</span>` +
+    (wr != null ? ` · <b class="${wr >= 52 ? 'pos' : wr <= 48 ? 'neg' : ''}">${pc1(wr)}</b> <span class="muted">${r[3]}W ${r[4]}L</span>` : '') + '</span>';
+}
+function pickLine(p) {
+  const slug = D.champIndex[p.ci], r = p.roles.indexOf(Math.max(...p.roles));
+  const bits = [];
+  if (p.n) bits.push(`${p.n}g · ${pc1(100 * p.w / p.n)} · ${((p.k + p.a) / Math.max(1, p.d)).toFixed(1)} KDA`);
+  if (p.mastery) bits.push(`M${p.mastery[0]} ${p.mastery[1] >= 1e6 ? (p.mastery[1] / 1e6).toFixed(1) + 'm' : Math.round(p.mastery[1] / 1000) + 'k'} pts`);
+  return `<span class="ms-pick">${cicon(slug, 30, true)}<span><b>${esc(C(slug).n)}</b><small class="muted">${p.n && p.roles[r] ? RN[ROLES[r]] + ' · ' : ''}${bits.join(' · ')}</small></span></span>`;
+}
+function rolesLine(roles) {
+  const tot = roles.reduce((t, v) => t + v, 0);
+  if (!tot) return '';
+  return ROLES.map((r, k) => [r, roles[k]]).filter(x => x[1]).sort((a, b) => b[1] - a[1]).slice(0, 2)
+    .map(([r, v]) => `${ricon(r, 14)} ${RN[r]} ${Math.round(100 * v / tot)}%`).join(' · ');
+}
+function msCard(id, R, region) {
+  const live = R.live[id] || { state: 'wait' }, loc = R.local[id];
+  const head = `<div class="ms-h"><b>${esc(live.data && live.data.found ? live.data.id : id)}</b>` +
+    `<a class="linkbtn" target="_blank" rel="noopener" href="https://www.op.gg/summoners/${region}/${opggSlug(id)}">op.gg ↗</a>` +
+    `<a class="linkbtn" target="_blank" rel="noopener" href="https://www.leagueofgraphs.com/summoner/${region}/${opggSlug(id)}">LoG ↗</a></div>`;
+  let body;
+  if (live.state === 'wait') body = '<div class="muted small">Waiting its turn…</div>';
+  else if (live.state === 'busy') body = '<div class="muted small">Asking Riot…</div>';
+  else if (live.state === 'none') body = '<div class="muted small">Riot has no account with that Riot ID.</div>';
+  else if (live.state === 'err') body = `<div class="muted small">${esc(live.why)}</div>`;
+  else {
+    const s = live.s, ranks = s.ranks || {}, wr = s.n ? 100 * s.w / s.n : null;
+    body = `<div class="ms-stats">${rankLine(ranks.solo, 'Solo') || '<span class="muted small">Unranked in solo</span>'}${rankLine(ranks.flex, 'Flex')}</div>` +
+      (s.n ? `<div class="muted small">Last ${s.n} ranked: <b class="${wr >= 52 ? 'pos' : wr <= 48 ? 'neg' : ''}">${s.w}W ${s.n - s.w}L</b> · <b>${s.kda.toFixed(2)}</b> KDA · ${rolesLine(s.roles)}</div>`
+        : '<div class="muted small">No recent ranked games.</div>') +
+      `<div class="ms-picks"><span class="muted small">Expected picks</span>${topPicks(s).map(pickLine).join('')}</div>`;
+  }
+  const seen = loc ? `<div class="ms-seen muted small">With the group: ${loc.n} game${loc.n === 1 ? '' : 's'} in the stored lobbies (${loc.w}W ${loc.n - loc.w}L for their team)` +
+    `${loc.rank ? `, ${TIERS[loc.rank[0]]}${loc.rank[0] < 7 && loc.rank[1] ? ' ' + DIV[loc.rank[1]] : ''} then` : ''}, mostly ${topPicks(loc).map(p => esc(C(D.champIndex[p.ci]).n)).join(', ')}.</div>` : '';
+  return `<div class="ms-card${live.state === 'busy' ? ' busy' : ''}">${head}${body}${seen}</div>`;
+}
+const msEstText = n => { if (!n) return ''; const P = msPlan(n); return `${n} name${n === 1 ? '' : 's'} · about ${P.cost} requests · about ${fmtSecs(P.secs)}${P.wait ? ' (with a wait)' : ''}`; };
 function multisearchCard(st) {
   const R = UI.msRes, region = REGION[D.meta.platform] || 'euw', ids = parseIds(st.ms || '');
+  const plan = msPlan(ids.length), B = plan.B;
+  const usage = B ? `The key has used <b>${B.used} of ${B.limit}</b> requests in the last two minutes.` : '';
+  const warn = ids.length && plan.wait && !(R && R.busy) ? `<div class="ms-warn">⚠ ${ids.length} name${ids.length === 1 ? '' : 's'} need about ${plan.cost} requests` +
+    `${B ? `, and the key has about ${Math.max(0, B.limit - B.used - MS_HEADROOM)} to spare right now` : ''}. The search will pause when it gets close and carry on by itself: about ${fmtSecs(plan.secs)} in all.</div>` : '';
+  const est = `<span class="muted small ms-est">${msEstText(ids.length)}</span>`;
   const multi = ids.length ? `<span class="ms-links"><span class="muted small">All ${ids.length} on</span>` +
     `<a class="pill sm" target="_blank" rel="noopener" href="https://www.op.gg/multisearch/${region}?summoners=${encodeURIComponent(ids.join(','))}">op.gg ↗</a>` +
     `<a class="pill sm" target="_blank" rel="noopener" href="https://u.gg/multisearch?summoners=${encodeURIComponent(ids.join(','))}&region=${encodeURIComponent(D.meta.platform)}">u.gg ↗</a></span>` : '';
-  let body = '';
-  if (R && R.busy) body = '<div class="empty">Searching…</div>';
-  else if (R && R.ids.length) {
-    body = `<div class="ms-grid">${R.ids.map(id => {
-      const f = R.found[id], link = `https://www.leagueofgraphs.com/summoner/${region}/${opggSlug(id)}`;
-      const head = `<div class="ms-h"><b>${esc(id)}</b><a class="linkbtn" target="_blank" rel="noopener" href="https://www.op.gg/summoners/${region}/${opggSlug(id)}">op.gg ↗</a><a class="linkbtn" target="_blank" rel="noopener" href="${link}">LoG ↗</a></div>`;
-      if (!f) return `<div class="ms-card">${head}<div class="muted small">Not in any of the group's stored games. Use the links for their history.</div></div>`;
-      const roleTot = f.roles.reduce((t, v) => t + v, 0) || 1;
-      const roles = ROLES.map((r, k) => [r, f.roles[k]]).filter(x => x[1]).sort((a, b) => b[1] - a[1]).slice(0, 2)
-        .map(([r, v]) => `${ricon(r, 14)} ${RN[r]} ${Math.round(100 * v / roleTot)}%`).join(' · ');
-      const ago = Math.floor(Date.now() / 86400000) - f.last;
-      return `<div class="ms-card">${head}` +
-        `<div class="ms-stats"><span>${f.rank ? `<b style="color:${TCOL[f.rank[0]]}">${TIERS[f.rank[0]]}${f.rank[0] < 7 && f.rank[1] ? ' ' + DIV[f.rank[1]] : ''}</b>` : '<span class="muted">rank not read</span>'}</span>` +
-        `<span><b class="${100 * f.w / f.n >= 52 ? 'pos' : 100 * f.w / f.n <= 48 ? 'neg' : ''}">${pc1(100 * f.w / f.n)}</b> <span class="muted">${f.w}W ${f.n - f.w}L</span></span>` +
-        `<span><b>${f.kda.toFixed(2)}</b> <span class="muted">KDA</span></span></div>` +
-        `<div class="muted small">${roles} · seen ${f.n} game${f.n === 1 ? '' : 's'}, last ${ago <= 0 ? 'today' : ago + 'd ago'}</div>` +
-        `<div class="ms-picks"><span class="muted small">Expected picks</span>${f.top.map(p => { const slug = D.champIndex[p.ci], r = p.roles.indexOf(Math.max(...p.roles));
-          return `<span class="ms-pick" title="${esc(C(slug).n)}: ${p.n} games, ${pc1(100 * p.w / p.n)}, KDA ${((p.k + p.a) / Math.max(1, p.d)).toFixed(2)}">${cicon(slug, 30, true)}` +
-            `<span><b>${esc(C(slug).n)}</b><small class="muted">${r >= 0 && p.roles[r] ? RN[ROLES[r]] + ' · ' : ''}${p.n}g · ${pc1(100 * p.w / p.n)} · ${((p.k + p.a) / Math.max(1, p.d)).toFixed(1)} KDA</small></span></span>`; }).join('')}</div></div>`;
-    }).join('')}</div>`;
+  let prog = '';
+  if (R && R.ids.length) {
+    const left = R.ids.length - R.done;
+    prog = `<div class="ms-prog"><span>${R.busy ? `Looked up <b>${R.done} of ${R.ids.length}</b>${left ? ` · about ${fmtSecs(left * (UI.msPer || 3))} left` : ''}` : `Looked up all ${R.ids.length}.`}</span>` +
+      `${usage ? `<span class="muted small">${usage}</span>` : ''}<div class="wrbar"><i style="width:${(100 * R.done / R.ids.length).toFixed(0)}%;background:var(--violet)"></i></div>` +
+      (R.waitMsg ? `<div class="ms-warn">⏳ ${esc(R.waitMsg)}</div>` : '') + '</div>' +
+      `<div class="ms-grid">${R.ids.map(id => msCard(id, R, region)).join('')}</div>`;
   }
-  return card('Multisearch',
-    'Paste the enemy\'s Riot IDs (Name#TAG, one a line, or their "joined the lobby" lines). Each is looked up in every stored lobby the group has played: their rank when last seen, record, KDA, roles, and the three champions they are most likely to pick. ' +
-    'Anyone you have never played with or against will not be there; the links open their full history elsewhere.',
+  return `<div id="mscard">` + card('Multisearch',
+    'Paste the enemy\'s Riot IDs (Name#TAG, one a line, or their "joined the lobby" lines) and press Search. Each is looked up live with Riot: ranks, the last ten ranked games, ' +
+    'top champion masteries and the three champions they are most likely to pick, plus anything the group\'s own games know about them. ' +
+    `Each name costs about ${MS_COST} of the 100 requests the site's Riot key allows every two minutes, and the hourly update uses the same key, so the search shows how much is left and waits if it gets close.`,
     `<div class="ms-in"><textarea class="search" rows="3" data-ms placeholder="Name#TAG&#10;Name#TAG">${esc(st.ms || '')}</textarea>` +
-    `<div class="ms-act"><button type="button" class="pill sm on" data-mss>Search</button>${multi}</div></div>${body}`);
+    `<div class="ms-act"><button type="button" class="pill sm on" data-mss${R && R.busy ? ' disabled' : ''}>${R && R.busy ? 'Searching…' : 'Search'}</button>${est}${multi}</div>${warn}</div>${prog}`) + '</div>';
 }

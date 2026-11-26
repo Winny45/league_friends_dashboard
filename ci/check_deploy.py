@@ -73,6 +73,14 @@ if site:
     if re.search(PUUID, page):
         problems.append("index.html contains what looks like a puuid")
 
+# The live lookup reads the key from Vercel's environment; the file itself
+# must never hold one.
+lookup = pathlib.Path("deploy", "api", "lookup.js")
+if lookup.exists():
+    src = lookup.read_text(encoding="utf-8")
+    if re.search(KEY, src) or "RGAPI-" in src:
+        problems.append("deploy/api/lookup.js contains a Riot key; it must read process.env.RIOT_API_KEY")
+
 for name in ("main.html", "analysis.html", "analysis-split.html", "analysis-main.html"):
     text = read(name)
     if text is not None and re.search(KEY, text):
