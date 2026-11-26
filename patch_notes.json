@@ -1,7 +1,7 @@
 [
   {
     "date": "2026-11-26",
-    "title": "Rings of fire, and new records",
+    "title": "Rings of fire, new records, and a proper draft board",
     "items": [
       {
         "type": "changed",
@@ -30,6 +30,22 @@
       {
         "type": "added",
         "text": "Draft suggestions have a Blind safety score from 0 to 100: how safe a champion is to pick before you see the enemy laner. It rewards steady lane gold whoever it faces, little chance of meeting a counter that is still available (banned or already picked counters drop out) and still winning from behind. It moves the order most for the first pick and not at all once the enemy laner is known. A warning chip names the worst lane still open."
+      },
+      {
+        "type": "changed",
+        "text": "The Draft tab is now a draft board: blue on the left, red on the right, the same size, with five bans and five picks for each side in the order they are made. The slot that is up is highlighted and a strip along the top shows the whole sequence."
+      },
+      {
+        "type": "added",
+        "text": "Two formats: Ranked draft (all ten bans at once, then B1 · R1 R2 · B2 B3 · R3 R4 · B4 B5 · R5) and Ranked 5s, the tournament draft with a second ban phase after the first six picks."
+      },
+      {
+        "type": "added",
+        "text": "Each enemy pick's lane is guessed from how often that champion plays each role, all five together so two picks never share a lane. Set a lane by hand to override it. The guessed laner is used for the lane matchup."
+      },
+      {
+        "type": "changed",
+        "text": "The suggested pick order now only moves the players still to pick, and puts first anyone whose enemy laner is already showing, since they can answer it whenever they pick."
       }
     ]
   },

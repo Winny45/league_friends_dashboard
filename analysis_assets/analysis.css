@@ -710,27 +710,61 @@ th.sortable:hover, th.sortable.on { color: var(--text-primary); }
 .chart.meta .qlab { font-family: "Outfit", sans-serif; font-size: 13px; font-weight: 700; fill: var(--text-secondary); }
 
 /* ---- draft tool ------------------------------------------------------------------- */
-.dr-row { display: grid; grid-template-columns: 74px minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center;
-  padding: 7px 8px; border-radius: 12px; border: 1px solid transparent; margin-bottom: 6px; }
-.dr-row.on { border-color: var(--violet); background: color-mix(in srgb, var(--violet) 10%, transparent); }
-.card .dr-row:has(.foe) { grid-template-columns: 96px minmax(0, 1fr); }
+.dr-board .card { margin: 0; }
+.dr-team { border-top: 3px solid var(--team); }
+.dr-team.blue { --team: #4c8dff; } .dr-team.red { --team: #ff5f5f; }
+.dr-team h2::before { background: var(--team) !important; }
+.dr-team.mine { box-shadow: var(--shadow-md), 0 0 0 1px color-mix(in srgb, var(--team) 35%, transparent); }
+/* Same columns and the same row height on both sides. */
+.dr-row { display: grid; grid-template-columns: 70px minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) 46px; gap: 8px; align-items: center;
+  min-height: 54px; padding: 6px 8px; border-radius: 12px; border: 1px solid transparent; margin-bottom: 6px; }
+.dr-row .span2 { grid-column: span 2; }
+.dr-row.on { border-color: var(--violet); background: color-mix(in srgb, var(--violet) 9%, transparent); }
+.dr-row.now { border-color: var(--team); background: color-mix(in srgb, var(--team) 14%, transparent);
+  box-shadow: 0 0 0 1px var(--team), 0 0 16px color-mix(in srgb, var(--team) 40%, transparent); animation: nowpulse 1.6s ease-in-out infinite; }
+@keyframes nowpulse { 50% { box-shadow: 0 0 0 1px var(--team), 0 0 4px color-mix(in srgb, var(--team) 20%, transparent); } }
 .dr-no { display: grid; justify-items: center; gap: 1px; border: 1px solid var(--border-strong); border-radius: 10px; padding: 5px 4px;
-  background: var(--surface-1); color: var(--text-primary); font: inherit; font-weight: 800; cursor: pointer; }
+  background: var(--surface-1); color: var(--text-primary); font: inherit; font-weight: 800; }
+button.dr-no { cursor: pointer; }
 .dr-no small { font-size: 10.5px; font-weight: 500; color: var(--muted); }
-.dr-no.foe { cursor: default; display: flex; gap: 6px; justify-content: flex-start; padding: 6px 8px; }
 .dr-row .sel, .dr-in { width: 100%; min-width: 0; }
 .dr-c { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
 .dr-mv { display: flex; gap: 2px; }
 .x { border: 0; background: none; color: var(--muted); cursor: pointer; font: inherit; padding: 3px 5px; border-radius: 6px; }
 .x:hover:not(:disabled) { color: var(--text-primary); background: var(--surface-2); }
-.x:disabled { opacity: 0.3; cursor: default; }
-.dr-h { font-size: 14px; margin: 16px 0 8px; color: var(--text-secondary); }
-.dr-bans { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.dr-bans .dr-in { width: 160px; }
+.x:disabled { opacity: 0.25; cursor: default; }
+.dr-bans { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
+.dr-ban { display: flex; align-items: center; justify-content: center; gap: 2px; min-height: 40px; border-radius: 10px; border: 1px dashed var(--border-strong); padding: 3px; min-width: 0; }
+.dr-ban .dr-in { padding: 6px 8px; font-size: 12.5px; border: 0; background: transparent; text-align: center; }
+.dr-ban img { filter: grayscale(0.85); border-radius: 6px; }
+.dr-bans.split { grid-template-columns: repeat(3, minmax(0, 1fr)) 10px repeat(2, minmax(0, 1fr)); }
+.dr-sep { align-self: stretch; justify-self: center; width: 2px; border-radius: 2px; background: var(--border-strong); }
+.dr-ban.now { border-style: solid; border-color: var(--team); box-shadow: 0 0 10px color-mix(in srgb, var(--team) 45%, transparent); }
+.dr-steps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 14px; }
+.dr-step { display: inline-grid; place-items: center; min-width: 30px; height: 28px; padding: 0 4px; border-radius: 8px; font-size: 11.5px; font-weight: 700;
+  border: 1px solid; color: var(--text-secondary); }
+.dr-step.b { border-color: rgba(76,141,255,0.45); } .dr-step.r { border-color: rgba(255,95,95,0.45); }
+.dr-step.ban { border-style: dashed; }
+.dr-step.done { opacity: 0.55; }
+.dr-step.now { color: #fff; opacity: 1; transform: translateY(-2px); }
+.dr-step.b.now { background: #2f6fe0; box-shadow: 0 0 12px rgba(76,141,255,0.7); } .dr-step.r.now { background: #d94848; box-shadow: 0 0 12px rgba(255,95,95,0.7); }
+.dr-now { margin: 12px 0 4px; font-size: 14.5px; }
+.dr-order { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13.5px; }
+.dr-order p { flex-basis: 100%; margin: 2px 0 0; }
 .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 8px; border-radius: 999px; border: 1px solid var(--border-strong);
   background: var(--surface-1); font-size: 12.5px; }
-.dr-order { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13.5px; }
-.dr-order p { flex-basis: 100%; margin: 2px 0 0; }
+@media (prefers-reduced-motion: reduce) { .dr-row.now { animation: none; } }
+@media (max-width: 640px) {
+  .dr-row { grid-template-columns: 58px minmax(0, 1fr) minmax(0, 1fr); }
+  .dr-row .dr-c, .dr-row .dr-in { grid-column: 2 / 4; }
+  .dr-row .span2 { grid-column: 2 / 4; }
+  .dr-mv { grid-column: 1; grid-row: 2; }
+  .dr-bans { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .dr-bans.split { grid-template-columns: repeat(3, minmax(0, 1fr)) 8px repeat(2, minmax(0, 1fr)); }
+  .dr-bans { gap: 4px; }
+  .dr-ban .dr-in { padding: 4px 1px; font-size: 11px; }
+  .dr-ban img { width: 24px; height: 24px; }
+}
 .dchip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; margin: 2px 4px 2px 0; border-radius: 999px;
   border: 1px solid var(--border-strong); font-size: 12px; white-space: nowrap; }
 .dchip.pos { color: #6ee7a0; border-color: rgba(46,204,113,0.35); } .dchip.neg { color: #ff8a8a; border-color: rgba(255,95,95,0.35); }
