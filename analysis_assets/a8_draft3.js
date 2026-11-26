@@ -2,219 +2,159 @@
    Paste (Ctrl+V), drop or choose a screenshot on the Draft tab. Everything
    happens in this browser: nothing is uploaded anywhere.
 
-   How it reads one:
-     1. Every champion's square icon is boiled down to a tiny colour
-        fingerprint (a few dozen pixels inside a circle, so round portraits
-        and square ban icons both match), once, the first time it is used.
-     2. The screenshot is searched at a range of icon sizes for windows whose
-        fingerprint is close to some champion's: a quick pass on a shrunken
-        copy, then a careful re-check of the promising spots at full size,
-        nudging the window a little in place and size.
-     3. Where a match sits says what it is. The client always shows your
-        team down the left and the enemy down the right, top to bottom in
-        pick order, and the bans along the top; the champion grid in the
-        middle is ignored.
-   The result is shown for checking before it fills the board. */
+   Champion select keeps everything in the same places, scaled with the
+   window, so the reader looks only where things are:
+     your team    round portraits down the left edge, five rows, in pick order
+     the enemy    round portraits down the right edge, Enemy 1 to 5
+     bans         a row of five small icons in each top corner
+   Positions are measured in shares of the screenshot's height from the edge
+   each thing hangs off (left things from the left, right things from the
+   right), so any window size works, as long as the screenshot is the
+   client window: Alt+Print Screen, or Win+Shift+S around the window.
 
-/* Off until it has been tuned against real champion select screenshots. */
-const SHOT_READY = false;
-const SHOT_SM = 6, SHOT_LG = 12, SHOT_P = 24;
-/* Where things are, as shares of the screenshot's width and height. */
-const SHOT_LAYOUT = { pickLeft: 0.24, pickRight: 0.76, banTop: 0.13, minIcon: 0.028, maxIcon: 0.12 };
+   Each spot is compared with every champion's icon, nudged a little in
+   place and size. The comparison is a small fingerprint of the middle of
+   the icon: mostly its light and dark (the client dims and tints portraits)
+   with some colour, leaving out the ring round a portrait and the swap
+   badge on its bottom-right corner. A spot with no clear winner (an empty
+   ban, a champion still being hovered) is left blank. */
+
+const SHOT_READY = true;
+const SHOT_N = 12;
+/* Measured on a 1561 x 853 client window; all in shares of the height. */
+const SHOT_LAYOUT = {
+  pick: { size: 0.084, left: 0.0997, right: 0.0621, top: 0.176, step: 0.1172 },
+  ban: { size: 0.0375, y: 0.0445, left: 0.0188, right: 0.0246, step: 0.0586 },
+};
 const SHOT = { lib: null, busy: false };
-function shotMask(n) {
-  const m = [], c = (n - 1) / 2, r = (n / 2) * 0.92;
-  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if ((x - c) ** 2 + (y - c) ** 2 <= r * r) m.push(y * n + x);
+function shotMask(r, badge) {
+  const m = [], c = (SHOT_N - 1) / 2;
+  for (let y = 0; y < SHOT_N; y++) for (let x = 0; x < SHOT_N; x++) {
+    if ((x - c) ** 2 + (y - c) ** 2 > (SHOT_N / 2 * r) ** 2) continue;
+    if (badge && x >= SHOT_N * 0.62 && y >= SHOT_N * 0.62) continue;
+    m.push(y * SHOT_N + x);
+  }
   return m;
 }
-const MASK_SM = shotMask(SHOT_SM), MASK_LG = shotMask(SHOT_LG);
-/* A window's fingerprint: its masked RGB, centred and scaled to length one.
-   Returns false for a flat window, which cannot be a champion. */
-function shotDesc(px, w, x0, y0, n, mask, out) {
-  let k = 0, mean = 0;
-  for (let j = 0; j < mask.length; j++) {
-    const i = mask[j], p = ((y0 + ((i / n) | 0)) * w + x0 + (i % n)) * 4;
-    out[k++] = px[p]; out[k++] = px[p + 1]; out[k++] = px[p + 2];
-  }
-  for (let i = 0; i < k; i++) mean += out[i];
-  mean /= k;
+const MASKS = { pick: shotMask(0.8, true), ban: shotMask(0.92, false) };
+/* Light and dark at full weight, colour at half: [Y, R-Y, B-Y] a pixel,
+   brightness centred, scaled to length one. */
+function shotDesc(px, mask) {
+  const v = new Float32Array(mask.length * 3);
+  let mean = 0;
+  mask.forEach((i, k) => {
+    const p = i * 4, R = px[p], G = px[p + 1], B = px[p + 2], Y = 0.299 * R + 0.587 * G + 0.114 * B;
+    v[3 * k] = Y; v[3 * k + 1] = (R - Y) * 0.5; v[3 * k + 2] = (B - Y) * 0.5;
+    mean += Y;
+  });
+  mean /= mask.length;
   let ss = 0;
-  for (let i = 0; i < k; i++) { out[i] -= mean; ss += out[i] * out[i]; }
-  if (ss < k * 64) return false;
-  const nrm = 1 / Math.sqrt(ss);
-  for (let i = 0; i < k; i++) out[i] *= nrm;
-  return true;
-}
-/* A fixed random projection to a short vector for the quick pass. */
-let SHOT_PROJ = null;
-function shotProj() {
-  if (SHOT_PROJ) return SHOT_PROJ;
-  let seed = 7;
-  const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return seed / 4294967296 - 0.5; };
-  const d = MASK_SM.length * 3;
-  SHOT_PROJ = new Float32Array(SHOT_P * d).map(() => rnd());
-  return SHOT_PROJ;
-}
-function project(v, out) {
-  const P = shotProj(), d = v.length;
-  let ss = 0;
-  for (let r = 0; r < SHOT_P; r++) { let s = 0; for (let i = 0; i < d; i++) s += P[r * d + i] * v[i]; out[r] = s; ss += s * s; }
-  const nrm = 1 / Math.sqrt(ss || 1);
-  for (let r = 0; r < SHOT_P; r++) out[r] *= nrm;
+  for (let k = 0; k < mask.length; k++) v[3 * k] -= mean;
+  for (let i = 0; i < v.length; i++) ss += v[i] * v[i];
+  if (ss < mask.length * 40) return null;     // flat: an empty slot
+  const n = 1 / Math.sqrt(ss);
+  for (let i = 0; i < v.length; i++) v[i] *= n;
+  return v;
 }
 const loadImg = src => new Promise((res, rej) => { const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => res(im); im.onerror = rej; im.src = src; });
-/* Every champion's fingerprints, at two crops: the whole icon (bans) and
-   the middle of it (round portraits are zoomed in a little). */
+/* Every champion's fingerprints, both masks, at two crops: the whole icon
+   and its middle (portraits are a little zoomed). */
 async function shotLibrary(progress) {
   if (SHOT.lib) return SHOT.lib;
-  const slugs = D.champIndex.slice(), crops = [1, 0.84];
-  const n = slugs.length * crops.length, dS = MASK_SM.length * 3, dL = MASK_LG.length * 3;
-  const sm = new Float32Array(n * SHOT_P), lg = new Float32Array(n * dL), who = new Int16Array(n), ok = new Uint8Array(n);
-  const cS = document.createElement('canvas'), cL = document.createElement('canvas');
-  cS.width = cS.height = SHOT_SM; cL.width = cL.height = SHOT_LG;
-  const xS = cS.getContext('2d', { willReadFrequently: true }), xL = cL.getContext('2d', { willReadFrequently: true });
-  const tS = new Float32Array(dS), tP = new Float32Array(SHOT_P), tL = new Float32Array(dL);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = SHOT_N;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  const lib = { pick: [], ban: [] };
   let done = 0;
-  await Promise.all(slugs.map(async (slug, ci) => {
-    let im;
-    try { im = await loadImg(champUrl(slug)); } catch (e) { done++; return; }
-    crops.forEach((cr, k) => {
-      const row = ci * crops.length + k, s = im.naturalWidth * cr, o = (im.naturalWidth - s) / 2;
-      who[row] = ci;
-      xS.clearRect(0, 0, SHOT_SM, SHOT_SM); xS.drawImage(im, o, o, s, s, 0, 0, SHOT_SM, SHOT_SM);
-      xL.clearRect(0, 0, SHOT_LG, SHOT_LG); xL.drawImage(im, o, o, s, s, 0, 0, SHOT_LG, SHOT_LG);
-      if (shotDesc(xS.getImageData(0, 0, SHOT_SM, SHOT_SM).data, SHOT_SM, 0, 0, SHOT_SM, MASK_SM, tS) &&
-        shotDesc(xL.getImageData(0, 0, SHOT_LG, SHOT_LG).data, SHOT_LG, 0, 0, SHOT_LG, MASK_LG, tL)) {
-        project(tS, tP); sm.set(tP, row * SHOT_P); lg.set(tL, row * dL); ok[row] = 1;
+  const imgs = await Promise.all(D.champIndex.map(s => loadImg(champUrl(s)).catch(() => null).then(im => {
+    if (++done % 25 === 0 && progress) progress(`Learning the champions… ${done} of ${D.champIndex.length}`);
+    return im;
+  })));
+  imgs.forEach((im, ci) => {
+    if (!im) return;
+    for (const cr of [1, 0.86]) {
+      const s = im.naturalWidth * cr, o = (im.naturalWidth - s) / 2;
+      cx.clearRect(0, 0, SHOT_N, SHOT_N);
+      cx.drawImage(im, o, o, s, s, 0, 0, SHOT_N, SHOT_N);
+      const px = cx.getImageData(0, 0, SHOT_N, SHOT_N).data;
+      for (const kind of ['pick', 'ban']) { const d = shotDesc(px, MASKS[kind]); if (d) lib[kind].push([ci, d]); }
+    }
+  });
+  SHOT.lib = lib;
+  return lib;
+}
+/* The best champion at one spot, nudged within a fifth of its size and
+   resized by up to fifteen per cent: {ci, best, second, x, y, s}. */
+function shotRead1(full, cx, lib, kind, cxp, cyp, s0) {
+  const mask = MASKS[kind], L = lib[kind];
+  let best = null;
+  for (let s = s0 * 0.86; s <= s0 * 1.16; s *= 1.05) {
+    for (let dy = -0.2; dy <= 0.2001; dy += 0.1) for (let dx = -0.2; dx <= 0.2001; dx += 0.1) {
+      const x = cxp - s / 2 + dx * s0, y = cyp - s / 2 + dy * s0;
+      if (x < 0 || y < 0 || x + s > full.width || y + s > full.height) continue;
+      cx.clearRect(0, 0, SHOT_N, SHOT_N);
+      cx.drawImage(full, x, y, s, s, 0, 0, SHOT_N, SHOT_N);
+      const d = shotDesc(cx.getImageData(0, 0, SHOT_N, SHOT_N).data, mask);
+      if (!d) continue;
+      const per = new Map();
+      for (const [ci, v] of L) {
+        let sc = 0;
+        for (let i = 0; i < d.length; i++) sc += d[i] * v[i];
+        if (!per.has(ci) || sc > per.get(ci)) per.set(ci, sc);
       }
-    });
-    if (++done % 20 === 0 && progress) progress(`Learning the champions… ${done} of ${slugs.length}`);
-  }));
-  SHOT.lib = { n, sm, lg, who, ok, dL };
-  return SHOT.lib;
+      let b1 = -1, c1 = -1, b2 = -1;
+      per.forEach((sc, ci) => { if (sc > b1) { b2 = b1; b1 = sc; c1 = ci; } else if (sc > b2) b2 = sc; });
+      if (!best || b1 > best.best) best = { ci: c1, best: b1, second: b2, x, y, s };
+    }
+  }
+  return best;
 }
 const tick = () => new Promise(r => setTimeout(r, 0));
-/* Every place in the screenshot that looks like a champion icon:
-   [{x, y, s, ci, score}] in the screenshot's own pixels, best first.
-   A match must be close (0.8 of a perfect fingerprint) and clearly better
-   than the next champion (by 0.12): background art can look a bit like
-   anything, but never a lot like one champion and not the others. */
-async function shotFind(img, progress) {
-  const L = await shotLibrary(progress);
+/* Read every slot. A match needs to be close (0.62) and clear of the next
+   champion (0.08); one that is clear but not by much (under 0.15) is kept
+   and marked for checking. */
+async function shotRead(img, progress) {
+  const lib = await shotLibrary(progress);
   const W = img.naturalWidth, H = img.naturalHeight;
   const full = document.createElement('canvas');
   full.width = W; full.height = H;
   full.getContext('2d').drawImage(img, 0, 0);
-  const work = document.createElement('canvas'), wx = work.getContext('2d', { willReadFrequently: true });
-  const d = new Float32Array(MASK_SM.length * 3), p = new Float32Array(SHOT_P);
-  const rough = [];
-  const base = Math.min(W, H * 16 / 9) / (16 / 9);    // the client's height, if it fills the width
-  for (let S = SHOT_LAYOUT.minIcon * base; S <= SHOT_LAYOUT.maxIcon * base; S *= 1.16) {
-    const f = SHOT_SM / S, w = Math.max(SHOT_SM, Math.round(W * f)), h = Math.max(SHOT_SM, Math.round(H * f));
-    work.width = w; work.height = h;
-    wx.imageSmoothingQuality = 'high';
-    wx.drawImage(img, 0, 0, w, h);
-    const px = wx.getImageData(0, 0, w, h).data, gw = w - SHOT_SM + 1, gh = h - SHOT_SM + 1;
-    const score = new Float32Array(gw * gh).fill(-1);
-    for (let y = 0; y < gh; y++) {
-      for (let x = 0; x < gw; x++) {
-        if (!shotDesc(px, w, x, y, SHOT_SM, MASK_SM, d)) continue;
-        project(d, p);
-        let best = -1;
-        for (let r = 0; r < L.n; r++) {
-          if (!L.ok[r]) continue;
-          let s = 0;
-          const o = r * SHOT_P;
-          for (let i = 0; i < SHOT_P; i++) s += p[i] * L.sm[o + i];
-          if (s > best) best = s;
-        }
-        score[y * gw + x] = best;
-      }
-      if (y % 40 === 39) await tick();
-    }
-    /* Only the best spot in each neighbourhood goes on to the careful pass. */
-    for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
-      const v = score[y * gw + x];
-      if (v < 0.75) continue;
-      let top = true;
-      for (let dy = -2; dy <= 2 && top; dy++) for (let dx = -2; dx <= 2; dx++) {
-        const yy = y + dy, xx = x + dx;
-        if ((dx || dy) && yy >= 0 && xx >= 0 && yy < gh && xx < gw && score[yy * gw + xx] > v) { top = false; break; }
-      }
-      if (top) rough.push({ x: x / f, y: y / f, s: S, score: v });
-    }
-    if (progress) progress(`Searching at icon size ${Math.round(S)}px…`);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = SHOT_N;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  const P = SHOT_LAYOUT.pick, B = SHOT_LAYOUT.ban, out = { us: [], them: [], bansUs: [], bansThem: [], spots: [] };
+  const take = (list, kind, x, y, s) => {
+    const r = shotRead1(full, cx, lib, kind, x, y, s);
+    const ok = !!r && r.best >= 0.62 && r.best - r.second >= 0.08;
+    out.spots.push({ x: x - s / 2, y: y - s / 2, s, r, ok, list });
+    list.push(ok ? Object.assign(r, { unsure: r.best - r.second < 0.15 }) : null);
+  };
+  for (let k = 0; k < 5; k++) {
+    if (progress) progress(`Reading pick ${k + 1} of 5…`);
+    const y = (P.top + P.step * k) * H;
+    take(out.us, 'pick', P.left * H, y, P.size * H);
+    take(out.them, 'pick', W - P.right * H, y, P.size * H);
     await tick();
   }
-  rough.sort((a, b) => b.score - a.score);
-  const cL = document.createElement('canvas');
-  cL.width = cL.height = SHOT_LG;
-  const xL = cL.getContext('2d', { willReadFrequently: true });
-  const t = new Float32Array(L.dL), found = [];
-  const fine = (x, y, s) => {
-    xL.clearRect(0, 0, SHOT_LG, SHOT_LG);
-    xL.drawImage(full, x, y, s, s, 0, 0, SHOT_LG, SHOT_LG);
-    return shotDesc(xL.getImageData(0, 0, SHOT_LG, SHOT_LG).data, SHOT_LG, 0, 0, SHOT_LG, MASK_LG, t);
-  };
-  const dot = r => { let sc = 0; const o = r * L.dL; for (let i = 0; i < L.dL; i++) sc += t[i] * L.lg[o + i]; return sc; };
-  /* Best and runner-up champion for the window in t. */
-  const rank = rows => {
-    const per = new Map();
-    for (const r of rows) { if (!L.ok[r]) continue; const sc = dot(r), ci = L.who[r]; if (!per.has(ci) || sc > per.get(ci)) per.set(ci, sc); }
-    const top = [...per.entries()].sort((a, b) => b[1] - a[1]);
-    return { ci: top[0] ? top[0][0] : -1, best: top[0] ? top[0][1] : -1, second: top[1] ? top[1][1] : -1, top };
-  };
-  const ALL = [...Array(L.n).keys()];
-  const near = (a, b) => Math.abs(a.x + a.s / 2 - b.x - b.s / 2) < Math.max(a.s, b.s) * 0.5 && Math.abs(a.y + a.s / 2 - b.y - b.s / 2) < Math.max(a.s, b.s) * 0.5;
-  let k = 0;
-  for (const c of rough.slice(0, 500)) {
-    if (found.some(f => near(f, c))) continue;
-    if (++k % 40 === 0) { if (progress) progress(`Checking likely icons… ${found.length} found`); await tick(); }
-    if (!fine(c.x, c.y, c.s)) continue;
-    /* The few likeliest champions here, then the window nudged for them. */
-    const shortlist = rank(ALL).top.slice(0, 4).map(e => e[0]);
-    const rows = ALL.filter(r => shortlist.includes(L.who[r]));
-    let best = { score: -1 };
-    for (const ds of [0.88, 1, 1.12]) for (const dx of [-0.12, 0, 0.12]) for (const dy of [-0.12, 0, 0.12]) {
-      const s = c.s * ds, x = c.x + (c.s - s) / 2 + dx * c.s, y = c.y + (c.s - s) / 2 + dy * c.s;
-      if (x < 0 || y < 0 || x + s > W || y + s > H || !fine(x, y, s)) continue;
-      const R = rank(rows);
-      if (R.best > best.score) best = { x, y, s, score: R.best, ci: R.ci };
-    }
-    if (best.score < 0.8 || !fine(best.x, best.y, best.s)) continue;
-    const R = rank(ALL);
-    if (R.ci === best.ci && R.best - R.second >= 0.12) found.push(Object.assign(best, { margin: R.best - R.second }));
+  if (progress) progress('Reading the bans…');
+  for (let k = 0; k < 5; k++) {
+    take(out.bansUs, 'ban', (B.left + B.step * k) * H, B.y * H, B.size * H);
+    take(out.bansThem, 'ban', W - (B.right + B.step * (4 - k)) * H, B.y * H, B.size * H);
   }
-  return found.sort((a, b) => b.score - a.score);
+  return out;
 }
-/* Which match is which: picks down each side in order, bans along the top. */
-function shotAssign(found, W, H) {
-  const cx = f => (f.x + f.s / 2) / W, cy = f => (f.y + f.s / 2) / H;
-  const used = new Set(), take = list => list.filter(f => !used.has(f.ci) && used.add(f.ci));
-  const bans = found.filter(f => cy(f) < SHOT_LAYOUT.banTop);
-  const left = found.filter(f => cy(f) >= SHOT_LAYOUT.banTop && cx(f) < SHOT_LAYOUT.pickLeft);
-  const right = found.filter(f => cy(f) >= SHOT_LAYOUT.banTop && cx(f) > SHOT_LAYOUT.pickRight);
-  /* Five at most a side: the best-scoring five, then put back in screen order. */
-  const top5 = (list, key) => take(list.slice().sort((a, b) => b.score - a.score)).slice(0, 5).sort((a, b) => key(a) - key(b));
-  return {
-    us: top5(left, f => f.y), them: top5(right, f => f.y),
-    bansUs: top5(bans.filter(f => cx(f) < 0.5), f => f.x), bansThem: top5(bans.filter(f => cx(f) >= 0.5), f => f.x),
-  };
-}
-/* A small copy of the screenshot with every match boxed, for checking. */
-function shotPreview(img, found, A) {
+/* A small copy of the screenshot with every slot boxed, for checking. */
+function shotPreview(img, A) {
   const c = document.createElement('canvas'), k = Math.min(1, 900 / img.naturalWidth);
   c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
   const x = c.getContext('2d');
   x.drawImage(img, 0, 0, c.width, c.height);
-  const kind = new Map();
-  A.us.forEach(f => kind.set(f, '#4c8dff')); A.them.forEach(f => kind.set(f, '#ff5f5f'));
-  A.bansUs.forEach(f => kind.set(f, '#8fb6ff')); A.bansThem.forEach(f => kind.set(f, '#ff9a9a'));
-  x.lineWidth = 2; x.font = '11px Inter, sans-serif';
-  found.forEach(f => {
-    const col = kind.get(f) || 'rgba(255,255,255,0.35)';
-    x.strokeStyle = col; x.strokeRect(f.x * k, f.y * k, f.s * k, f.s * k);
-    if (kind.has(f)) { x.fillStyle = col; x.fillText(C(D.champIndex[f.ci]).n, f.x * k, f.y * k - 3); }
+  x.lineWidth = 2; x.font = 'bold 11px Inter, sans-serif';
+  A.spots.forEach(sp => {
+    const col = !sp.ok ? 'rgba(255,255,255,0.4)' : sp.list === A.us ? '#4c8dff' : sp.list === A.them ? '#ff5f5f' : '#ffcf70';
+    x.strokeStyle = col;
+    x.strokeRect(sp.x * k, sp.y * k, sp.s * k, sp.s * k);
+    if (sp.ok) { x.fillStyle = col; x.fillText(C(D.champIndex[sp.r.ci]).n, sp.x * k, sp.y * k + sp.s * k + 11); }
   });
   return c.toDataURL('image/jpeg', 0.8);
 }
@@ -225,9 +165,15 @@ async function readScreenshot(file) {
   drawShot();
   try {
     const url = URL.createObjectURL(file), img = await loadImg(url);
-    const found = await shotFind(img, m => { UI.shot = { msg: m }; drawShot(); });
-    const A = shotAssign(found, img.naturalWidth, img.naturalHeight);
-    UI.shot = { A, preview: shotPreview(img, found, A), n: found.length };
+    const ratio = img.naturalWidth / img.naturalHeight;
+    const A = await shotRead(img, m => { UI.shot = { msg: m }; drawShot(); });
+    const hits = [...A.us, ...A.them, ...A.bansUs, ...A.bansThem].filter(Boolean), found = hits.length;
+    /* Real champion select gives clear matches; anything else (the loading
+       screen, a desktop around a small window) gives a few weak ones. */
+    const shaky = hits.filter(f => f.unsure).length > found / 2;
+    UI.shot = { A, preview: shotPreview(img, A), found,
+      warn: ratio < 1.6 || ratio > 2.1 ? 'This does not look like the client window on its own; crop to the window (Alt+Print Screen) for the best read.'
+        : !found || shaky ? 'This does not look like champion select: most of what was found is a weak match. Take the screenshot during champion select, cropped to the client window (Alt+Print Screen).' : '' };
     URL.revokeObjectURL(url);
   } catch (e) {
     UI.shot = { msg: 'That screenshot could not be read: ' + (e.message || e) };
@@ -235,13 +181,21 @@ async function readScreenshot(file) {
   SHOT.busy = false;
   drawShot();
 }
+/* Into the board: champions into the slots they were read from, and, where
+   your team's lanes can be told from its champions, those too. */
 function applyShot() {
   const st = draftState(), A = (UI.shot || {}).A;
   if (!A) return;
-  A.us.forEach((f, i) => { st.us[i].c = D.champIndex[f.ci]; });
-  A.them.forEach((f, i) => { st.them[i].c = D.champIndex[f.ci]; });
-  A.bansUs.forEach((f, i) => { st.bans.us[i] = D.champIndex[f.ci]; });
-  A.bansThem.forEach((f, i) => { st.bans.them[i] = D.champIndex[f.ci]; });
+  const name = f => f ? D.champIndex[f.ci] : null;
+  A.us.forEach((f, i) => { if (f) st.us[i].c = name(f); });
+  A.them.forEach((f, i) => { if (f) st.them[i].c = name(f); });
+  A.bansUs.forEach((f, i) => { if (f) st.bans.us[i] = name(f); });
+  A.bansThem.forEach((f, i) => { if (f) st.bans.them[i] = name(f); });
+  /* Your lanes, guessed the way the enemy's are: every champion at once,
+     the likeliest way to give them one lane each. All of it is used, so no
+     two of you end up in the same lane; a wrong one is a dropdown away. */
+  const mine = enemyRoles({ them: st.us.map(x => ({ c: x.c, r: '' })) });
+  Object.entries(mine).forEach(([i, g]) => { st.us[i].r = g.r; });
   st.focus = null;
   UI.shot = null;
   saveDraft();
@@ -253,15 +207,17 @@ function drawShot() {
 }
 function shotCard() {
   const U = UI.shot;
-  const list = (title, arr) => `<div class="sh-list"><span class="muted small">${title}</span>${arr.length ? arr.map(f => `<span class="sh-hit" title="match ${(100 * f.score).toFixed(0)}%">${cicon(D.champIndex[f.ci], 26)}<small>${(100 * f.score).toFixed(0)}%</small></span>`).join('') : '<span class="muted small">none found</span>'}</div>`;
+  const list = (title, arr) => `<div class="sh-list"><span class="muted small">${title}</span>${arr.map(f => f
+    ? `<span class="sh-hit${f.unsure ? ' unsure' : ''}" title="${esc(C(D.champIndex[f.ci]).n)}: match ${(100 * f.best).toFixed(0)}%${f.unsure ? ', worth checking' : ''}">${cicon(D.champIndex[f.ci], 28)}<small>${f.unsure ? 'check' : (100 * f.best).toFixed(0) + '%'}</small></span>`
+    : '<span class="sh-hit none" title="Nothing clear here"><span class="sh-blank">?</span><small>blank</small></span>').join('')}</div>`;
   let body = '';
   if (U && U.msg) body = `<div class="muted small sh-msg">${esc(U.msg)}</div>`;
-  else if (U && U.A) body = `<div class="sh-res"><img class="sh-prev" src="${U.preview}" alt="The screenshot with each match boxed">` +
-    `<div class="sh-found">${list('Your picks', U.A.us)}${list('Enemy picks', U.A.them)}${list('Your bans', U.A.bansUs)}${list('Enemy bans', U.A.bansThem)}` +
+  else if (U && U.A) body = `<div class="sh-res"><img class="sh-prev" src="${U.preview}" alt="The screenshot with each slot boxed and named">` +
+    `<div class="sh-found">${U.warn ? `<div class="ms-warn">⚠ ${esc(U.warn)}</div>` : ''}${list('Your picks, in pick order', U.A.us)}${list('Enemy picks', U.A.them)}${list('Your bans', U.A.bansUs)}${list('Enemy bans', U.A.bansThem)}` +
     `<div class="ms-act"><button type="button" class="pill sm on" data-shot-apply>Fill the board</button><button type="button" class="linkbtn" data-shot-clear>Discard</button></div>` +
-    `<p class="muted small">Blue boxes are your team, red the enemy, light boxes bans; grey boxes were seen but left out. Anything wrong can be fixed on the board after filling it.</p></div></div>`;
+    `<p class="muted small">Boxes show where it looked: blue your team, red the enemy, gold the bans, faint where nothing was clear. "check" means the match was close; anything wrong can be fixed on the board.</p></div></div>`;
   return `<div id="shotcard">` + card('From a screenshot',
-    'Paste a screenshot of champion select (Ctrl+V anywhere on this tab), drop one here, or choose a file. It is read in this browser and never uploaded. ' +
-    'Your picks are read from the left of the screen and the enemy\'s from the right, in pick order, with the bans along the top.',
+    'Take a screenshot of the client window in champion select (Alt+Print Screen, or Win+Shift+S around the window), then paste it anywhere on this tab with Ctrl+V, drop it here, or choose the file. ' +
+    'It is read in this browser and never uploaded. Your picks come from the left in pick order, the enemy\'s from the right, and the bans from the top corners; your lanes are guessed from your champions.',
     `<label class="sh-drop" data-shot-drop><input type="file" accept="image/*" data-shot-file hidden><span>📷 Drop a screenshot here, paste with Ctrl+V, or click to choose one</span></label>${body}`) + '</div>';
 }

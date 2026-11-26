@@ -30,6 +30,10 @@
       {
         "type": "added",
         "text": "Matchups on each profile's Champions tab: pick any champion the player has three or more games on (and the role, if they play it in more than one) to see every lane opponent they have faced, with their record, lane gold at 15 minutes and KDA, beside how everyone in the stored lobbies does in the same matchup, plus their best and worst matchups. Each champion card links straight to its matchups."
+      },
+      {
+        "type": "added",
+        "text": "Fill the draft from a screenshot: in champion select, take a screenshot of the client window (Alt+Print Screen) and paste it on the Draft tab with Ctrl+V, or drop it in. Both teams' picks and bans are read from the champion icons, your lanes are guessed from your champions, and you check what was found before it fills the board. It runs in your browser; the screenshot is never uploaded."
       }
     ]
   },

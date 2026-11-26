@@ -844,3 +844,6 @@ button.dr-no { cursor: pointer; }
 .mu-sum { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin: 10px 0 12px; }
 .mu-sum > .muted { margin-left: 6px; } .mu-sum > .muted:first-child { margin-left: 0; }
 #matchups { margin-top: 20px; }
+.sh-hit.unsure img { outline: 2px solid #ffcf70; outline-offset: 1px; border-radius: 6px; }
+.sh-hit.unsure small { color: #ffcf70; }
+.sh-blank { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; border: 1px dashed var(--border-strong); color: var(--muted); }
