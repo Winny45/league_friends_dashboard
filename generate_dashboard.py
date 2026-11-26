@@ -7456,6 +7456,15 @@ def lp_export(data):
         solo_games = sorted((m for m in matches if m.get("queue") == "Ranked Solo/Duo"),
                             key=lambda m: m.get("gameStartMs") or 0)
         acc["form"] = [1 if m.get("win") else 0 for m in solo_games[-10:]]
+        # The run the account is on right now in solo queue: +5 is five wins
+        # in a row, -3 three losses. A remake neither extends nor breaks it.
+        streak = 0
+        for m in reversed([m for m in solo_games if not m.get("remake")]):
+            w = 1 if m.get("win") else -1
+            if streak and (streak > 0) != (w > 0):
+                break
+            streak += w
+        acc["streak"] = streak
         acc["champLp"] = {c: [round(v) for v in vals] for c, vals in champ_lp.items() if c and any(vals)}
         out[label] = acc
     return out

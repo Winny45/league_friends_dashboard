@@ -21,6 +21,20 @@ import scoring
 from analysis_util import LANE_ZONE, ROLES, STATS, mean, pct_of, rnd, uk_time
 from analysis_views import CALLOUT_GAMES, LOW_GAMES
 
+
+def _division(v):
+    """A ladder position (400 a tier, 100 a division) as a whole number of
+    divisions, Master and above counting as one step each."""
+    tier = min(9, int(v // 400))
+    return tier * 4 + (3 if tier >= 7 else int((v - tier * 400) // 100))
+
+
+def _ladder_name(v):
+    tier = min(9, int(v // 400))
+    if tier >= 7:
+        return scoring.TIER_NAMES[tier]
+    return f"{scoring.TIER_NAMES[tier]} {scoring.DIVISION_NAME[4 - int((v - tier * 400) // 100)]}"
+
 CARD_MIN = 10           # a champion card on a profile needs this many games
 CHAMPION_ROLE_MIN = 5   # a champion's page lists a role from this many games
 COUNTER_SHOW = 12       # matchups listed on a champion's page
@@ -243,6 +257,64 @@ class SiteViews:
                 bot = rl.most_common(1)[0][0] == frozenset(("BOTTOM", "UTILITY"))
                 out["items"].append(["duo", a, f"{a} + {b}: {w}W {l}L{' bot lane' if bot else ''}", b])
 
+        # Ranks this week, from each login's end-of-day solo and flex readings:
+        # the last reading before Monday against the latest one.
+        monday_key = monday.strftime("%Y-%m-%d")
+        owner = {}
+        for f in self.friends:
+            for a in f.get("accounts") or [f["label"]]:
+                owner[a] = f["label"]
+        climb, promos = Counter(), []
+        for acct, acc in (self.accounts or {}).items():
+            for qk, qn in (("solo", "Solo/Duo"), ("flex", "Flex")):
+                daily = ((acc.get("q") or {}).get(qk) or {}).get("daily") or []
+                if not daily or daily[-1][0] < monday_key:
+                    continue
+                before = [v for d, v in daily if d < monday_key]
+                start, end = (before[-1] if before else daily[0][1]), daily[-1][1]
+                if qk == "solo":
+                    climb[owner.get(acct, acct)] += end - start
+                if before and _division(end) > _division(start):
+                    promos.append((acct, f"{_ladder_name(start)} → {_ladder_name(end)}"
+                                   + ("" if qk == "solo" else " in Flex")))
+        if climb:
+            label, lp = climb.most_common(1)[0]
+            if lp > 0:
+                out["items"].append(["climber", label, f"{label} is up {lp} LP in Solo/Duo since Monday", None])
+        if promos:
+            out["items"].append(["promo", promos[0][0], " · ".join(f"{l}: {txt}" for l, txt in promos), None])
+
+        # The best single game, and who played the most.
+        week_rows = [r for r in self.rows if r["friend"] and r["score"] is not None and r["t0"] >= since_ms]
+        if week_rows:
+            r = max(week_rows, key=lambda r: r["score"])
+            day = uk_time(r["t0"]).strftime("%A")
+            out["items"].append(["best", r["friend"], f"{r['friend']} on {self.champ_name(r['champ'])}, {day}",
+                                 [r["game"], r["team"], round(r["score"], 1)]])
+        if rec:
+            label, (w, l) = max(rec.items(), key=lambda kv: (sum(kv[1]), kv[1][0]))
+            if w + l >= 5:
+                out["items"].append(["grinder", label, f"{label} has played {w + l} games this week ({w}W {l}L)", None])
+
+        # A champion someone played this week and never before this season.
+        scored = {(r["friend"], r["game"]): r["score"] for r in self.rows if r["friend"]}
+        newest = []
+        for label in self.labels:
+            seen, fresh = set(), defaultdict(list)
+            for m in sorted(self.season[label], key=lambda m: m.get("gameStartMs") or 0):
+                c = m.get("champion")
+                if (m.get("gameStartMs") or 0) < since_ms:
+                    seen.add(c)
+                elif c not in seen:
+                    fresh[c].append(m)
+            for c, ms_ in fresh.items():
+                newest.append((len(ms_), sum(1 for m in ms_ if m.get("win")), label, c, ms_))
+        if newest:
+            n, w, label, c, ms_ = max(newest, key=lambda x: (x[0], x[1]))
+            sc = [scored[(label, m["matchId"])] for m in ms_ if scored.get((label, m.get("matchId"))) is not None]
+            avg = f", average score {round(sum(sc) / len(sc))}" if sc else ""
+            out["items"].append(["newpick", label, f"{label} tried {self.champ_name(c)} for the first time: {w}W {n - w}L{avg}", c])
+
         comebacks = [self.sides[(s["id"], s["team"])] for s in sides
                      if (s["id"], s["team"]) in self.sides and self.sides[(s["id"], s["team"])]["comeback"]]
         if comebacks:
@@ -410,21 +482,31 @@ class SiteViews:
                 ("vis", "Eagle eye", "👁️", "Highest vision score in a game", lambda r: r["vpm"] * r["dur"]),
                 ("k", "Killing spree", "⚔️", "Most kills in a game", lambda r: r["k"]),
                 ("dmg", "Heavy hitter", "💥", "Most damage to champions in a game", lambda r: r["dpm"] * r["dur"]),
-                ("score", "Masterclass", "🏅", "Highest game score", lambda r: r["score"])]
+                ("score", "Masterclass", "🏅", "Highest game score", lambda r: r["score"]),
+                ("cs", "Farmer", "🌾", "Most CS in a game", lambda r: round(r["cspm"] * r["dur"]) if r.get("cspm") is not None else None),
+                ("dshare", "Main character", "🎯", "Highest share of the team's damage in a game",
+                 lambda r: r["dshare"]),
+                # Ranked cannot be surrendered before fifteen minutes, so anything
+                # shorter is a remake or a leaver, not a fast win.
+                ("fast", "Speedrun", "⏱️", "Fastest win", lambda r: r["dur"] * 60 if r["win"] and r["dur"] >= 15 else None),
+                ("long", "Marathon game", "🕰️", "Longest game", lambda r: r["dur"] * 60)]
+        # How the page shows each number: a count unless named here.
+        fmt = {"dshare": "pct", "fast": "time", "long": "time"}
+        low = {"fast"}
         out = []
         for key, title, icon, desc, fn in defs:
             vals = [(fn(r), r) for label in self.labels for r in self.friend_rows[label] if fn(r) is not None]
-            vals.sort(key=lambda v: -v[0])
+            vals.sort(key=lambda v: v[0] if key in low else -v[0])
             top, seen = [], set()
             for v, r in vals:
                 if r["friend"] in seen:
                     continue
                 seen.add(r["friend"])
-                top.append([r["friend"], round(v, 1) if isinstance(v, float) else v, r["game"], r["team"], r["champ"], r["t0"]])
+                top.append([r["friend"], (round(v, 4) if key == "dshare" else round(v, 1)) if isinstance(v, float) else v, r["game"], r["team"], r["champ"], r["t0"]])
                 if len(top) == 3:
                     break
             if top:
-                out.append({"key": key, "title": title, "icon": icon, "desc": desc, "top": top})
+                out.append({"key": key, "title": title, "icon": icon, "desc": desc, "top": top, "fmt": fmt.get(key, "int")})
         return out
 
     # -- everything ------------------------------------------------------------

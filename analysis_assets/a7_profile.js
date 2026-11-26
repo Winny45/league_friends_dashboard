@@ -39,8 +39,8 @@ function ring(v, s = 46) {
   const svg = `<svg class="ring" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" role="img" aria-label="Score ${Math.round(v)}">` +
     `<circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="#2a3040" stroke-width="3"/>` +
     `<circle cx="${s / 2}" cy="${s / 2}" r="${r}" fill="none" stroke="${colr}" stroke-width="3" stroke-dasharray="${(c * k).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 ${s / 2} ${s / 2})" stroke-linecap="round"/>` +
-    `<text x="${s / 2}" y="${s / 2 + 5}" text-anchor="middle" style="fill:${hot ? colr : '#f2f4f8'};font-size:${s > 40 ? 15 : 12}px;font-weight:800">${Math.round(v)}</text></svg>`;
-  return hot ? `<span class="hotring" title="90+: a game better than nine in ten for that role and rank">${svg}<i></i><i></i><i></i></span>` : svg;
+    `<text x="${s / 2}" y="${s / 2 + 5}" text-anchor="middle" style="fill:#f2f4f8;font-size:${s > 40 ? 15 : 12}px;font-weight:800">${Math.round(v)}</text></svg>`;
+  return hot ? fire('blue', svg, s, '90+: a game better than nine in ten for that role and rank') : svg;
 }
 
 /* ---- the header ---------------------------------------------------------------- */

@@ -275,8 +275,64 @@ const scoreRGB = v => v >= HOT ? '#4fb3ff' : `rgb(${blend([255, 122, 122], [110,
 function scoreNum(v, coloured = true) {
   if (v == null) return '<span class="muted">-</span>';
   const n = Math.round(v);
-  return n >= HOT ? `<b class="hot" style="color:${scoreRGB(n)}" title="90+: a game better than nine in ten for that role and rank">${n}</b>`
+  return n >= HOT ? fire('blue', `<b style="color:#e8f6ff">${n}</b>`, 'em', '90+: a game better than nine in ten for that role and rank')
     : `<b${coloured ? ` style="color:${scoreRGB(n)}"` : ''}>${n}</b>`;
+}
+
+/* ---- a ring of fire -------------------------------------------------------------
+   Flames all the way round something, the way Overwatch set a portrait on
+   fire: tongues taller at the top than the bottom, leaning upward, each
+   flickering on its own beat. The drawing sits behind the content and spills
+   past it; the content keeps its own size and place.
+     blue    a game score of 90+
+     green   three wins in a row; gold (and shining) for ten
+     smoke   three losses in a row: the fire has gone out
+     doom    ten losses in a row: something has gone badly wrong */
+const FIRE = {
+  blue: { o: ['#0a3fb8', '#2d8cff'], i: ['#7cc8ff', '#f2fbff'], glow: '#3d9bff', sp: 0.85 },
+  green: { o: ['#06702f', '#22c55e'], i: ['#8af0b0', '#f2fff6'], glow: '#22c55e', sp: 0.85 },
+  gold: { o: ['#a15c07', '#f5b301'], i: ['#ffe27a', '#fffdf0'], glow: '#f5c542', sp: 0.75 },
+  smoke: { o: ['#2a2f3a', '#6b7280'], i: ['#9aa3b2', '#d7dbe2'], glow: '#6b7280', sp: 2.1 },
+  doom: { o: ['#1a0610', '#9f1239'], i: ['#e11d48', '#fda4af'], glow: '#be123c', sp: 1.3 },
+};
+let FIRE_N = 0;
+function fireSvg(kind) {
+  const P = FIRE[kind] || FIRE.blue, id = 'fr' + (++FIRE_N), C0 = 85, R0 = 46;
+  /* One tongue, pointing up from (0, 0): a wide base that narrows into a tip
+     curling to one side, like a flame caught by the air. */
+  const shape = (len, w, curl) => `M${-w} 3C${-w} ${(-len * 0.3).toFixed(1)} ${(-w * 0.85).toFixed(1)} ${(-len * 0.55).toFixed(1)} ${(-w * 0.2 + curl * 0.3).toFixed(1)} ${(-len * 0.78).toFixed(1)}` +
+    `Q${(curl * 0.6).toFixed(1)} ${(-len * 0.93).toFixed(1)} ${curl.toFixed(1)} ${(-len).toFixed(1)}C${(w * 0.15 + curl * 0.2).toFixed(1)} ${(-len * 0.7).toFixed(1)} ${(w * 1.05).toFixed(1)} ${(-len * 0.42).toFixed(1)} ${w} 3Z`;
+  const tongue = (a, len, w, cls, k) => {
+    const rad = a * Math.PI / 180, x = C0 + R0 * Math.sin(rad), y = C0 - R0 * Math.cos(rad);
+    /* Sides lean toward the top, so the whole ring burns upward. */
+    const lean = a > 180 ? (a - 360) * 0.6 : a * 0.6;
+    const curl = [3, -4, 5, -2, 4, -5, 2][k % 7];
+    /* Placed by the group; the path inside is free for the CSS flicker,
+       which would otherwise replace the placement. */
+    return `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${lean.toFixed(1)})"><path class="${cls}" ` +
+      `style="animation-delay:-${((k * 0.29) % 1.3).toFixed(2)}s;animation-duration:calc(var(--sp) * ${(0.8 + (k % 5) * 0.12).toFixed(2)})" d="${shape(len, w, curl)}"/></g>`;
+  };
+  /* Taller at the top (cos is 1 there, -1 at the bottom), and uneven. */
+  const len = (a, base, k) => base * (0.35 + 0.65 * Math.pow((1 + Math.cos(a * Math.PI / 180)) / 2, 1.3)) * [1, 0.78, 1.15, 0.86, 1.06, 0.7, 0.95][k % 7];
+  let outer = '', mid = '', core = '';
+  for (let k = 0; k < 20; k++) { const a = k * 18; outer += tongue(a, len(a, 44, k) + 6, 11, 'to', k); }
+  for (let k = 0; k < 20; k++) { const a = k * 18 + 9; mid += tongue(a, len(a, 30, k + 3) + 4, 8, 'tm', k + 5); }
+  for (let k = 0; k < 16; k++) { const a = k * 22.5 + 4; core += tongue(a, len(a, 16, k + 1) + 3, 6, 'ti', k + 11); }
+  return `<svg class="fl" viewBox="0 0 170 170" aria-hidden="true" style="--sp:${P.sp}s"><defs>` +
+    `<linearGradient id="${id}o" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="${P.o[1]}"/><stop offset=".55" stop-color="${P.o[0]}" stop-opacity=".9"/><stop offset="1" stop-color="${P.o[0]}" stop-opacity="0"/></linearGradient>` +
+    `<linearGradient id="${id}m" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="${P.i[0]}"/><stop offset="1" stop-color="${P.o[1]}" stop-opacity=".1"/></linearGradient>` +
+    `<linearGradient id="${id}i" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="${P.i[1]}"/><stop offset="1" stop-color="${P.i[0]}" stop-opacity=".2"/></linearGradient>` +
+    `<radialGradient id="${id}g"><stop offset=".5" stop-color="${P.glow}" stop-opacity=".6"/><stop offset="1" stop-color="${P.glow}" stop-opacity="0"/></radialGradient>` +
+    `<filter id="${id}b" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.6"/></filter></defs>` +
+    `<circle cx="${C0}" cy="${C0}" r="82" fill="url(#${id}g)"/>` +
+    `<g fill="url(#${id}o)" filter="url(#${id}b)">${outer}</g><g fill="url(#${id}m)">${mid}</g><g fill="url(#${id}i)">${core}</g></svg>`;
+}
+/* inner: what burns. size: a pixel size for a picture, or 'em' to fit a
+   number in running text. */
+function fire(kind, inner, size, title = '') {
+  const box = size === 'em' ? 'width:1.8em;height:1.8em' : `width:${size}px;height:${size}px`;
+  return `<span class="fire fire-${kind}${size === 'em' ? ' fire-em' : ''}" style="${box}"${title ? ` title="${esc(title)}"` : ''}>${fireSvg(kind)}<span class="fc">${inner}</span>` +
+    (kind === 'gold' ? '<i class="spk"></i><i class="spk"></i><i class="spk"></i>' : '') + '</span>';
 }
 function scoreBar(v, title = '') {
   if (v == null) return '<span class="muted">-</span>';

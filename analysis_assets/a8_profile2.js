@@ -177,7 +177,7 @@ function recordsFor(label) {
   });
   D.bests.forEach(b => { const k = b.top.findIndex(t => t[0] === label);
     if (k >= 0) { const t = b.top[k]; out.push({ icon: b.icon, title: b.title, place: k, game: [t[2], t[3]],
-      text: `${esc(b.desc)}: <b>${typeof t[1] === 'number' ? Math.round(t[1]).toLocaleString('en-GB') : esc(t[1])}</b> on ${esc(C(t[4]).n)}, ${DS.format(new Date(t[5]))}${k ? ` · group #${k + 1}` : ''}.` }); } });
+      text: `${esc(b.desc)}: ${bestVal(b, t[1])} on ${esc(C(t[4]).n)}, ${DS.format(new Date(t[5]))}${k ? ` · group #${k + 1}` : ''}.` }); } });
   return out.sort((a, b) => a.place - b.place);
 }
 const recordCard = r => `<div class="award" style="--stripe:${r.place === 0 ? 'var(--warn)' : 'var(--violet)'}"><div class="award-icon">${r.icon}</div><div class="award-body">` +

@@ -20,6 +20,16 @@ def _day_label(ms):
     return uk_time(ms).strftime("%a %d %b").replace(" 0", " ")
 
 
+def _day_key(ms):
+    return uk_time(ms or 0).strftime("%Y-%m-%d")
+
+
+def _date_label(key):
+    """2026-11-08 as Sun 8 Nov."""
+    from datetime import datetime
+    return datetime.strptime(key, "%Y-%m-%d").strftime("%a %d %b").replace(" 0", " ")
+
+
 class GroupViews:
 
     # -- roles and classes -----------------------------------------------------
@@ -763,14 +773,75 @@ class GroupViews:
         cb = Counter(f for s in comebacks for f in s["friends"])
         th = Counter(f for s in throws for f in s["friends"])
         played = Counter(f for s in mine for f in s["friends"])
-        if cb:
-            label, n = cb.most_common(1)[0]
-            add("📈", "Comeback specialist", f"{label} has {b(n)} comebacks from 5k+ behind, the most in the group.",
-                label, how=[[l, v, played[l]] for l, v in cb.most_common()])
+        # A share of each person's games, so playing more does not win it.
+        rate = sorted(((cb[l] / played[l], l) for l in played if played[l] >= CALLOUT_GAMES), reverse=True)
+        if rate and rate[0][0] > 0:
+            v, label = rate[0]
+            add("📈", "Comeback specialist",
+                f"{label} came back from 5k+ behind in {b(f'{100 * v:.1f}%')} of their games ({cb[label]} of {played[label]}).",
+                label, how=[[l, f"{100 * x:.1f}%", played[l]] for x, l in rate])
         if th:
             label, n = th.most_common(1)[0]
             add("💸", "Gold leak", f"{label}'s teams lost {b(n)} games after being 5k+ ahead.", label,
                 how=[[l, v, played[l]] for l, v in th.most_common()])
+
+        # Games scored 90 or more: the ones the page shows on fire.
+        hot = Counter({l: sum(1 for r in self.friend_rows[l] if r["score"] is not None and r["score"] >= 90)
+                       for l in self.labels})
+        if hot and max(hot.values()) > 0:
+            label, n = hot.most_common(1)[0]
+            add("🔥", "On fire", f"{label} has {b(n)} game{'s' if n != 1 else ''} scored 90 or more, the most in the group.", label,
+                how=[[l, v, len(self.friend_rows[l])] for l, v in hot.most_common() if v])
+
+        # The most LP one account gained in one day, in one queue.
+        owner = {}
+        for f in self.friends:
+            for a in f.get("accounts") or [f["label"]]:
+                owner[a] = f["label"]
+        day_of = {m["matchId"]: m.get("dateKey") or _day_key(m.get("gameStartMs"))
+                  for l in self.labels for m in self.season[l] if m.get("matchId")}
+        best_days = []
+        for acct, acc in (self.accounts or {}).items():
+            for qk, qn in (("solo", "Solo/Duo"), ("flex", "Flex")):
+                days = Counter()
+                for row in ((acc.get("q") or {}).get(qk) or {}).get("seq") or []:
+                    # Over sixty in one game is a gap in the readings, not a game.
+                    if row[0] in day_of and abs(row[1]) <= 60:
+                        days[day_of[row[0]]] += row[1]
+                if days:
+                    day, lp = days.most_common(1)[0]
+                    if lp > 0:
+                        best_days.append((lp, owner.get(acct, acct), acct, qn, day))
+        if best_days:
+            best_days.sort(reverse=True)
+            lp, label, acct, qn, day = best_days[0]
+            seen, how = set(), []
+            for v, l, a, q, d in best_days:
+                if l not in seen:
+                    seen.add(l)
+                    how.append([l, f"+{v} LP", f"{q}, {_date_label(d)}"])
+            add("📅", "Best day", f"{label} gained {b(f'+{lp} LP')} in {qn} on {_date_label(day)}"
+                + (f" (on {acct})" if acct != label else "") + ".", label, how=how)
+            out[-1]["howCol"] = "Queue and day"
+
+        # Champion variety, and the opposite: the most games on one champion.
+        variety = sorted(((len({m.get("champion") for m in self.season[l]}), l) for l in self.labels
+                          if len(self.season[l]) >= CALLOUT_GAMES), reverse=True)
+        if variety:
+            n, label = variety[0]
+            add("🎲", "Champion pool", f"{label} has played {b(n)} different champions this season, the most in the group.", label,
+                how=[[l, v, len(self.season[l])] for v, l in variety])
+        tricks = []
+        for l in self.labels:
+            games = self.season[l]
+            if len(games) >= CALLOUT_GAMES:
+                champ, n = Counter(m.get("champion") for m in games).most_common(1)[0]
+                tricks.append((n / len(games), l, champ, n, len(games)))
+        if tricks:
+            tricks.sort(reverse=True)
+            v, label, champ, n, total = tricks[0]
+            add("🎯", "One-trick", f"{label} played {b(name(champ))} in {b(f'{100 * v:.0f}%')} of their games this season ({n} of {total}).",
+                label, how=[[l, f"{100 * x:.0f}% {name(c)}", g] for x, l, c, k, g in tricks])
 
         pentas = Counter()
         for label in self.labels:

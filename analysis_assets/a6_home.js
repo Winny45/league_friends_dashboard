@@ -26,16 +26,25 @@ function predOf(label, q = 'solo') {
 /* The last ten solo games, newest on the left, the way a match history reads. */
 const formDots = f => `<span class="form" title="Last ${(f || []).length} solo games, newest first">${(f || []).slice().reverse().map(w => `<i class="${w ? 'w' : 'l'}"></i>`).join('')}</span>`;
 
+/* A run of three or more solo games won or lost sets the picture alight:
+   green for wins, gold at ten; smoke for losses, and worse at ten. */
+function streakFire(label, s, html) {
+  const n = Math.abs(s || 0);
+  if (n < 3) return html;
+  const kind = s > 0 ? (n >= 10 ? 'gold' : 'green') : (n >= 10 ? 'doom' : 'smoke');
+  return fire(kind, html, 44, `${n} solo games ${s > 0 ? 'won' : 'lost'} in a row`);
+}
+const streakTag = s => Math.abs(s || 0) < 3 ? '' : `<span class="stk ${s > 0 ? (s >= 10 ? 'gold' : 'w') : 'l'}">${Math.abs(s)}${s > 0 ? 'W' : 'L'} streak</span>`;
 function accountCard(label) {
   const a = ACC(label), r = (a.ranked || {}).solo, pr = predOf(label), PL = D.players[label] || {};
   const games = r ? r[3] + r[4] : 0;
   const main = PL.main ? RN[PL.main] : '';
   return `<button type="button" class="acct" ${openP(label)}>` +
-    `<div class="acct-top">${av(label, 44)}<div class="acct-id"><b style="color:${col(label)}">${esc(label)}</b>` +
+    `<div class="acct-top">${streakFire(label, a.streak, av(label, 44))}<div class="acct-id"><b style="color:${col(label)}">${esc(label)}</b>` +
     `<span style="color:${r ? TCOL[r[0]] : 'var(--muted)'}">${esc(rankLp(r))}</span></div><span class="muted small acct-role">${esc(main)}</span></div>` +
     `<div class="acct-mid"><span>${games ? `<b>${pc1(100 * r[3] / games)}</b> <span class="muted">${r[3]}W ${r[4]}L</span>` : '<span class="muted">no solo games</span>'}</span>` +
     `${a.lp7 != null ? `<span class="${a.lp7 >= 0 ? 'pos' : 'neg'}">${a.lp7 >= 0 ? '▲' : '▼'} ${signedInt(a.lp7)} LP 7d</span>` : ''}</div>` +
-    `<div class="acct-low">${formDots(a.form)}<span class="muted small">${pr ? `next <b class="pos">${signedInt(pr.win)}</b> / <b class="neg">${signedInt(pr.loss)}</b>${pr.est ? ' <span title="Too few measured games; this is the older estimate">≈</span>' : ''}` : 'next: not enough games'}</span></div></button>`;
+    `<div class="acct-low"><span class="acct-form">${formDots(a.form)}${streakTag(a.streak)}</span><span class="muted small">${pr ? `next <b class="pos">${signedInt(pr.win)}</b> / <b class="neg">${signedInt(pr.loss)}</b>${pr.est ? ' <span title="Too few measured games; this is the older estimate">≈</span>' : ''}` : 'next: not enough games'}</span></div></button>`;
 }
 
 /* Rank after every game, on the same ladder as the daily chart: a gridline
@@ -95,15 +104,19 @@ function last24() {
     (rows.length > 14 ? `<p class="muted small" style="margin-top:10px">and ${rows.length - 14} more.</p>` : '');
 }
 
-const WEEK_ICON = { streak: '🔥', objective: '🐉', night: '🌙', duo: '🤝', comeback: '🔄' };
-const WEEK_TITLE = { streak: 'Hottest streak', objective: 'Objective hog', night: 'Late-night games', duo: 'Duo of the week', comeback: 'Comeback' };
+const WEEK_ICON = { streak: '🔥', climber: '📈', promo: '🎖️', best: '🏅', grinder: '⏳', newpick: '🆕', objective: '🐉', night: '🌙', duo: '🤝', comeback: '🔄' };
+const WEEK_TITLE = { streak: 'Hottest streak', climber: 'Climber of the week', promo: 'Promoted', best: 'Best game of the week', grinder: 'Grinder',
+  newpick: 'New pick', objective: 'Objective hog', night: 'Late-night games', duo: 'Duo of the week', comeback: 'Comeback' };
 function weekItem(it) {
   const [kind, who, text, extra] = it;
-  const link = kind === 'comeback' && extra ? set({ tab: 'game', game: extra[0], team: extra[1], p: '' })
-    : kind === 'duo' ? set({ tab: 'duos', p: '' }) : kind === 'night' ? set({ tab: 'time', p: '' })
-      : kind === 'objective' ? set({ tab: 'roles', p: '' }) : who ? openP(who) : '';
-  const to = { comeback: 'Open game', duo: 'Duos & stacks', night: 'Time patterns', objective: 'Roles & classes' }[kind] || (who ? esc(who) + "'s profile" : '');
-  return `<div class="week"><span class="wk-i">${WEEK_ICON[kind] || '•'}</span><div><b>${WEEK_TITLE[kind] || ''}</b><div class="muted small">${esc(text)}</div></div>` +
+  const game = (kind === 'comeback' || kind === 'best') && extra ? set({ tab: 'game', game: extra[0], team: extra[1], p: '' }) : '';
+  const link = game || (kind === 'duo' ? set({ tab: 'duos', p: '' }) : kind === 'night' ? set({ tab: 'time', p: '' })
+    : kind === 'objective' ? set({ tab: 'roles', p: '' }) : kind === 'newpick' && extra ? set({ tab: 'champions', champ: extra, crole: '', p: '' })
+      : who ? openP(who) : '');
+  const to = game ? 'Open game' : { duo: 'Duos & stacks', night: 'Time patterns', objective: 'Roles & classes', newpick: extra ? esc(C(extra).n) : '' }[kind] || (who ? esc(who) + "'s profile" : '');
+  const lead = kind === 'newpick' && extra ? cicon(extra, 26) : `<span class="wk-i">${WEEK_ICON[kind] || '•'}</span>`;
+  const score = kind === 'best' && extra ? ` <span class="wk-sc">${scoreNum(extra[2])}</span>` : '';
+  return `<div class="week">${lead}<div><b>${WEEK_TITLE[kind] || ''}</b>${score}<div class="muted small">${esc(text)}</div></div>` +
     (link ? `<button type="button" class="linkbtn" ${link}>${to} →</button>` : '') + '</div>';
 }
 

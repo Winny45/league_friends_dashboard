@@ -1,5 +1,35 @@
 [
   {
+    "date": "2026-11-26",
+    "title": "Rings of fire, and new records",
+    "items": [
+      {
+        "type": "changed",
+        "text": "A game score of 90 or more is now ringed in blue flame all the way round, the way Overwatch set a portrait on fire."
+      },
+      {
+        "type": "added",
+        "text": "Account pictures on the Overview catch fire on a streak: green flames for three solo wins in a row and gold, shining, for ten. Three losses in a row turns them to smoke, and ten to a dark red fire. The streak is shown beside the last ten games too."
+      },
+      {
+        "type": "added",
+        "text": "This week gains Climber of the week (most Solo/Duo LP since Monday), Promoted (anyone who went up a division or tier), Best game of the week, Grinder (most games) and New pick (a champion played for the first time this season, and how it went)."
+      },
+      {
+        "type": "added",
+        "text": "New records: On fire (most games scored 90+), Best day (most LP in one day), Champion pool (most different champions) and One-trick (biggest share of games on one champion)."
+      },
+      {
+        "type": "added",
+        "text": "New single-game bests: Speedrun (fastest win), Marathon game (longest game), Farmer (most CS) and Main character (highest share of the team's damage)."
+      },
+      {
+        "type": "changed",
+        "text": "Comeback specialist now goes to whoever comes back from 5k+ behind in the biggest share of their games, rather than the most comebacks in total."
+      }
+    ]
+  },
+  {
     "date": "2026-11-25",
     "title": "A draft helper, champions to learn, and a pick-versus-win chart",
     "items": [
