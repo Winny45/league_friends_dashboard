@@ -847,3 +847,5 @@ button.dr-no { cursor: pointer; }
 .sh-hit.unsure img { outline: 2px solid #ffcf70; outline-offset: 1px; border-radius: 6px; }
 .sh-hit.unsure small { color: #ffcf70; }
 .sh-blank { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; border: 1px dashed var(--border-strong); color: var(--muted); }
+.sh-hit.hover img { opacity: 0.45; filter: grayscale(0.7); }
+.sh-hit.hover small { color: var(--muted); font-style: italic; }

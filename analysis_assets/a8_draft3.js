@@ -21,9 +21,14 @@
 
 const SHOT_READY = true;
 const SHOT_N = 12;
-/* Measured on a 1561 x 853 client window; all in shares of the height. */
+/* All in shares of the screenshot's height. Your portraits sit in one of
+   two places: further right and larger once picks are done (summoner spells
+   sit beside them), further left and smaller while picking. The enemy's and
+   the bans do not move. Measured on real screenshots of both phases. */
 const SHOT_LAYOUT = {
-  pick: { size: 0.084, left: 0.0997, right: 0.0621, top: 0.176, step: 0.1172 },
+  pick: { top: 0.176, step: 0.1172,
+    us: [{ x: 0.0997, size: 0.084 }, { x: 0.049, size: 0.072 }],
+    them: { x: 0.0621, size: 0.082 } },
   ban: { size: 0.0375, y: 0.0445, left: 0.0188, right: 0.0246, step: 0.0586 },
 };
 const SHOT = { lib: null, busy: false };
@@ -85,11 +90,11 @@ async function shotLibrary(progress) {
 }
 /* The best champion at one spot, nudged within a fifth of its size and
    resized by up to fifteen per cent: {ci, best, second, x, y, s}. */
-function shotRead1(full, cx, lib, kind, cxp, cyp, s0) {
+function shotRead1(full, cx, lib, kind, cxp, cyp, s0, slack = 0.2) {
   const mask = MASKS[kind], L = lib[kind];
   let best = null;
   for (let s = s0 * 0.86; s <= s0 * 1.16; s *= 1.05) {
-    for (let dy = -0.2; dy <= 0.2001; dy += 0.1) for (let dx = -0.2; dx <= 0.2001; dx += 0.1) {
+    for (let dy = -0.2; dy <= 0.2001; dy += 0.1) for (let dx = -slack; dx <= slack + 0.0001; dx += 0.1) {
       const x = cxp - s / 2 + dx * s0, y = cyp - s / 2 + dy * s0;
       if (x < 0 || y < 0 || x + s > full.width || y + s > full.height) continue;
       cx.clearRect(0, 0, SHOT_N, SHOT_N);
@@ -109,40 +114,88 @@ function shotRead1(full, cx, lib, kind, cxp, cyp, s0) {
   }
   return best;
 }
+/* Whether a row of your team shows splash art behind it, which the client
+   only draws once that player has locked in: a hovered champion sits on a
+   plain dark row. Measured as the colour and texture of a band of the row
+   to the right of the portrait and name. */
+function rowHasArt(full, y, H) {
+  const x0 = Math.round(0.22 * H), w = Math.round(0.22 * H), y0 = Math.round(y - 0.03 * H), h = Math.round(0.06 * H);
+  if (y0 < 0 || y0 + h > full.height || x0 + w > full.width) return false;
+  const d = full.getContext('2d', { willReadFrequently: true }).getImageData(x0, y0, w, h).data;
+  let n = 0, s = 0, ss = 0, ch = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const R = d[i], G = d[i + 1], B = d[i + 2], Y = 0.299 * R + 0.587 * G + 0.114 * B;
+    s += Y; ss += Y * Y; ch += Math.max(R, G, B) - Math.min(R, G, B); n++;
+  }
+  const m = s / n, sd = Math.sqrt(Math.max(0, ss / n - m * m));
+  return ch / n >= 20 && sd >= 24;
+}
 const tick = () => new Promise(r => setTimeout(r, 0));
 /* Read every slot. A match needs to be close (0.62) and clear of the next
-   champion (0.08); one that is clear but not by much (under 0.15) is kept
-   and marked for checking. */
+   champion (0.08); one clear but not by much (under 0.15) is kept and
+   marked for checking. On your side, a champion whose row has no splash
+   art, or whose portrait is the enlarged one of the player picking right
+   now, is only being hovered, and is left blank. */
 async function shotRead(img, progress) {
   const lib = await shotLibrary(progress);
   const W = img.naturalWidth, H = img.naturalHeight;
   const full = document.createElement('canvas');
   full.width = W; full.height = H;
-  full.getContext('2d').drawImage(img, 0, 0);
+  full.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0);
   const cv = document.createElement('canvas');
   cv.width = cv.height = SHOT_N;
   const cx = cv.getContext('2d', { willReadFrequently: true });
   const P = SHOT_LAYOUT.pick, B = SHOT_LAYOUT.ban, out = { us: [], them: [], bansUs: [], bansThem: [], spots: [] };
-  const take = (list, kind, x, y, s) => {
-    const r = shotRead1(full, cx, lib, kind, x, y, s);
-    const ok = !!r && r.best >= 0.62 && r.best - r.second >= 0.08;
-    out.spots.push({ x: x - s / 2, y: y - s / 2, s, r, ok, list });
-    list.push(ok ? Object.assign(r, { unsure: r.best - r.second < 0.15 }) : null);
-  };
-  for (let k = 0; k < 5; k++) {
-    if (progress) progress(`Reading pick ${k + 1} of 5…`);
-    const y = (P.top + P.step * k) * H;
-    take(out.us, 'pick', P.left * H, y, P.size * H);
-    take(out.them, 'pick', W - P.right * H, y, P.size * H);
+  const good = r => !!r && r.best >= 0.62 && r.best - r.second >= 0.08;
+  const rowY = k => (P.top + P.step * k) * H;
+  /* Your side: whichever of the two layouts fits better. */
+  if (progress) progress('Reading your team…');
+  let mine = null, fit = -1;
+  for (const L of P.us) {
+    const rows = [0, 1, 2, 3, 4].map(k => shotRead1(full, cx, lib, 'pick', L.x * H, rowY(k), L.size * H));
+    const score = rows.reduce((t, r) => t + (good(r) ? r.best : 0), 0);
+    if (score > fit) { fit = score; mine = rows; }
     await tick();
   }
+  mine.forEach((r, k) => {
+    const ok = good(r);
+    if (ok) { r.unsure = r.best - r.second < 0.15; r.hover = !rowHasArt(full, rowY(k), H); }
+    /* Not locked in is left blank: a hover is not a pick, and an empty
+       slot's lane icon can look a little like some champion anyway. */
+    const keep = ok && !r.hover;
+    out.us.push(keep ? r : null);
+    if (r) out.spots.push({ x: r.x, y: r.y, s: r.s, r, ok: keep && !r.hover, list: out.us });
+  });
+  if (progress) progress('Reading the enemy team…');
+  for (let k = 0; k < 5; k++) {
+    const r = shotRead1(full, cx, lib, 'pick', W - P.them.x * H, rowY(k), P.them.size * H), ok = good(r);
+    if (ok) r.unsure = r.best - r.second < 0.15;
+    out.them.push(ok ? r : null);
+    if (r) out.spots.push({ x: r.x, y: r.y, s: r.s, r, ok, list: out.them });
+  }
+  await tick();
   if (progress) progress('Reading the bans…');
   for (let k = 0; k < 5; k++) {
-    take(out.bansUs, 'ban', (B.left + B.step * k) * H, B.y * H, B.size * H);
-    take(out.bansThem, 'ban', W - (B.right + B.step * (4 - k)) * H, B.y * H, B.size * H);
+    [[out.bansUs, (B.left + B.step * k) * H], [out.bansThem, W - (B.right + B.step * (4 - k)) * H]].forEach(([list, x]) => {
+      const r = shotRead1(full, cx, lib, 'ban', x, B.y * H, B.size * H, 0.35), ok = good(r);
+      if (ok) r.unsure = r.best - r.second < 0.15;
+      list.push(ok ? r : null);
+      if (r) out.spots.push({ x: r.x, y: r.y, s: r.s, r, ok, list });
+    });
+  }
+  /* The slack lets two slots land on the same icon: keep the better one. */
+  [out.bansUs, out.bansThem].forEach(list => list.forEach((r, i) => {
+    if (r && list.some((o, j) => j !== i && o && o.ci === r.ci && o.best > r.best)) list[i] = null;
+  }));
+  /* The player picking now has a portrait drawn bigger than the rest. */
+  const sizes = out.us.filter(Boolean).map(r => r.s).sort((a, b) => a - b);
+  if (sizes.length >= 2) {
+    const med = sizes[Math.floor(sizes.length / 2)];
+    out.us.forEach((r, i) => { if (r && r.s > med * 1.15) out.us[i] = null; });
   }
   return out;
 }
+
 /* A small copy of the screenshot with every slot boxed, for checking. */
 function shotPreview(img, A) {
   const c = document.createElement('canvas'), k = Math.min(1, 900 / img.naturalWidth);
@@ -167,7 +220,7 @@ async function readScreenshot(file) {
     const url = URL.createObjectURL(file), img = await loadImg(url);
     const ratio = img.naturalWidth / img.naturalHeight;
     const A = await shotRead(img, m => { UI.shot = { msg: m }; drawShot(); });
-    const hits = [...A.us, ...A.them, ...A.bansUs, ...A.bansThem].filter(Boolean), found = hits.length;
+    const hits = [...A.us, ...A.them, ...A.bansUs, ...A.bansThem].filter(f => f && !f.hover), found = hits.length;
     /* Real champion select gives clear matches; anything else (the loading
        screen, a desktop around a small window) gives a few weak ones. */
     const shaky = hits.filter(f => f.unsure).length > found / 2;
@@ -187,7 +240,7 @@ function applyShot() {
   const st = draftState(), A = (UI.shot || {}).A;
   if (!A) return;
   const name = f => f ? D.champIndex[f.ci] : null;
-  A.us.forEach((f, i) => { if (f) st.us[i].c = name(f); });
+  A.us.forEach((f, i) => { if (f && !f.hover) st.us[i].c = name(f); });
   A.them.forEach((f, i) => { if (f) st.them[i].c = name(f); });
   A.bansUs.forEach((f, i) => { if (f) st.bans.us[i] = name(f); });
   A.bansThem.forEach((f, i) => { if (f) st.bans.them[i] = name(f); });
@@ -208,14 +261,15 @@ function drawShot() {
 function shotCard() {
   const U = UI.shot;
   const list = (title, arr) => `<div class="sh-list"><span class="muted small">${title}</span>${arr.map(f => f
-    ? `<span class="sh-hit${f.unsure ? ' unsure' : ''}" title="${esc(C(D.champIndex[f.ci]).n)}: match ${(100 * f.best).toFixed(0)}%${f.unsure ? ', worth checking' : ''}">${cicon(D.champIndex[f.ci], 28)}<small>${f.unsure ? 'check' : (100 * f.best).toFixed(0) + '%'}</small></span>`
+    ? f.hover ? `<span class="sh-hit hover" title="${esc(C(D.champIndex[f.ci]).n)} is being hovered, not locked in: it is not filled in">${cicon(D.champIndex[f.ci], 28)}<small>hovering</small></span>`
+      : `<span class="sh-hit${f.unsure ? ' unsure' : ''}" title="${esc(C(D.champIndex[f.ci]).n)}: match ${(100 * f.best).toFixed(0)}%${f.unsure ? ', worth checking' : ''}">${cicon(D.champIndex[f.ci], 28)}<small>${f.unsure ? 'check' : (100 * f.best).toFixed(0) + '%'}</small></span>`
     : '<span class="sh-hit none" title="Nothing clear here"><span class="sh-blank">?</span><small>blank</small></span>').join('')}</div>`;
   let body = '';
   if (U && U.msg) body = `<div class="muted small sh-msg">${esc(U.msg)}</div>`;
   else if (U && U.A) body = `<div class="sh-res"><img class="sh-prev" src="${U.preview}" alt="The screenshot with each slot boxed and named">` +
     `<div class="sh-found">${U.warn ? `<div class="ms-warn">⚠ ${esc(U.warn)}</div>` : ''}${list('Your picks, in pick order', U.A.us)}${list('Enemy picks', U.A.them)}${list('Your bans', U.A.bansUs)}${list('Enemy bans', U.A.bansThem)}` +
     `<div class="ms-act"><button type="button" class="pill sm on" data-shot-apply>Fill the board</button><button type="button" class="linkbtn" data-shot-clear>Discard</button></div>` +
-    `<p class="muted small">Boxes show where it looked: blue your team, red the enemy, gold the bans, faint where nothing was clear. "check" means the match was close; anything wrong can be fixed on the board.</p></div></div>`;
+    `<p class="muted small">Boxes show where it looked: blue your team, red the enemy, gold the bans, faint where nothing was clear. "check" means the match was close. Your teammates' champions are only read once locked in: one that is just being hovered stays blank. Anything wrong can be fixed on the board.</p></div></div>`;
   return `<div id="shotcard">` + card('From a screenshot',
     'Take a screenshot of the client window in champion select (Alt+Print Screen, or Win+Shift+S around the window), then paste it anywhere on this tab with Ctrl+V, drop it here, or choose the file. ' +
     'It is read in this browser and never uploaded. Your picks come from the left in pick order, the enemy\'s from the right, and the bans from the top corners; your lanes are guessed from your champions.',

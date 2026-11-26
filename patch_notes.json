@@ -34,6 +34,10 @@
       {
         "type": "added",
         "text": "Fill the draft from a screenshot: in champion select, take a screenshot of the client window (Alt+Print Screen) and paste it on the Draft tab with Ctrl+V, or drop it in. Both teams' picks and bans are read from the champion icons, your lanes are guessed from your champions, and you check what was found before it fills the board. It runs in your browser; the screenshot is never uploaded."
+      },
+      {
+        "type": "fixed",
+        "text": "Reading a screenshot during picks: your team's portraits are found in either layout (they sit further left and smaller while picking than once everyone has locked in), and a champion a teammate is only hovering is no longer filled in as their pick. Only locked-in champions, whose row shows their splash art, are read."
       }
     ]
   },
