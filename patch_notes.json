@@ -25,7 +25,7 @@
       },
       {
         "type": "changed",
-        "text": "Your team's pick order in the Draft tab is now set by dragging: pick a row up by its ⠿ handle and drop it where it should go (a finger works too, or focus the handle and use the arrow keys). Rows that have already picked stay where they are."
+        "text": "Your team's pick order in the Draft tab is now set by dragging: pick a row up by its ⠿ handle and the other rows slide out of its way as you move it, so what you see is the order you will get; let go and it settles into place. A finger works too, or focus the handle and use the arrow keys. Rows that have already picked stay where they are."
       }
     ]
   },

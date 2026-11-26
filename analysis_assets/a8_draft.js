@@ -147,38 +147,55 @@ function draftMove(st, from, to) {
   if (st.focus === from) st.focus = to;
   return true;
 }
-/* Dragging a row by its handle. The row follows the pointer, the row it
-   would land on is marked, and letting go moves it there. Pointer events,
-   so a finger works as well as a mouse. */
+/* Dragging a row by its handle, live: the row follows the pointer and
+   the others slide up or down out of its way as it passes them, so the
+   order on screen is always the order it will be dropped in. Letting go
+   settles it into its gap. Pointer events, so a finger works as well as a
+   mouse. Picked rows never move; the others flow around them. */
 let DRAG = null;
 function dragStart(e, grip) {
-  const row = grip.closest('.dr-row'), rows = [...row.parentElement.querySelectorAll('.dr-row')];
-  DRAG = { from: +grip.dataset.grip, to: +grip.dataset.grip, row, rows, y0: e.clientY, id: e.pointerId };
-  grip.setPointerCapture(e.pointerId);
+  const row = grip.closest('.dr-row'), team = row.parentElement, rows = [...team.querySelectorAll('.dr-row')];
+  const from = +grip.dataset.grip, st = draftState();
+  DRAG = { from, to: from, row, team, rows, y0: e.clientY, id: e.pointerId,
+    mids: rows.map(r => { const b = r.getBoundingClientRect(); return b.top + b.height / 2; }),
+    tops: rows.map(r => r.getBoundingClientRect().top),
+    open: [0, 1, 2, 3, 4].filter(i => !st.us[i].c) };
+  try { grip.setPointerCapture(e.pointerId); } catch (err) { /* a synthetic pointer: the document listeners still follow it */ }
+  team.classList.add('sorting');
   row.classList.add('dragging');
+}
+/* Where each row sits if the dragged one lands at slot `to`. */
+function dragLayout(d, to) {
+  const seq = d.open.slice(), a = seq.indexOf(d.from), b = seq.indexOf(to);
+  seq.splice(b, 0, seq.splice(a, 1)[0]);
+  seq.forEach((orig, k) => {
+    if (orig === d.from) return;
+    d.rows[orig].style.transform = `translateY(${(d.tops[d.open[k]] - d.tops[orig]).toFixed(1)}px)`;
+  });
 }
 function dragMove(e) {
   if (!DRAG || e.pointerId !== DRAG.id) return;
-  DRAG.row.style.transform = `translateY(${e.clientY - DRAG.y0}px)`;
-  const st = draftState();
-  let best = DRAG.from, dist = Infinity;
-  DRAG.rows.forEach((r, i) => {
-    if (st.us[i].c) return;
-    const b = r.getBoundingClientRect(), d = Math.abs(e.clientY - (b.top + b.height / 2));
-    if (d < dist) { dist = d; best = i; }
-  });
-  DRAG.to = best;
-  DRAG.rows.forEach((r, i) => r.classList.toggle('drop', i === best && i !== DRAG.from));
+  const dy = e.clientY - DRAG.y0, mid = DRAG.mids[DRAG.from] + dy;
+  DRAG.row.style.transform = `translateY(${dy.toFixed(1)}px)`;
+  /* The open slot whose middle is nearest the dragged row's middle. */
+  let to = DRAG.to, dist = Infinity;
+  DRAG.open.forEach(i => { const d = Math.abs(mid - DRAG.mids[i]); if (d < dist) { dist = d; to = i; } });
+  if (to !== DRAG.to) { DRAG.to = to; dragLayout(DRAG, to); }
 }
 function dragEnd(e) {
   if (!DRAG || (e && e.pointerId !== DRAG.id)) return;
   const d = DRAG;
   DRAG = null;
-  d.row.style.transform = '';
-  d.row.classList.remove('dragging');
-  d.rows.forEach(r => r.classList.remove('drop'));
-  const st = draftState();
-  if (draftMove(st, d.from, d.to)) { saveDraft(); render(); }
+  /* Glide into the gap, then redraw with the new order. */
+  d.row.classList.add('settling');
+  d.row.style.transform = `translateY(${(d.tops[d.to] - d.tops[d.from]).toFixed(1)}px)`;
+  setTimeout(() => {
+    d.rows.forEach(r => { r.style.transform = ''; });
+    d.row.classList.remove('dragging', 'settling');
+    d.team.classList.remove('sorting');
+    const st = draftState();
+    if (draftMove(st, d.from, d.to)) { saveDraft(); render(); }
+  }, 160);
 }
 /* The arrow keys on a focused handle move it one place, and keep the focus
    on it so it can be moved again. */

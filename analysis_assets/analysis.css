@@ -838,4 +838,5 @@ button.dr-no { cursor: pointer; }
 .dr-grip:disabled { opacity: 0.2; cursor: default; }
 .dr-row.dragging { position: relative; z-index: 5; cursor: grabbing; background: var(--surface-2); box-shadow: 0 10px 28px rgba(0,0,0,0.45); border-color: var(--violet); transition: none; }
 .dr-row.dragging .dr-grip { cursor: grabbing; color: var(--text-primary); }
-.dr-row.drop { box-shadow: inset 0 0 0 2px var(--violet); }
+.dr-team.sorting .dr-row:not(.dragging), .dr-row.settling { transition: transform 0.16s ease; }
+.dr-team.sorting { user-select: none; }
