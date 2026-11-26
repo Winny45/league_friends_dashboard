@@ -252,8 +252,13 @@ function safeCell(b) {
      + how it has done against the enemy in the same lane, counted half again
    Each of the last three is a difference from the champion's own winrate,
    pulled hard toward nothing (fifty games' worth, thirty for the lane) and
-   held within four points (six for the lane): pairings are thin even across
-   a few thousand games, and a 4-0 together is luck far more than synergy. */
+   held within four points, and the totals are held too: all the allies
+   together within three points, all the enemies within three, the lane
+   within four. Pairings are thin even across a few thousand games, a 4-0
+   together is luck far more than synergy, and nine small nudges added up
+   would otherwise swamp the champion's own record. */
+const capv = (v, c) => Math.max(-c, Math.min(c, v));
+const pickTotal = (own, syn, vsE, lane) => own + capv(syn.reduce((t, x) => t + x.d, 0), 0.03) + capv(vsE.reduce((t, x) => t + x.d, 0), 0.03) + (lane ? capv(1.5 * lane.d, 0.04) : 0);
 function draftSuggest(st, f, ER) {
   const slot = st.us[f], ri = ROLES.indexOf(slot.r), L = lobbyStats();
   const gone = draftGone(st);
@@ -271,12 +276,12 @@ function draftSuggest(st, f, ER) {
   cand.forEach(s => {
     if (gone.has(s)) return;
     const ci = CIX[s], b0 = L.base.get(ci + '|' + ri) || [0, 0], base = shrink(b0[1], b0[0], 0.5, 20);
-    const me = pool[s] || [0, 0], own = slot.p ? shrink(me[1], me[0], base, 8) : base;
+    /* The player's own record, pulled toward the champion's (fifteen games' worth). */
+    const me = pool[s] || [0, 0], own = slot.p ? shrink(me[1], me[0], base, 15) : base;
     const syn = allies.map(a => ({ c: a, ...(delta(L.pair.get(ci + '+' + CIX[a]), base) || { d: 0, n: 0 }) }));
     const vsE = enemies.map(e => ({ c: e, ...(delta(L.vs.get(ci + '>' + CIX[e]), base) || { d: 0, n: 0 }) }));
     const lane = laneFoe ? delta(L.lane.get(ci + '>' + CIX[laneFoe] + '|' + ri), base, 30, 0.06) : null;
-    const sum = a => a.reduce((t, x) => t + x.d, 0);
-    const exp = own + sum(syn) + sum(vsE) + (lane ? 1.5 * lane.d : 0);
+    const exp = pickTotal(own, syn, vsE, lane);
     const safe = BT[ci + '|' + ri] || null;
     const rank = exp + (safe ? blindW * 0.04 * (safe.score - 50) / 50 : 0);
     out.push({ s, exp, base, b0, own, me, syn, vsE, lane, safe, rank });
@@ -381,7 +386,8 @@ function tabDraft() {
 
   /* Blue always on the left, red on the right, as in the client. */
   const left = st.side === 'blue' ? 'us' : 'them', right = left === 'us' ? 'them' : 'us';
-  return names + head + `<div class="grid g2 dr-board">${teamCard(left)}${teamCard(right)}</div>` + (orderTxt ? `<section class="card" style="margin-bottom:20px">${orderTxt}</section>` : '') + sugCard;
+  return names + head + `<div class="grid g2 dr-board">${teamCard(left)}${teamCard(right)}</div>` + draftPrediction(st, ER) +
+    (orderTxt ? `<section class="card" style="margin-bottom:20px">${orderTxt}</section>` : '') + sugCard + draftBuilds(st, ER) + multisearchCard(st);
 }
 
 /* ---- Champions to learn, on a profile's Roles & classes tab ------------------------

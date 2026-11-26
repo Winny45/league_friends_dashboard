@@ -11422,6 +11422,8 @@ def main():
             print(f"Wrote {count} games into {days} day files under {out_path.parent / 'g'}")
             champs = analysis_page.write_champion_files(analysis, out_path.parent / "c")
             print(f"Wrote {champs} champion files under {out_path.parent / 'c'}")
+            people = analysis_page.write_player_files(analysis, out_path.parent / "m")
+            print(f"Wrote {people} players into the multisearch files under {out_path.parent / 'm'}")
             site = out_path
         else:
             print("No stored games yet, so the classic page is the site this build.")

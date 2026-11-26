@@ -1,5 +1,27 @@
 [
   {
+    "date": "2026-11-27",
+    "title": "Draft: builds, a predicted winrate and a multisearch",
+    "items": [
+      {
+        "type": "added",
+        "text": "Builds for this draft: each of your picks gets its most played finished items in that role, in order, with that build's winrate, then adjusted for the enemy team. Anti-heal goes to one player against healers (two against three or more: the ADC first, then another physical carry, then a mage), boots change for heavy AD, heavy AP, crowd control or slows, and one defensive item is added where it answers something specific, like Zhonya's against divers or Mercurial Scimitar against suppression. Each change says why."
+      },
+      {
+        "type": "added",
+        "text": "A predicted winrate for the draft, updating as picks go in: every pick on both sides gets the same expected winrate the suggestions use, and the two sides' average picks are set against each other."
+      },
+      {
+        "type": "added",
+        "text": "Multisearch: paste the enemy's Riot IDs (or their joined-the-lobby lines) to see, for anyone the group has played with or against before, their rank when last seen, record, KDA, roles and the three champions they are most likely to pick. Every name also links to op.gg and League of Graphs, with op.gg and u.gg multisearch links for all of them."
+      },
+      {
+        "type": "changed",
+        "text": "Pick suggestions are steadier: the player's own record leans more on the champion's usual winrate when it rests on a handful of games, and the ally, enemy and lane adjustments together are held to a few points, so one lucky pairing cannot push a pick to the top."
+      }
+    ]
+  },
+  {
     "date": "2026-11-26",
     "title": "Rings of fire, new records, and a proper draft board",
     "items": [

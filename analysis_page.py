@@ -202,6 +202,16 @@ def write_champion_files(analysis, out_dir):
     return len(files)
 
 
+def write_player_files(analysis, out_dir):
+    """deploy/m/0.json .. f.json: the multisearch's lookup, by hashed Riot ID."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    shards = analysis.player_files()
+    for s, doc in shards.items():
+        (out_dir / f"{s}.json").write_text(json.dumps(doc, separators=(",", ":")), encoding="utf-8")
+    return sum(len(v) for v in shards.values())
+
+
 def load_store_games(root="games"):
     """Every stored game, or an empty list when the store is not there yet."""
     try:

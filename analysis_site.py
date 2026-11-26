@@ -22,6 +22,15 @@ from analysis_util import LANE_ZONE, ROLES, STATS, mean, pct_of, rnd, uk_time
 from analysis_views import CALLOUT_GAMES, LOW_GAMES
 
 
+def name_key(riot_id):
+    """A Riot ID as eight hex digits: FNV-1a over its lower-case UTF-8 with
+    the spaces taken out. a8_draft.js computes the same thing to look one up."""
+    h = 0x811C9DC5
+    for b in "".join(str(riot_id).split()).lower().encode("utf-8"):
+        h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF
+    return f"{h:08x}"
+
+
 def _division(v):
     """A ladder position (400 a tier, 100 a division) as a whole number of
     divisions, Master and above counting as one step each."""
@@ -173,6 +182,30 @@ class SiteViews:
             out.append([cix[champ], ROLES.index(role), n, round(var ** 0.5), b[0], b[1], counters])
         return {"rows": out,
                 "behind": {ROLES.index(r): round(v[1] / v[0], 4) for r, v in role_behind.items() if v[0]}}
+
+    # -- the multisearch -----------------------------------------------------
+
+    def player_files(self):
+        """Every player in every stored lobby, for the draft's multisearch:
+        {shard: {key: [[champion, role, won, k, d, a, tier, division, day], ...]}}
+
+        A key is name_key() of the Riot ID, so a file can be searched for a
+        name someone already has but never lists one. Sixteen shards by the
+        key's first hex digit, so a search fetches only what it needs. Day
+        is days since 1970, so the page can weight recent games.
+        """
+        cix = {c: i for i, c in enumerate(self.champ_index)}
+        shards = defaultdict(lambda: defaultdict(list))
+        for r in self.rows:
+            name = r.get("name")
+            if not name or "#" not in name or r["champ"] not in cix:
+                continue
+            k = name_key(name)
+            rank = r["rank"] or None
+            shards[k[0]][k].append([cix[r["champ"]], ROLES.index(r["role"]) if r["role"] else -1, 1 if r["win"] else 0,
+                                    r["k"], r["d"], r["a"], rank[0] if rank else -1, rank[1] if rank and len(rank) > 1 else 0,
+                                    int(r["t0"] // 86400000)])
+        return {s: dict(v) for s, v in shards.items()}
 
     # -- one file per champion -----------------------------------------------
 

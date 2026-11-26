@@ -14,6 +14,7 @@ The site, since the overhaul:
     main.html, analysis.html, analysis-split.html, analysis-main.html
                    a few lines each that send an old address on
     g/, c/         per-day game files and per-champion files
+    m/             the multisearch lookup, keyed by hashed Riot ID
 """
 import pathlib
 import re
@@ -102,4 +103,5 @@ def newest(folder, kind):
 
 newest("g", "day")
 newest("c", "champion")
+newest("m", "multisearch")
 print(f"deploy/index.html looks publishable: {len(page)} bytes, {'the site' if site else 'the classic page'}, no key.")

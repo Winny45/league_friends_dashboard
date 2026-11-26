@@ -786,3 +786,33 @@ button.dr-no { cursor: pointer; }
 .stk.gold { color: #ffd65a; border-color: rgba(245,197,66,0.6); box-shadow: 0 0 8px rgba(245,197,66,0.35); }
 .acct, .acct-top { overflow: visible; }
 .dchip.warn { color: #ffcf70; border-color: rgba(245,179,1,0.4); }
+
+/* ---- draft: prediction, builds, multisearch ---------------------------------------- */
+.dr-pred { display: grid; grid-template-columns: auto auto minmax(120px, 1fr); gap: 4px 14px; align-items: center; margin: 20px 0;
+  padding: 14px 18px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface-1); }
+.dr-pred b { font-family: "Outfit", sans-serif; font-size: 28px; }
+.dr-pred > .muted:last-child { grid-column: 1 / -1; }
+.bd-comp { display: flex; flex-wrap: wrap; margin-bottom: 12px; }
+.bd-list { display: grid; gap: 10px; }
+.bd-row { display: grid; grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 0.8fr); gap: 8px 16px; align-items: center;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); }
+.bd-who { display: grid; gap: 2px; min-width: 0; }
+.bd-items { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.bd-arrow { color: var(--muted); font-size: 12px; }
+.bd-wr { display: grid; gap: 1px; } .bd-wr b { font-size: 16px; }
+.bd-adj { color: #ffcf70; }
+.bd-why { grid-column: 1 / -1; display: flex; flex-wrap: wrap; }
+.ms-in { display: grid; gap: 8px; margin-bottom: 14px; }
+.ms-in textarea { width: 100%; resize: vertical; font: inherit; line-height: 1.4; }
+.ms-act { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ms-links { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+.ms-links a, .ms-h a { text-decoration: none; }
+.ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.ms-card { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border-strong); background: var(--surface-1); min-width: 0; }
+.ms-h { display: flex; gap: 8px; align-items: center; min-width: 0; } .ms-h b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-stats { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.ms-picks { display: grid; gap: 6px; }
+.ms-pick { display: flex; gap: 8px; align-items: center; min-width: 0; } .ms-pick > span { display: grid; min-width: 0; }
+@media (max-width: 640px) { .bd-row { grid-template-columns: minmax(0, 1fr); } .dr-pred { grid-template-columns: auto 1fr; } .dr-pred .wrbar { grid-column: 1 / -1; } }
+.bd-why .dchip, .bd-comp .dchip { white-space: normal; }
+.bd-row > * { min-width: 0; }

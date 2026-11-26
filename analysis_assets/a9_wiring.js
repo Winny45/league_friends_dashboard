@@ -73,6 +73,7 @@ document.addEventListener('click', e => {
   }
   const sess = e.target.closest('[data-session]');
   if (sess) return sessionModal(sess.dataset.session);
+  if (e.target.closest('[data-mss]')) return runMultisearch();
   const da = e.target.closest('[data-dra]');
   if (da) return draftAction(JSON.parse(da.dataset.dra));
   const wk = e.target.closest('[data-working]');
@@ -118,6 +119,7 @@ document.addEventListener('change', e => {
 document.addEventListener('keydown', e => {
   /* Bars and blocks that act as buttons answer to the keyboard as well. */
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-session]')) { e.preventDefault(); return sessionModal(e.target.dataset.session); }
+  if (e.target.matches('[data-ms]') && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); return runMultisearch(); }
   if (!e.target.matches('[data-gsearch]')) return;
   const host = e.target.parentNode.querySelector('.gs-pop'), rows = [...host.querySelectorAll('.sg-row')];
   const i = rows.findIndex(r => r.classList.contains('on'));
@@ -135,6 +137,8 @@ document.addEventListener('keydown', e => {
 document.addEventListener('input', e => {
   if (e.target.id === 'map-t') { stopPlay(); UI.mapT = Number(e.target.value); redrawMap(); return; }
   if (e.target.matches('[data-gsearch]')) return drawSearch(e.target);
+  /* The multisearch box keeps what was typed without a redraw, so the cursor stays put. */
+  if (e.target.matches('[data-ms]')) { draftState().ms = e.target.value; saveDraft(); return; }
   if (e.target.matches('[data-cq]')) {
     /* Only the lists are redrawn, so the cursor stays in the box. */
     UI.cq = e.target.value;

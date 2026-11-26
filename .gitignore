@@ -85,3 +85,5 @@ c/
 deploy/split.html
 deploy/classic.html
 deploy/c/
+# The multisearch's lookup files, built from real lobbies.
+deploy/m/
